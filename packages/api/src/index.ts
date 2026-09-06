@@ -4,6 +4,8 @@ import { getConnInfo } from "@hono/node-server/conninfo";
 import type { HttpBindings } from "@hono/node-server";
 import {
   createProjectService,
+  createFileService,
+  type FileStorageConfig,
   createIssueService,
   createInvitationService,
   type InvitationConfig,
@@ -12,6 +14,7 @@ import {
 import type { Database } from "@spectron/db";
 import { fetchRequestHandler } from "@trpc/server/adapters/fetch";
 import { appRouter } from "./trpc/router";
+import { createFileRoutes } from "./files";
 import { createContext } from "./trpc/context";
 
 export function createAPI(
@@ -20,6 +23,7 @@ export function createAPI(
     db,
     appURL,
     trustProxy = false,
+    fileStorage,
     sendInvitationEmail = async () => {
       throw new Error("Invitation email is unavailable.");
     },
@@ -27,9 +31,11 @@ export function createAPI(
     db: Database;
     appURL: string;
     trustProxy?: boolean;
+    fileStorage?: FileStorageConfig;
     sendInvitationEmail?: InvitationConfig["sendInvitationEmail"];
   },
 ) {
+  const files = createFileService(db, fileStorage);
   const issues = createIssueService(db);
   const projects = createProjectService(db);
   const invitations = createInvitationService(db, {
@@ -38,7 +44,7 @@ export function createAPI(
   });
   const api = new Hono<{ Bindings: HttpBindings }>();
   api.use("/api/*", (c, next) =>
-    bodyLimit({
+    c.req.path === "/api/files/upload" ? next() : bodyLimit({
       maxSize: c.req.path.startsWith("/api/trpc/")
         ? 3 * 1024 * 1024
         : 16 * 1024,
@@ -46,9 +52,10 @@ export function createAPI(
   );
   api.use("/api/*", async (c, next) => {
     await next();
-    c.header("Cache-Control", "no-store");
+    if (!c.res.headers.has("Cache-Control")) c.header("Cache-Control", "no-store");
     c.header("Referrer-Policy", "no-referrer");
   });
+  api.route("/api/files", createFileRoutes(auth, files, appURL));
   api.get("/api/health", (c) => c.json({ status: "ok" }));
   api.on(["GET", "POST"], "/api/auth/*", (c) => {
     const headers = new Headers(c.req.raw.headers);
@@ -70,7 +77,7 @@ export function createAPI(
       req: c.req.raw,
       router: appRouter,
       createContext: () =>
-        createContext(auth, projects, invitations, c.req.raw, issues),
+        createContext(auth, projects, invitations, c.req.raw, issues, files),
     });
   });
   api.get("/api/me", async (c) => {

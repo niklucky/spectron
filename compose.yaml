@@ -37,6 +37,12 @@ services:
       EMAIL_FROM: ${EMAIL_FROM:-}
       TRUST_PROXY: "true"
       PROJECT_LOGO_DNS: ${PROJECT_LOGO_DNS:-system}
+      FILES_ROOT: /data/files
+      FILE_DELIVERY: nginx
+      FILES_MAX_BYTES: ${FILES_MAX_BYTES:-52428800}
+    volumes:
+      - ${FILES_HOST_PATH:-./data/files}:/data/files
+    user: "${FILES_UID:-1000}:${FILES_GID:-1000}"
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -46,6 +52,8 @@ services:
       context: .
       args:
         APP: app
+    volumes:
+      - ${FILES_HOST_PATH:-./data/files}:/data/files:ro
     ports:
       - "8080:80"
     restart: unless-stopped

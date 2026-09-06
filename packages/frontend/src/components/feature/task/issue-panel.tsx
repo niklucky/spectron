@@ -8,9 +8,11 @@ import type {
 } from "@spectron/shared";
 import { Button, IconButton } from "../../ui/button";
 import { Input, Select, Textarea } from "../../ui/input";
+import { IssueFiles, type IssueFileActions } from "./issue-files";
 import { StatusDot } from "./status-dot";
 
 export type IssuePanelActions = {
+  files: IssueFileActions;
   members: (projectId: string) => Promise<ProjectMemberSummary[]>;
   history: (
     projectId: string,
@@ -85,6 +87,7 @@ export function IssuePanel({
       : "Unassigned";
   const valueLabel = (field: string, value: unknown): string => {
     if (value == null || value === "") return "None";
+    if (field === "attachment" && typeof value === "object" && "filename" in value) return String(value.filename);
     if (field === "stateId")
       return settings.states.find((s) => s.id === value)?.name ?? String(value);
     if (field === "priorityId")
@@ -99,6 +102,7 @@ export function IssuePanel({
     return typeof value === "string" ? value : JSON.stringify(value);
   };
   const labels: Record<string, string> = {
+    attachment: "File",
     title: "Title",
     description: "Description",
     stateId: "State",
@@ -214,6 +218,8 @@ export function IssuePanel({
             </ul>
           </section>
         )}
+        <IssueFiles projectId={issue.projectId} issueId={issue.id} deleted={!!issue.deletedAt}
+          actions={actions.files} onChange={() => setReload((n) => n + 1)} />
         <section className="issue-history">
           <h3>History</h3>
           {loading ? (
@@ -223,10 +229,10 @@ export function IssuePanel({
               {entries.map((entry) => (
                 <li key={entry.id}>
                   <div>
-                    <strong>{entry.actorName}</strong> {entry.action} this issue{" "}
+                    <strong>{entry.actorName}</strong> {entry.action} {entry.entityType === "attachment" ? "an attachment" : "this issue"}{" "}
                     <time>{new Date(entry.createdAt).toLocaleString()}</time>
                   </div>
-                  {entry.action === "created" ? (
+                  {entry.action === "created" && entry.entityType === "issue" ? (
                     <p>{valueLabel("title", entry.changes.title?.after)}</p>
                   ) : (
                     <dl>

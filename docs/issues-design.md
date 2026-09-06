@@ -2,7 +2,7 @@
 
 Delivery stops after each slice with a short summary and manual test checklist. Do not begin the next slice until the user has tested and asks to continue.
 
-## 1. Issue core — implemented, awaiting manual testing
+## 1. Issue core — manually approved and committed (`229eb0f`)
 
 NanoIDs for application entities, per-project integer issue numbers, provider strings for future external mappings. Preserve existing UUIDs as text. Authentication owns its IDs. Project prefixes are locked; future renaming must recalculate issue keys. Duplicate prefixes across projects remain permitted; IDs identify issues unambiguously.
 
@@ -12,7 +12,7 @@ Priorities are configurable per project. States are project-owned labels mapped 
 
 The first slice uses plain-text issue descriptions, a separate issue history panel, and whole-project list loading. These can evolve with rich content and pagination.
 
-## 2. Files — designed, not implemented
+## 2. Files — manually approved
 
 Use host-mounted files, not MinIO: `/data/files/{yyyy-mm-dd}/{file_id}.ext`. File IDs use NanoIDs. The physical path has no project ownership. Store relative object keys and original filenames separately. The API mounts files read/write; Nginx mounts read-only.
 
@@ -23,6 +23,8 @@ Use host-mounted files, not MinIO: `/data/files/{yyyy-mm-dd}/{file_id}.ext`. Fil
 Uploads become ready only after verification. Link ready files in the issue/comment save transaction. Authorize downloads through the API, then use Nginx internal delivery with X-Accel-Redirect. Use private caching with revalidation initially. Contents are immutable; replacement produces a new file.
 
 Soft-delete links or project associations without removing shared bytes. Global file deletion is separately restricted. Abandoned upload cleanup requires an explicit approved exception; do not automatically purge bytes.
+
+This slice implements issue attachments, a searchable project library, cross-project reuse, upload previews/downloads, and attachment history. Comment attachments remain for the next slice. Uploads and attachment linking are separate operations; ready uploads remain reusable when linking fails. The default limit is 50 MiB. Failed/pending uploads and detached bytes are retained. Global file deletion and project association removal have no API/UI yet. Development uses authenticated API streaming; Docker uses authenticated Nginx delivery.
 
 ## 3. Comments and mentions — designed, not implemented
 

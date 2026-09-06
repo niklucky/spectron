@@ -35,6 +35,7 @@ test("NanoID migration preserves legacy records, references and access", async (
   await migration("0004_material_harrier");
   await pool.query("COMMIT");
   await migration("0005_tricky_smiling_tiger");
+  await migration("0006_nasty_puma");
   const service = createProjectService(db);
   assert.equal((await service.get("legacy-user", projectId)).id, projectId);
   assert.equal((await service.update("legacy-user", projectId, { name: "Still editable", key: "LG" })).name, "Still editable");

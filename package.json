@@ -18,7 +18,9 @@
     "db:migrate": "pnpm --filter @spectron/db migrate",
     "test:auth": "pnpm --filter @spectron/api test",
     "test:projects": "pnpm --filter @spectron/api test:projects",
-    "test:issues": "pnpm --filter @spectron/api test:issues"
+    "test:issues": "pnpm --filter @spectron/api test:issues",
+    "test:files": "pnpm --filter @spectron/api test:files",
+    "test:files:nginx": "python3 packages/api/test/nginx-files.py"
   },
   "devDependencies": {
     "turbo": "2.10.12",

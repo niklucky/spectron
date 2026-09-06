@@ -107,6 +107,22 @@ function Workspace({
   const task = workspace.task;
   const issueActions = useMemo(
     () => ({
+      files: {
+        list: (projectId: string, issueId: string) => trpc.files.attachments.query({ projectId, issueId }),
+        limits: () => trpc.files.limits.query(),
+        upload: async (projectId: string, file: File): Promise<import("@spectron/shared").ProjectFileSummary> => {
+          const query = new URLSearchParams({ projectId, filename: file.name });
+          const response = await fetch(`/api/files/upload?${query}`, { method: "POST", credentials: "same-origin", headers: { "content-type": "application/octet-stream" }, body: file });
+          if (!response.ok) {
+            const error = await response.json().catch(() => null) as { error?: string } | null;
+            throw new Error(error?.error || "Could not upload the file. Please try again.");
+          }
+          return response.json();
+        },
+        library: (projectId: string | undefined, search: string, offset: number) => trpc.files.library.query({ ...(projectId ? { projectId } : {}), search, offset }),
+        link: async (projectId: string, issueId: string, sourceProjectId: string, projectFileId: string) => { await trpc.files.link.mutate({ projectId, issueId, sourceProjectId, projectFileId }); },
+        unlink: async (projectId: string, issueId: string, attachmentId: string) => { await trpc.files.unlink.mutate({ projectId, issueId, attachmentId }); },
+      },
       members: (projectId: string) =>
         trpc.projects.members.query({ id: projectId }),
       history: (projectId: string, id: string, offset: number) =>

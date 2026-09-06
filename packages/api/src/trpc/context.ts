@@ -1,6 +1,7 @@
 import type {
   Auth,
   IssueService,
+  FileService,
   ProjectService,
   InvitationService,
 } from "@spectron/backend";
@@ -10,6 +11,7 @@ export type Context = {
   projects: ProjectService;
   invitations: InvitationService;
   issues: IssueService;
+  files: FileService;
 };
 export async function createContext(
   auth: Auth,
@@ -17,7 +19,8 @@ export async function createContext(
   invitations: InvitationService,
   request: Request,
   issues: IssueService,
+  files: FileService,
 ): Promise<Context> {
   const session = await auth.api.getSession({ headers: request.headers });
-  return { userId: session?.user.id || null, projects, invitations, issues };
+  return { userId: session?.user.id || null, projects, invitations, issues, files };
 }

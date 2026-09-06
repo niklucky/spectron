@@ -43,6 +43,13 @@
       "when": 1788723680083,
       "tag": "0005_tricky_smiling_tiger",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1788725728168,
+      "tag": "0006_nasty_puma",
+      "breakpoints": true
     }
   ]
 }

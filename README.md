@@ -54,6 +54,9 @@ pnpm typecheck
 pnpm build
 pnpm test:auth
 pnpm test:projects
+pnpm test:issues
+pnpm test:files
+pnpm test:files:nginx  # Requires Docker
 ```
 
 Auth tests create and drop a disposable database on local Postgres, send no real emails, and leave application data alone. To use another development Postgres, set `TEST_DATABASE_URL` to a connection whose role can create databases. Tests cover registration, login, profile persistence, sign-out, origin checks, password resets, token expiry/concurrent reuse, session revocation, and persistent rate limits.
@@ -66,7 +69,7 @@ Registration signs the user in immediately. Login sessions are stored in Postgre
 
 Add `RESEND_API_KEY` and `EMAIL_FROM` in `.env`, then restart the API to enable reset emails. The sender must belong to a [verified Resend domain](https://resend.com/docs/send-with-nodejs). Without email configuration, registration and login work; reset email delivery failures are reported in server logs. Reset requests always show the same public response whether the email exists or delivery fails. Tokens and provider response bodies are not logged.
 
-The current flow uses [Better Auth email/password authentication](https://better-auth.com/docs/authentication/email-password). Registration is open and does not require email verification yet. Team invitations, permissions, and provider logins can be added later. Issues now persist in Postgres. Comments, files, and worklogs are the next implementation slices.
+The current flow uses [Better Auth email/password authentication](https://better-auth.com/docs/authentication/email-password). Registration is open and does not require email verification yet. Team invitations, permissions, and provider logins can be added later. Issues now persist in Postgres. Files and reusable issue attachments also persist. Threaded comments and worklogs are the next implementation slices.
 
 | Method | Endpoint                           | Purpose                                           |
 | ------ | ---------------------------------- | ------------------------------------------------- |
@@ -123,7 +126,7 @@ Put a TLS reverse proxy in front of the app on port 8080. The public page is on 
 
 ## Next steps
 
-Files, threaded comments, mentions, worklogs, broader team permissions, integrations, and agent execution remain to be implemented.
+Threaded comments, mentions, worklogs, broader team permissions, integrations, and agent execution remain to be implemented.
 
 An open source license still needs to be selected before public distribution.
 
@@ -165,7 +168,7 @@ Project settings has States and Priorities sections. Owners can add, rename, reo
 
 Issue history is append-only and written in the same transaction as each create/update/delete/restore. It records the actor and old/new field values. All project members can read it, including deleted issue history. Database triggers reject history updates/deletes. Configuration changes are recorded separately in `project_history`. Editors send the last-seen `updated_at` and receive a conflict instead of overwriting newer changes.
 
-The UI replaces temporary task creation with persisted issues. Use Edit issue for title, description, state, priority, assignee and parent. Child issues link back into the same panel. The Deleted tasks filter exposes soft-deleted issues and their Restore issue action. Comments and file uploads are deferred, so the temporary chat composer is no longer shown. Old in-memory tasks were never saved and cannot survive reloads.
+The UI replaces temporary task creation with persisted issues. Use Edit issue for title, description, state, priority, assignee and parent. Child issues link back into the same panel. The Deleted tasks filter exposes soft-deleted issues and their Restore issue action. Files are available in the issue panel. Comments are deferred, so the temporary chat composer is no longer shown. Old in-memory tasks were never saved and cannot survive reloads.
 
 | tRPC procedure | Purpose |
 | --- | --- |
@@ -183,3 +186,24 @@ All procedures take `projectId`; issue mutations/history also take `id`. Mutatio
 Run `pnpm test:issues` for disposable-database tests of concurrent numbering, access isolation, invalid references, cycles, history rollback/immutability, stale writes, deletion/restoration, workflow configuration, prefix locking, and archive behavior. `pnpm test:projects` covers existing project/invitation behavior and UUID-to-text migration compatibility.
 
 See [the agreed design](docs/issues-design.md) for the remaining slices. Stop after each slice for manual testing.
+
+## Files and reusable issue attachments
+
+Project members can upload files, attach existing project files, and reuse files from another accessible project. Cross-project reuse creates an association that gives the destination project's members access. Removing an attachment only soft-deletes that issue's link; other attachments and stored bytes remain. Attachment changes record the actor and file in issue history without changing the issue field-edit timestamp. Archived projects and deleted issues reject attachment changes.
+
+The issue panel supports image, audio and video previews for supported formats, and downloads for other files. Uploads default to 50 MiB (`FILES_MAX_BYTES`), enforced while streaming. The server detects content type from bytes; unknown formats are served as downloads. Original filenames are retained separately from immutable storage keys. Upload and attachment linking are separate operations: a successful upload remains reusable if linking fails. The library supports filename search, pagination, and current-project or all-accessible-project views.
+
+Development stores files in `data/files` at the repository root, overridable with `FILES_ROOT`. The API serves authenticated downloads directly with range requests for media and private cache revalidation. Docker uses `/data/files/{yyyy-mm-dd}/{file_id}.ext`: the API authorizes each request and delegates delivery to Nginx through an internal `X-Accel-Redirect` location. Direct access to that location is blocked. Nginx mounts the same host directory read-only.
+
+Before starting the full Docker stack, provision `FILES_HOST_PATH` (default `./data/files`) for the API's configured `FILES_UID`/`FILES_GID` (both default to 1000). For the defaults on Linux:
+
+```sh
+mkdir -p data/files
+sudo chown 1000:1000 data/files
+```
+
+Set different IDs to match the host directory owner when needed. Back up both Postgres and the host file directory. Failed, abandoned and detached uploads are retained; there is no automatic byte cleanup. Global file deletion and project-library removal are not exposed in this slice. Comment attachments arrive with comments.
+
+`POST /api/files/upload?projectId=...&filename=...` accepts raw file bytes with the session cookie and exact app Origin. `GET`/`HEAD /api/files/:projectId/:projectFileId` authorize downloads; `?download=1` requests a download. The authenticated tRPC `files` router provides `limits`, `library`, `attachments`, `link`, and `unlink`.
+
+`pnpm test:files` covers upload validation, membership isolation, reuse, soft removal, history rollback, range requests and cache authorization with disposable data. `pnpm test:files:nginx` verifies the production Nginx configuration in a disposable Docker container with a controlled upstream, including internal-only delivery, ranges and caching.

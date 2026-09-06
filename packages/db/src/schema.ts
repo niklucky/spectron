@@ -274,7 +274,9 @@ export const issueHistory = pgTable(
     issueId: text("issue_id")
       .notNull()
       .references(() => issue.id, { onDelete: "restrict" }),
-    actorUserId: text("actor_user_id")
+    entityType: text("entity_type").$type<"issue" | "attachment">().default("issue").notNull(),
+  entityId: text("entity_id"),
+  actorUserId: text("actor_user_id")
       .notNull()
       .references(() => user.id, { onDelete: "restrict" }),
     action: text("action")
@@ -306,3 +308,39 @@ export const projectHistory = pgTable(
   },
   (t) => [index("project_history_project_idx").on(t.projectId, t.createdAt)],
 );
+
+export const fileStatus = pgEnum("file_status", ["pending", "ready", "failed"]);
+export const storedFile = pgTable("files", {
+  id: text("id").$defaultFn(createId).primaryKey(),
+  uploadedBy: text("uploaded_by").notNull().references(() => user.id, { onDelete: "restrict" }),
+  storageKey: text("storage_key").notNull().unique(),
+  filename: text("filename").notNull(),
+  contentType: text("content_type").default("application/octet-stream").notNull(),
+  sizeBytes: bigint("size_bytes", { mode: "number" }).default(0).notNull(),
+  status: fileStatus("status").default("pending").notNull(),
+  ...dates(),
+  deletedAt: timestamp("deleted_at", { withTimezone: true }),
+});
+export const projectFile = pgTable("project_files", {
+  id: text("id").$defaultFn(createId).primaryKey(),
+  projectId: text("project_id").notNull().references(() => project.id, { onDelete: "restrict" }),
+  fileId: text("file_id").notNull().references(() => storedFile.id, { onDelete: "restrict" }),
+  ...dates(),
+  deletedAt: timestamp("deleted_at", { withTimezone: true }),
+}, (t) => [
+  uniqueIndex("project_files_project_file_unique").on(t.projectId, t.fileId),
+  uniqueIndex("project_files_project_id_unique").on(t.projectId, t.id),
+]);
+export const issueAttachment = pgTable("issue_attachments", {
+  id: text("id").$defaultFn(createId).primaryKey(),
+  projectId: text("project_id").notNull(),
+  issueId: text("issue_id").notNull(),
+  projectFileId: text("project_file_id").notNull(),
+  position: integer("position").notNull(),
+  ...dates(),
+  deletedAt: timestamp("deleted_at", { withTimezone: true }),
+}, (t) => [
+  uniqueIndex("issue_attachments_issue_file_unique").on(t.issueId, t.projectFileId),
+  foreignKey({ name: "issue_attachments_issue_fk", columns: [t.projectId, t.issueId], foreignColumns: [issue.projectId, issue.id] }).onDelete("restrict"),
+  foreignKey({ name: "issue_attachments_project_file_fk", columns: [t.projectId, t.projectFileId], foreignColumns: [projectFile.projectId, projectFile.id] }).onDelete("restrict"),
+]);

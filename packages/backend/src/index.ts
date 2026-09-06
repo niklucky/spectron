@@ -19,3 +19,5 @@ export type {
 
 export { createIssueService, IssueInputError, IssueConflictError } from "./issues";
 export type { IssueService } from "./issues";
+export { createFileService, FileInputError, FileSizeError, FileUnavailableError } from "./files";
+export type { FileService, FileStorageConfig } from "./files";

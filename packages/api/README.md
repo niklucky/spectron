@@ -9,3 +9,5 @@ Run `pnpm dev:api` from the root. Auth configuration belongs in `@spectron/backe
 `src/trpc` contains the authenticated context and project router. `pnpm test:projects` tests project endpoints and membership isolation in a disposable Postgres database. `./router` exports `AppRouter` for type-only browser imports.
 
 The authenticated `issues` router provides persistence, workflow options, soft deletion/restoration, and history. `pnpm test:issues` exercises real HTTP routes and disposable Postgres data, including concurrency and rollback. Browser code uses the shared issue contracts.
+
+`src/files.ts` handles streaming uploads and authenticated GET/HEAD downloads at `/api/files`. Development supports conditional and range requests directly; Docker returns an internal Nginx redirect after authorization. The `files` tRPC router handles the library and attachment links. Configure `FILES_ROOT`, `FILES_MAX_BYTES`, and `FILE_DELIVERY` in the server environment. Run `pnpm test:files` and `pnpm test:files:nginx` from the root.

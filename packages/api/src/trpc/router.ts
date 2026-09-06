@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   ProjectAccessError,
   IssueInputError,
+  FileInputError,
   IssueConflictError,
   InvitationError,
   LogoError,
@@ -43,7 +44,8 @@ const authenticated = t.procedure.use(async ({ ctx, next }) => {
     });
   if (
     !result.ok &&
-    (result.error.cause instanceof IssueInputError ||
+    (result.error.cause instanceof FileInputError ||
+      result.error.cause instanceof IssueInputError ||
       result.error.cause instanceof LogoError ||
       result.error.cause instanceof InvitationError)
   )
@@ -116,6 +118,13 @@ const optionRef = issueScope.extend({
   id: applicationId,
 });
 export const appRouter = t.router({
+  files: t.router({
+    limits: authenticated.query(({ ctx }) => ({ maxBytes: ctx.files.maxBytes })),
+    library: authenticated.input(z.object({ projectId: applicationId.optional(), search: z.string().max(255).optional(), offset: z.number().int().min(0).default(0) }).strict()).query(({ ctx, input }) => ctx.files.library(ctx.userId, input)),
+    attachments: authenticated.input(z.object({ projectId: applicationId, issueId: applicationId }).strict()).query(({ ctx, input }) => ctx.files.attachments(ctx.userId, input.projectId, input.issueId)),
+    link: authenticated.input(z.object({ projectId: applicationId, issueId: applicationId, sourceProjectId: applicationId, projectFileId: applicationId }).strict()).mutation(({ ctx, input }) => ctx.files.link(ctx.userId, input)),
+    unlink: authenticated.input(z.object({ projectId: applicationId, issueId: applicationId, attachmentId: applicationId }).strict()).mutation(({ ctx, input }) => ctx.files.unlink(ctx.userId, input)),
+  }),
   issues: t.router({
     list: authenticated
       .input(issueScope)

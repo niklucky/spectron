@@ -44,6 +44,11 @@ const api = createAPI(auth, {
   db,
   appURL: APP_URL,
   trustProxy: process.env.TRUST_PROXY === "true",
+  fileStorage: {
+    root: process.env.FILES_ROOT || fileURLToPath(new URL("../../../data/files", import.meta.url)),
+    ...(process.env.FILES_MAX_BYTES ? { maxBytes: Number(process.env.FILES_MAX_BYTES) } : {}),
+    delivery: process.env.FILE_DELIVERY === "nginx" ? "nginx" : "stream",
+  },
   sendInvitationEmail: createInvitationEmailSender(RESEND_API_KEY, EMAIL_FROM),
 });
 const server = serve(

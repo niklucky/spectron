@@ -9,3 +9,5 @@ Factories accept dependencies so tests can use the real database and replace ema
 `createInvitationService` manages team lists, invitation lifecycle, and transactional acceptance. `createInvitationEmailSender` sends plain-text Resend invitations with idempotency keys. Tests inject a captured sender.
 
 `createIssueService` implements project-scoped issues, configuration, and history. A project row lock serializes writes to protect numbering, hierarchy, configuration and archive races. Updates require the last-seen issue timestamp. History writes share the issue transaction. Project creation seeds default states/priorities; prefixes are immutable.
+
+`createFileService` streams uploads to immutable local storage, detects content types, enforces size limits, and manages project-file associations and issue attachments. Membership checks gate reads and writes; cross-project reuse checks both projects. Attachment history and link mutations share a transaction. Removing a link retains shared metadata and bytes. Failed and abandoned uploads are retained.
