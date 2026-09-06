@@ -12,3 +12,4 @@ export { createId, applicationIdPattern } from "./ids";
 export * from "./issues";
 export * from "./files";
 export * from "./comments";
+export * from "./worklogs";

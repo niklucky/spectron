@@ -55,7 +55,7 @@ export type HistoryChanges = Record<
 export type IssueHistoryEntry = {
   id: string;
   issueId: string;
-  entityType: "issue" | "attachment" | "comment";
+  entityType: "issue" | "attachment" | "comment" | "worklog";
   entityId: string | null;
   actorUserId: string;
   actorName: string;

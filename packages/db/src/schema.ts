@@ -280,7 +280,7 @@ export const issueHistory = pgTable(
       .notNull()
       .references(() => issue.id, { onDelete: "restrict" }),
     entityType: text("entity_type")
-      .$type<"issue" | "attachment" | "comment">()
+      .$type<"issue" | "attachment" | "comment" | "worklog">()
       .default("issue")
       .notNull(),
     entityId: text("entity_id"),
@@ -456,6 +456,35 @@ export const commentAttachment = pgTable(
       name: "comment_attachments_file_fk",
       columns: [t.projectId, t.projectFileId],
       foreignColumns: [projectFile.projectId, projectFile.id],
+    }).onDelete("restrict"),
+  ],
+);
+
+export const issueWorklog = pgTable(
+  "issue_worklogs",
+  {
+    id: text("id").$defaultFn(createId).primaryKey(),
+    projectId: text("project_id").notNull(),
+    issueId: text("issue_id").notNull(),
+    workerUserId: text("worker_user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "restrict" }),
+    recordedBy: text("recorded_by")
+      .notNull()
+      .references(() => user.id, { onDelete: "restrict" }),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
+    durationSeconds: integer("duration_seconds").notNull(),
+    description: text("description").default("").notNull(),
+    ...dates(),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("worklogs_issue_created_idx").on(t.issueId, t.createdAt, t.id),
+    check("worklogs_duration_positive", sql`${t.durationSeconds} > 0`),
+    foreignKey({
+      name: "worklogs_issue_fk",
+      columns: [t.projectId, t.issueId],
+      foreignColumns: [issue.projectId, issue.id],
     }).onDelete("restrict"),
   ],
 );

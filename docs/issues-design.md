@@ -26,7 +26,7 @@ Soft-delete links or project associations without removing shared bytes. Global 
 
 This slice implements issue attachments, a searchable project library, cross-project reuse, upload previews/downloads, and attachment history. Comment attachments remain for the next slice. Uploads and attachment linking are separate operations; ready uploads remain reusable when linking fails. The default limit is 50 MiB. Failed/pending uploads and detached bytes are retained. Global file deletion and project association removal have no API/UI yet. Development uses authenticated API streaming; Docker uses authenticated Nginx delivery.
 
-## 3. Comments and mentions — manually approved
+## 3. Comments and mentions — manually approved and committed (`d08e76e`)
 
 Comments form a tree: ID, issue ID, optional parent ID, author ID, structured body, lifecycle timestamps. Parent is fixed at creation and must belong to the same issue. Arbitrary data nesting with capped visual indentation. Paginate roots and progressively load replies. Order siblings by creation time and ID. A deleted parent remains as a placeholder while retaining its replies.
 
@@ -38,12 +38,22 @@ This slice stores text/mention nodes, uses a textarea with an `@` project-member
 
 Authors can edit and delete; project owners can delete for moderation. Deleted comments are placeholders, with original content retained in history and the database. Replies remain readable and can be added to a deleted parent. Comment restoration, notifications, rich formatting and system events are deferred. Use Refresh comments to load other users' changes; an editor retains its original version to prevent overwriting a concurrent edit.
 
-## 4. Worklogs — designed, not implemented
+## 4. Human worklogs — manually approved
 
-Manual entries initially; timers later for both humans and agents. Fields: ID, issue ID, exactly one human user ID or agent ID, recorded-by user, started-at with timezone, positive duration in seconds, optional description, lifecycle timestamps. The worker and recorder are distinct. Agent worklogs require a persistent agent identity model first.
+Manual human entries only. Agents and timers are deferred. Fields: ID, project/issue IDs, worker user ID, immutable recorded-by user, start instant with timezone, positive integer duration in seconds, optional description, lifecycle timestamps. Worker and recorder remain distinct. Any project member can record/correct entries; finer permissions are deferred. New worker assignments must be project members. Retain former workers on existing entries.
 
-Allow overlap. Totals exclude deleted entries and distinguish human/agent effort. Changes record previous values and actors in history. Future external mapping records reference individual worklogs to prevent duplicate imports and support updates/deletions. Timers will produce the same entry model.
+Allow overlap. Create/edit/delete/restore writes history in the same transaction. Deletion only sets `deleted_at`; restoration retains attribution and values. Version checks prevent stale edits. Lists use newest-created-first cursor pages of 20; the start time remains independently editable. The editor uses the browser's local timezone and one duration input. Totals are the next separate step.
+
+## 5. Human worklog totals — pending
+
+Show totals excluding deleted entries. Stop for manual testing after this step.
+
+## 6. Additional chat view — next (user reordered)
+
+Keep the existing issue view and add a [Chat | Issue] selector with a chat view presenting issue information as messages. The user moved chat ahead of totals; totals remain pending. Stop for manual testing after this step. Jira and Yandex.Tracker integrations will be designed and implemented in a new session. Agents remain deferred.
 
 ## Future integration and history extensions
 
 Tracker mappings are separate records scoped to the integration and external tracker project, using provider IDs rather than display names. Extend history with entity type/ID for comments, worklogs and attachment relations, and explicit agent/integration actors when those features arrive. Preserve the same transaction boundary and project membership access.
+
+Human duration input reads numeric groups: one means minutes, two mean hours/minutes, three mean days/hours/minutes (24-hour days). Separators are ignored, so `1h 35m`, `1h30m`, and `1n20m` work. `30` means 30 minutes; `1h` also means one minute under this positional convention—use `1h0m` for one hour. Human entry has no seconds field; storage remains seconds for compatibility, and editing other fields preserves existing durations.

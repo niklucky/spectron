@@ -332,3 +332,45 @@
     padding-left: 8px;
   }
 }
+.issue-worklogs {
+  margin-top: 24px;
+}
+.worklog-filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  color: var(--color-text-secondary);
+}
+.worklog-list {
+  list-style: none;
+  padding: 0;
+}
+.worklog-list > li {
+  padding: 14px 0;
+  border-top: 1px solid var(--color-line);
+}
+.worklog-list p {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.worklog-list time,
+.worklog-list small {
+  display: block;
+  margin-top: 6px;
+  color: var(--color-text-secondary);
+}
+.worklog-deleted {
+  opacity: 0.7;
+}
+.worklog-duration {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+.worklog-editor {
+  padding: 16px;
+  margin: 12px 0;
+  border: 1px solid var(--color-line);
+  border-radius: 8px;
+}

@@ -1,4 +1,9 @@
 import type {
+  WorklogFields,
+  WorklogPage,
+  WorklogScope,
+} from "@spectron/shared";
+import type {
   CommentScope,
   CommentCursor,
   CommentDraft,
@@ -57,7 +62,7 @@ function Workspace({
   user,
   sessionId,
 }: {
-  user: { name: string };
+  user: { id: string; name: string };
   sessionId: string;
 }) {
   const projectState = useProjects(sessionId);
@@ -112,6 +117,30 @@ function Workspace({
   const task = workspace.task;
   const issueActions = useMemo(
     () => ({
+      worklogs: {
+        currentUserId: user.id,
+        list: (
+          input: WorklogScope & {
+            includeDeleted: boolean;
+            cursor?: NonNullable<WorklogPage["nextCursor"]>;
+          },
+        ) => trpc.worklogs.list.query(input),
+        create: (input: WorklogScope & WorklogFields) =>
+          trpc.worklogs.create.mutate(input),
+        update: (
+          input: WorklogScope &
+            WorklogFields & { id: string; expectedUpdatedAt: string },
+        ) => trpc.worklogs.update.mutate(input),
+        setDeleted: async (
+          input: WorklogScope & {
+            id: string;
+            expectedUpdatedAt: string;
+            deleted: boolean;
+          },
+        ) => {
+          await trpc.worklogs.setDeleted.mutate(input);
+        },
+      },
       comments: {
         list: (
           input: CommentScope & {
@@ -195,7 +224,7 @@ function Workspace({
       save: workspace.saveIssue,
       setDeleted: workspace.setDeleted,
     }),
-    [workspace.saveIssue, workspace.setDeleted],
+    [workspace.saveIssue, workspace.setDeleted, user.id],
   );
   const clearFilters = () => {
     workspace.setQuery("");

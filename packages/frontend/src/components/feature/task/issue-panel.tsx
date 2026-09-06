@@ -9,6 +9,8 @@ import type {
 import { Button, IconButton } from "../../ui/button";
 import { Input, Select, Textarea } from "../../ui/input";
 import { IssueFiles, type IssueFileActions } from "./issue-files";
+import { IssueWorklogs, type WorklogActions } from "./issue-worklogs";
+import { formatWorklogDuration } from "@spectron/shared";
 import { IssueComments, type CommentActions } from "./issue-comments";
 import { commentText, type CommentBody } from "@spectron/shared";
 import { StatusDot } from "./status-dot";
@@ -16,6 +18,7 @@ import { StatusDot } from "./status-dot";
 export type IssuePanelActions = {
   files: IssueFileActions;
   comments: CommentActions;
+  worklogs: WorklogActions;
   members: (projectId: string) => Promise<ProjectMemberSummary[]>;
   history: (
     projectId: string,
@@ -90,6 +93,10 @@ export function IssuePanel({
       : "Unassigned";
   const valueLabel = (field: string, value: unknown): string => {
     if (value == null || value === "") return "None";
+    if (field === "durationSeconds")
+      return formatWorklogDuration(Number(value));
+    if (field === "workerUserId" || field === "recordedBy")
+      return person(String(value));
     if (field === "body" && Array.isArray(value))
       return commentText(value as CommentBody);
     if (field === "files" && Array.isArray(value))
@@ -114,6 +121,10 @@ export function IssuePanel({
     return typeof value === "string" ? value : JSON.stringify(value);
   };
   const labels: Record<string, string> = {
+    workerUserId: "Worker",
+    recordedBy: "Recorded by",
+    startedAt: "Started at",
+    durationSeconds: "Duration",
     body: "Comment",
     files: "Files",
     attachment: "File",
@@ -239,6 +250,15 @@ export function IssuePanel({
           actions={actions.files}
           onChange={() => setReload((n) => n + 1)}
         />
+        <IssueWorklogs
+          key={`worklogs:${issue.id}`}
+          projectId={issue.projectId}
+          issueId={issue.id}
+          deleted={!!issue.deletedAt}
+          members={members}
+          actions={actions.worklogs}
+          onChange={() => setReload((n) => n + 1)}
+        />
         <IssueComments
           key={issue.id}
           projectId={issue.projectId}
@@ -259,11 +279,13 @@ export function IssuePanel({
                 <li key={entry.id}>
                   <div>
                     <strong>{entry.actorName}</strong> {entry.action}{" "}
-                    {entry.entityType === "comment"
-                      ? "a comment"
-                      : entry.entityType === "attachment"
-                        ? "an attachment"
-                        : "this issue"}{" "}
+                    {entry.entityType === "worklog"
+                      ? "a worklog"
+                      : entry.entityType === "comment"
+                        ? "a comment"
+                        : entry.entityType === "attachment"
+                          ? "an attachment"
+                          : "this issue"}{" "}
                     <time>{new Date(entry.createdAt).toLocaleString()}</time>
                   </div>
                   {entry.action === "created" &&

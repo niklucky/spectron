@@ -1,5 +1,6 @@
 import type {
   Auth,
+  WorklogService,
   CommentService,
   IssueService,
   FileService,
@@ -14,6 +15,7 @@ export type Context = {
   issues: IssueService;
   files: FileService;
   comments: CommentService;
+  worklogs: WorklogService;
 };
 export async function createContext(
   auth: Auth,
@@ -23,6 +25,7 @@ export async function createContext(
   issues: IssueService,
   files: FileService,
   comments: CommentService,
+  worklogs: WorklogService,
 ): Promise<Context> {
   const session = await auth.api.getSession({ headers: request.headers });
   return {
@@ -32,5 +35,6 @@ export async function createContext(
     issues,
     files,
     comments,
+    worklogs,
   };
 }

@@ -145,7 +145,49 @@ const commentDraft = commentScope.extend({
     )
     .max(20),
 });
+const worklogScope = z
+  .object({ projectId: applicationId, issueId: applicationId })
+  .strict();
+const worklogDraft = worklogScope.extend({
+  workerUserId: z.string().min(1).max(128),
+  startedAt: z.iso.datetime({ offset: true }),
+  durationSeconds: z.number().int().min(1).max(2147483647),
+  description: z.string().max(10000),
+});
 export const appRouter = t.router({
+  worklogs: t.router({
+    list: authenticated
+      .input(
+        worklogScope.extend({
+          includeDeleted: z.boolean().default(false),
+          cursor: z
+            .object({ createdAt: z.iso.datetime(), id: applicationId })
+            .strict()
+            .optional(),
+        }),
+      )
+      .query(({ ctx, input }) => ctx.worklogs.list(ctx.userId, input)),
+    create: authenticated
+      .input(worklogDraft)
+      .mutation(({ ctx, input }) => ctx.worklogs.save(ctx.userId, input)),
+    update: authenticated
+      .input(
+        worklogDraft.extend({
+          id: applicationId,
+          expectedUpdatedAt: z.iso.datetime(),
+        }),
+      )
+      .mutation(({ ctx, input }) => ctx.worklogs.save(ctx.userId, input)),
+    setDeleted: authenticated
+      .input(
+        worklogScope.extend({
+          id: applicationId,
+          expectedUpdatedAt: z.iso.datetime(),
+          deleted: z.boolean(),
+        }),
+      )
+      .mutation(({ ctx, input }) => ctx.worklogs.setDeleted(ctx.userId, input)),
+  }),
   comments: t.router({
     list: authenticated
       .input(

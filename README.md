@@ -70,7 +70,7 @@ Registration signs the user in immediately. Login sessions are stored in Postgre
 
 Add `RESEND_API_KEY` and `EMAIL_FROM` in `.env`, then restart the API to enable reset emails. The sender must belong to a [verified Resend domain](https://resend.com/docs/send-with-nodejs). Without email configuration, registration and login work; reset email delivery failures are reported in server logs. Reset requests always show the same public response whether the email exists or delivery fails. Tokens and provider response bodies are not logged.
 
-The current flow uses [Better Auth email/password authentication](https://better-auth.com/docs/authentication/email-password). Registration is open and does not require email verification yet. Team invitations, permissions, and provider logins can be added later. Issues now persist in Postgres. Files and reusable issue attachments also persist. Threaded comments, mentions and comment attachments are implemented; manual worklogs are next.
+The current flow uses [Better Auth email/password authentication](https://better-auth.com/docs/authentication/email-password). Registration is open and does not require email verification yet. Team invitations, permissions, and provider logins can be added later. Issues now persist in Postgres. Files and reusable issue attachments also persist. Threaded comments, mentions and comment attachments are implemented; manual human worklogs are implemented.
 
 | Method | Endpoint                           | Purpose                                           |
 | ------ | ---------------------------------- | ------------------------------------------------- |
@@ -127,7 +127,7 @@ Put a TLS reverse proxy in front of the app on port 8080. The public page is on 
 
 ## Next steps
 
-Worklogs, comment notifications, broader team permissions, integrations, and agent execution remain to be implemented.
+Worklog totals, an additional issue chat view, comment notifications, broader team permissions, integrations, and agent execution remain to be implemented.
 
 An open source license still needs to be selected before public distribution.
 
@@ -221,4 +221,16 @@ The composer supports up to 20 uploads or reused files and 100,000 text characte
 
 The authenticated `comments` tRPC router provides `list` (issue, parent, optional cursor), `create`, `update`, and `delete`. All procedures require project and issue IDs; writes require the app Origin. Updates/deletion require the last-seen comment timestamp. No caller can change a comment's author or parent. Migration `0007` adds comments, mentions and comment attachments with same-issue/same-project foreign keys.
 
-Run `pnpm test:comments` for authorization, tree and pagination constraints, structured mention edits, attachment reuse, audit rollback, soft deletion and stale-write checks. Manual worklogs are the next slice; stop here for manual testing.
+Run `pnpm test:comments` for authorization, tree and pagination constraints, structured mention edits, attachment reuse, audit rollback, soft deletion and stale-write checks. Manual human worklogs follow below.
+
+## Human worklogs
+
+Use Log work in the issue panel to record a project member's work, start time, duration in one flexible text input, and optional description. Times are entered/displayed in the browser's local timezone and stored as instants. Overlapping entries are allowed. The recorder is taken from the session and remains unchanged when another member edits the entry.
+
+All project members can add, edit, soft-delete and restore worklogs for now. New workers must belong to the project; existing former workers remain on their entries. Deleted entries appear with Show deleted entries. Archived projects and deleted issues retain readable worklogs but reject changes. Stale edits fail instead of overwriting newer values. Every mutation writes the actor and old/new values to issue history transactionally.
+
+Migration `0008` adds `issue_worklogs`; the authenticated `worklogs` router provides `list`, `create`, `update`, and `setDeleted`. Lists use cursor pages of 20. Durations are positive integer seconds (up to PostgreSQL's integer limit); descriptions allow 10,000 characters. Run `pnpm test:worklogs` for persistence, access, attribution, concurrency, rollback, deletion/restoration, and pagination checks.
+
+Delivery order: human entries, totals, then an additional chat view that preserves the existing issue view. Pause for manual testing after each step. Agents and timers are deferred. Jira and Yandex.Tracker integrations belong to a new session.
+
+Human duration input reads numeric groups: one means minutes, two mean hours/minutes, three mean days/hours/minutes (24-hour days). Separators are ignored, so `1h 35m`, `1h30m`, and `1n20m` work. `30` means 30 minutes; `1h` also means one minute under this positional convention—use `1h0m` for one hour. Human entry has no seconds field; storage remains seconds for compatibility, and editing other fields preserves existing durations.

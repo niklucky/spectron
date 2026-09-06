@@ -57,6 +57,13 @@
       "when": 1788727270089,
       "tag": "0007_bitter_pyro",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1788729349251,
+      "tag": "0008_nice_medusa",
+      "breakpoints": true
     }
   ]
 }
