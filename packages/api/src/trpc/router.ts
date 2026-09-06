@@ -2,11 +2,17 @@ import { initTRPC, TRPCError } from "@trpc/server";
 import { z } from "zod";
 import {
   ProjectAccessError,
+  IssueInputError,
+  IssueConflictError,
   InvitationError,
   LogoError,
   discoverProjectLogo,
 } from "@spectron/backend";
-import { normalizeProjectURL } from "@spectron/shared";
+import {
+  applicationIdPattern,
+  issueTriggers,
+  normalizeProjectURL,
+} from "@spectron/shared";
 import type { Context } from "./context";
 
 const t = initTRPC.context<Context>().create({
@@ -30,9 +36,15 @@ const authenticated = t.procedure.use(async ({ ctx, next }) => {
       message: result.error.cause.message,
     });
   }
+  if (!result.ok && result.error.cause instanceof IssueConflictError)
+    throw new TRPCError({
+      code: "CONFLICT",
+      message: result.error.cause.message,
+    });
   if (
     !result.ok &&
-    (result.error.cause instanceof LogoError ||
+    (result.error.cause instanceof IssueInputError ||
+      result.error.cause instanceof LogoError ||
       result.error.cause instanceof InvitationError)
   )
     throw new TRPCError({
@@ -77,12 +89,92 @@ const projectInput = z
       .transform((value) => value || null),
   })
   .strict();
-const projectId = z.object({ id: z.uuid() }).strict();
+// Accept retained UUIDs so existing project links and invitations keep working.
+const applicationId = z.union([
+  z.string().regex(applicationIdPattern),
+  z.uuid(),
+]);
+const projectId = z.object({ id: applicationId }).strict();
 
 const invitationToken = z
   .object({ token: z.string().regex(/^[a-f0-9]{64}$/) })
   .strict();
+const issueScope = z.object({ projectId: applicationId }).strict();
+const issueRef = issueScope.extend({ id: applicationId });
+const issueFields = z
+  .object({
+    title: z.string().trim().min(1).max(140),
+    description: z.string().max(100_000),
+    parentId: applicationId.nullable(),
+    assigneeId: z.string().min(1).max(128).nullable(),
+    stateId: applicationId,
+    priorityId: applicationId.nullable(),
+  })
+  .strict();
+const optionRef = issueScope.extend({
+  kind: z.enum(["state", "priority"]),
+  id: applicationId,
+});
 export const appRouter = t.router({
+  issues: t.router({
+    list: authenticated
+      .input(issueScope)
+      .query(({ ctx, input }) => ctx.issues.list(ctx.userId, input.projectId)),
+    settings: authenticated
+      .input(issueScope)
+      .query(({ ctx, input }) =>
+        ctx.issues.settings(ctx.userId, input.projectId),
+      ),
+    create: authenticated
+      .input(
+        issueFields
+          .partial()
+          .extend({ projectId: applicationId, title: issueFields.shape.title }),
+      )
+      .mutation(({ ctx, input }) => ctx.issues.create(ctx.userId, input)),
+    update: authenticated
+      .input(
+        issueFields
+          .partial()
+          .extend({
+            projectId: applicationId,
+            id: applicationId,
+            expectedUpdatedAt: z.iso.datetime(),
+          }),
+      )
+      .mutation(({ ctx, input }) => ctx.issues.update(ctx.userId, input)),
+    setDeleted: authenticated
+      .input(
+        issueRef.extend({
+          deleted: z.boolean(),
+          expectedUpdatedAt: z.iso.datetime(),
+        }),
+      )
+      .mutation(({ ctx, input }) => ctx.issues.setDeleted(ctx.userId, input)),
+    history: authenticated
+      .input(issueRef.extend({ offset: z.number().int().min(0).default(0) }))
+      .query(({ ctx, input }) =>
+        ctx.issues.history(ctx.userId, input.projectId, input.id, input.offset),
+      ),
+    saveOption: authenticated
+      .input(
+        optionRef.omit({ id: true }).extend({
+          id: applicationId.optional(),
+          name: z.string().trim().min(1).max(80),
+          position: z.number().int().min(0).max(10000),
+          color: z
+            .string()
+            .regex(/^#[0-9a-fA-F]{6}$/)
+            .nullable(),
+          trigger: z.enum(issueTriggers).optional(),
+          isDefault: z.boolean().optional(),
+        }),
+      )
+      .mutation(({ ctx, input }) => ctx.issues.saveOption(ctx.userId, input)),
+    deleteOption: authenticated
+      .input(optionRef)
+      .mutation(({ ctx, input }) => ctx.issues.deleteOption(ctx.userId, input)),
+  }),
   invitations: t.router({
     preview: authenticated
       .input(invitationToken)
@@ -116,7 +208,7 @@ export const appRouter = t.router({
       .input(
         z
           .object({
-            id: z.uuid(),
+            id: applicationId,
             email: z.string().trim().toLowerCase().email().max(254),
           })
           .strict(),
@@ -125,7 +217,9 @@ export const appRouter = t.router({
         ctx.invitations.invite(ctx.userId, input.id, input.email),
       ),
     cancelInvitation: authenticated
-      .input(z.object({ id: z.uuid(), invitationId: z.uuid() }).strict())
+      .input(
+        z.object({ id: applicationId, invitationId: applicationId }).strict(),
+      )
       .mutation(({ ctx, input }) =>
         ctx.invitations.cancel(ctx.userId, input.id, input.invitationId),
       ),
@@ -137,7 +231,7 @@ export const appRouter = t.router({
       .input(projectInput)
       .mutation(({ ctx, input }) => ctx.projects.create(ctx.userId, input)),
     update: authenticated
-      .input(projectInput.extend({ id: z.uuid() }))
+      .input(projectInput.extend({ id: applicationId }))
       .mutation(({ ctx, input: { id, ...input } }) =>
         ctx.projects.update(ctx.userId, id, input),
       ),

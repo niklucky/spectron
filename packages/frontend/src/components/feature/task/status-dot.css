@@ -18,7 +18,10 @@
   border-color: var(--color-status-review);
   background: var(--color-status-review);
 }
-.status-dot.done {
+.status-dot.done, .status-dot.finished {
   border-color: var(--color-status-done);
   background: var(--color-status-done);
 }
+
+.status-dot.blocked { border-color: var(--color-status-review); background: var(--color-status-review); }
+.status-dot.cancelled { border-color: var(--color-text-secondary); background: var(--color-text-secondary); }

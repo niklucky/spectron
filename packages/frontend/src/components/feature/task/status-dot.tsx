@@ -1,8 +1,15 @@
 import type { Task } from "./types";
-export function StatusDot({ status }: { status: Task["status"] }) {
+export function StatusDot({
+  status,
+  color,
+}: {
+  status: Task["status"];
+  color?: string | null;
+}) {
   return (
     <span
-      className={`status-dot ${status.toLowerCase().replaceAll(" ", "-")}`}
+      style={color ? { borderColor: color, background: color } : undefined}
+      className={`status-dot ${status.toLowerCase().replaceAll(" ", "-").replaceAll("_", "-")}`}
     />
   );
 }

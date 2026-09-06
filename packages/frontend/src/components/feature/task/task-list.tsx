@@ -4,6 +4,9 @@ import { Input, Select } from "../../ui/input";
 import { TaskItem } from "./task-item";
 import type { Project, TaskListItem } from "./types";
 type TaskListProps = {
+  loading?: boolean;
+  error?: string;
+  onRetry?: () => void;
   project: string;
   projects: Project[];
   isFlow: boolean;
@@ -21,6 +24,9 @@ type TaskListProps = {
   onNewTask: () => void;
 };
 export function TaskList({
+  loading = false,
+  error = "",
+  onRetry,
   project,
   projects,
   isFlow,
@@ -83,11 +89,21 @@ export function TaskList({
         >
           <option value="all">All tasks</option>
           <option value="open">Open tasks</option>
-          <option value="unread">Unread</option>
+          <option value="deleted">Deleted tasks</option>
         </Select>
         <span>{tasks.length}</span>
       </div>
       <div className="task-list">
+        {loading && (
+          <p className="list-empty" role="status">
+            Loading issues…
+          </p>
+        )}
+        {error && (
+          <p className="list-empty" role="alert">
+            {error} <button onClick={onRetry}>Retry</button>
+          </p>
+        )}
         {tasks.map((item) => (
           <TaskItem
             key={item.id}
@@ -98,7 +114,7 @@ export function TaskList({
             onSelect={onSelectTask}
           />
         ))}
-        {!tasks.length && (
+        {!loading && !error && !tasks.length && (
           <div className="list-empty">
             {query || filter !== "all" ? (
               <>

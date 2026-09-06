@@ -4,6 +4,7 @@ import { getConnInfo } from "@hono/node-server/conninfo";
 import type { HttpBindings } from "@hono/node-server";
 import {
   createProjectService,
+  createIssueService,
   createInvitationService,
   type InvitationConfig,
   type Auth,
@@ -29,6 +30,7 @@ export function createAPI(
     sendInvitationEmail?: InvitationConfig["sendInvitationEmail"];
   },
 ) {
+  const issues = createIssueService(db);
   const projects = createProjectService(db);
   const invitations = createInvitationService(db, {
     appURL,
@@ -68,7 +70,7 @@ export function createAPI(
       req: c.req.raw,
       router: appRouter,
       createContext: () =>
-        createContext(auth, projects, invitations, c.req.raw),
+        createContext(auth, projects, invitations, c.req.raw, issues),
     });
   });
   api.get("/api/me", async (c) => {

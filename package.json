@@ -17,7 +17,8 @@
     "db:generate": "pnpm --filter @spectron/db generate",
     "db:migrate": "pnpm --filter @spectron/db migrate",
     "test:auth": "pnpm --filter @spectron/api test",
-    "test:projects": "pnpm --filter @spectron/api test:projects"
+    "test:projects": "pnpm --filter @spectron/api test:projects",
+    "test:issues": "pnpm --filter @spectron/api test:issues"
   },
   "devDependencies": {
     "turbo": "2.10.12",

@@ -85,6 +85,7 @@ export function ProjectForm({
             Issue prefix
             <Input
               aria-label="Issue prefix"
+              disabled={!!initialValues}
               required
               minLength={2}
               maxLength={10}

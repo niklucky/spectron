@@ -5,6 +5,7 @@ import {
   type CreateProjectInput,
   type ProjectSummary,
 } from "@spectron/shared";
+import { seedIssueSettings, IssueInputError } from "./issues";
 import { normalizeLogoDataURL } from "./project-logo/images";
 
 const { project, projectMember } = schema;
@@ -55,6 +56,7 @@ export function createProjectService(db: Database) {
         await tx
           .insert(projectMember)
           .values({ projectId: row!.id, userId, role: "owner" });
+        await seedIssueSettings(tx, row!.id);
         return summary(row!, "owner");
       });
     },
@@ -95,36 +97,41 @@ export function createProjectService(db: Database) {
       });
     },
     async update(userId: string, id: string, input: CreateProjectInput) {
-      // Keep the access check inside the write so another user's ID cannot be used.
-      const owned = db
-        .select({ id: projectMember.projectId })
-        .from(projectMember)
-        .where(
-          and(
-            eq(projectMember.userId, userId),
-            eq(projectMember.projectId, id),
-            eq(projectMember.role, "owner"),
-          ),
-        );
-      const values = {
-        ...input,
-        url: normalizeProjectURL(input.url || null),
-        logo: await normalizeLogoDataURL(input.logo || null),
-      };
-      const [row] = await db
-        .update(project)
-        .set(values)
-        .where(
-          and(
-            eq(project.id, id),
-            eq(project.state, "active"),
-            inArray(project.id, owned),
-          ),
-        )
-        .returning();
-      if (!row)
-        throw new ProjectAccessError("Project not found or not editable.");
-      return summary(row, "owner");
+      const logo = await normalizeLogoDataURL(input.logo || null);
+      return db.transaction(async (tx) => {
+        const [row] = await tx
+          .select()
+          .from(project)
+          .where(eq(project.id, id))
+          .for("update");
+        const [owner] = await tx
+          .select()
+          .from(projectMember)
+          .where(
+            and(
+              eq(projectMember.projectId, id),
+              eq(projectMember.userId, userId),
+              eq(projectMember.role, "owner"),
+            ),
+          )
+          .for("share");
+        if (!row || !owner || row.state !== "active")
+          throw new ProjectAccessError("Project not found or not editable.");
+        if (input.key !== row.key)
+          throw new IssueInputError(
+            "Project prefixes are locked after creation.",
+          );
+        const [updated] = await tx
+          .update(project)
+          .set({
+            name: input.name,
+            url: normalizeProjectURL(input.url || null),
+            logo,
+          })
+          .where(eq(project.id, id))
+          .returning();
+        return summary(updated!, "owner");
+      });
     },
   };
 }

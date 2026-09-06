@@ -13,18 +13,37 @@ export function NewTaskDialog({
   project: string;
   projects: Project[];
   isFlow: boolean;
-  onCreate: (title: string, project: string) => void;
+  onCreate: (title: string, project: string) => Promise<void>;
   onClose: () => void;
 }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
   const [newTitle, setNewTitle] = useState("");
   const [newTaskProject, setNewTaskProject] = useState(project);
   return (
-    <Dialog title="New task" onClose={onClose}>
+    <Dialog
+      title="New task"
+      onClose={() => {
+        if (!busy) onClose();
+      }}
+    >
       <form
-        onSubmit={(event) => {
+        onSubmit={async (event) => {
           event.preventDefault();
-          if (newTitle.trim())
-            onCreate(newTitle.trim(), isFlow ? newTaskProject : project);
+          if (!newTitle.trim() || busy) return;
+          setBusy(true);
+          setError("");
+          try {
+            await onCreate(newTitle.trim(), isFlow ? newTaskProject : project);
+          } catch (cause) {
+            setError(
+              cause instanceof Error
+                ? cause.message
+                : "Could not create issue.",
+            );
+          } finally {
+            setBusy(false);
+          }
         }}
       >
         <label className="field-label" htmlFor="task-title">
@@ -39,6 +58,11 @@ export function NewTaskDialog({
           required
           maxLength={140}
         />
+        {error && (
+          <p className="project-error" role="alert">
+            {error}
+          </p>
+        )}
         <div className="dialog-footer">
           {isFlow ? (
             <label className="project-picker">
@@ -59,8 +83,8 @@ export function NewTaskDialog({
           ) : (
             <span>{projects.find((item) => item.id === project)?.name}</span>
           )}
-          <Button type="submit" disabled={!newTitle.trim()}>
-            Create task
+          <Button type="submit" disabled={busy || !newTitle.trim()}>
+            {busy ? "Creating…" : "Create task"}
           </Button>
         </div>
       </form>

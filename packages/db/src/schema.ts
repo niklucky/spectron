@@ -1,3 +1,4 @@
+import { createId, issueTriggers, type HistoryChanges } from "@spectron/shared";
 import { sql } from "drizzle-orm";
 import {
   pgTable,
@@ -8,9 +9,11 @@ import {
   uniqueIndex,
   integer,
   bigint,
-  uuid,
   primaryKey,
   pgEnum,
+  jsonb,
+  foreignKey,
+  check,
 } from "drizzle-orm/pg-core";
 
 const dates = () => ({
@@ -121,20 +124,21 @@ export const invitationStatus = pgEnum("invitation_status", [
 ]);
 
 export const project = pgTable("projects", {
-  id: uuid("id").defaultRandom().primaryKey(),
+  id: text("id").$defaultFn(createId).primaryKey(),
   name: text("name").notNull(),
   key: text("key").notNull(),
   state: projectState("state").default("active").notNull(),
   color: projectColor("color").default("blue").notNull(),
   url: text("url"),
   logo: text("logo"),
+  issueCounter: integer("issue_counter").default(0).notNull(),
   ...dates(),
 });
 
 export const projectMember = pgTable(
   "project_members",
   {
-    projectId: uuid("project_id")
+    projectId: text("project_id")
       .notNull()
       .references(() => project.id, { onDelete: "cascade" }),
     userId: text("user_id")
@@ -157,8 +161,8 @@ export type ProjectMember = typeof projectMember.$inferSelect;
 export const projectInvitation = pgTable(
   "project_invitations",
   {
-    id: uuid("id").defaultRandom().primaryKey(),
-    projectId: uuid("project_id")
+    id: text("id").$defaultFn(createId).primaryKey(),
+    projectId: text("project_id")
       .notNull()
       .references(() => project.id, { onDelete: "cascade" }),
     email: text("email").notNull(),
@@ -176,4 +180,129 @@ export const projectInvitation = pgTable(
       .on(table.projectId, table.email)
       .where(sql`${table.status} in ('sending', 'pending')`),
   ],
+);
+
+export const issueTrigger = pgEnum("issue_trigger", issueTriggers);
+const optionFields = () => ({
+  id: text("id").$defaultFn(createId).primaryKey(),
+  projectId: text("project_id")
+    .notNull()
+    .references(() => project.id, { onDelete: "restrict" }),
+  name: text("name").notNull(),
+  position: integer("position").notNull(),
+  color: text("color"),
+  ...dates(),
+  deletedAt: timestamp("deleted_at", { withTimezone: true }),
+});
+export const issueState = pgTable(
+  "issue_states",
+  {
+    ...optionFields(),
+    trigger: issueTrigger("trigger").notNull(),
+    isDefault: boolean("is_default").default(false).notNull(),
+  },
+  (t) => [
+    uniqueIndex("issue_states_project_id_unique").on(t.projectId, t.id),
+    uniqueIndex("issue_states_default_unique")
+      .on(t.projectId)
+      .where(sql`${t.isDefault} AND ${t.deletedAt} IS NULL`),
+    check(
+      "issue_states_default_opened",
+      sql`NOT ${t.isDefault} OR (${t.trigger} = 'opened' AND ${t.deletedAt} IS NULL)`,
+    ),
+  ],
+);
+export const issuePriority = pgTable(
+  "issue_priorities",
+  optionFields(),
+  (t) => [
+    uniqueIndex("issue_priorities_project_id_unique").on(t.projectId, t.id),
+  ],
+);
+export const issue = pgTable(
+  "issues",
+  {
+    id: text("id").$defaultFn(createId).primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => project.id, { onDelete: "restrict" }),
+    parentId: text("parent_id"),
+    number: integer("number").notNull(),
+    title: text("title").notNull(),
+    description: text("description").default("").notNull(),
+    authorId: text("author_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "restrict" }),
+    assigneeId: text("assignee_id").references(() => user.id, {
+      onDelete: "restrict",
+    }),
+    stateId: text("state_id").notNull(),
+    priorityId: text("priority_id"),
+    ...dates(),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex("issues_project_number_unique").on(t.projectId, t.number),
+    uniqueIndex("issues_project_id_unique").on(t.projectId, t.id),
+    index("issues_parent_idx").on(t.parentId),
+    check("issues_number_positive", sql`${t.number} > 0`),
+    check(
+      "issues_parent_not_self",
+      sql`${t.parentId} IS NULL OR ${t.parentId} <> ${t.id}`,
+    ),
+    foreignKey({
+      columns: [t.projectId, t.parentId],
+      foreignColumns: [t.projectId, t.id],
+      name: "issues_parent_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [t.projectId, t.stateId],
+      foreignColumns: [issueState.projectId, issueState.id],
+      name: "issues_state_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [t.projectId, t.priorityId],
+      foreignColumns: [issuePriority.projectId, issuePriority.id],
+      name: "issues_priority_fk",
+    }).onDelete("restrict"),
+  ],
+);
+export const issueHistory = pgTable(
+  "issue_history",
+  {
+    id: text("id").$defaultFn(createId).primaryKey(),
+    issueId: text("issue_id")
+      .notNull()
+      .references(() => issue.id, { onDelete: "restrict" }),
+    actorUserId: text("actor_user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "restrict" }),
+    action: text("action")
+      .$type<"created" | "updated" | "deleted" | "restored">()
+      .notNull(),
+    changes: jsonb("changes").$type<HistoryChanges>().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => [index("issue_history_issue_idx").on(t.issueId, t.createdAt)],
+);
+export const projectHistory = pgTable(
+  "project_history",
+  {
+    id: text("id").$defaultFn(createId).primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => project.id, { onDelete: "restrict" }),
+    actorUserId: text("actor_user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "restrict" }),
+    entityId: text("entity_id").notNull(),
+    entityType: text("entity_type").notNull(),
+    changes: jsonb("changes").$type<HistoryChanges>().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => [index("project_history_project_idx").on(t.projectId, t.createdAt)],
 );

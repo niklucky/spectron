@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { randomUUID } from "node:crypto";
 import { createDatabase, migrateDatabase } from "@spectron/db";
 import { createAuth, createProjectService } from "@spectron/backend";
-import type { ProjectSummary } from "@spectron/shared";
+import { applicationIdPattern, createId, type ProjectSummary } from "@spectron/shared";
 import { createAPI } from "../src/index";
 
 test("Project tRPC endpoints and membership isolation", async (t) => {
@@ -101,6 +101,7 @@ test("Project tRPC endpoints and membership isolation", async (t) => {
         true,
       ),
     );
+    assert.match(project.id, applicationIdPattern);
     assert.equal(project.name, "Spectron");
     assert.equal(project.key, "SP");
     assert.equal(project.role, "owner");
@@ -245,6 +246,7 @@ test("Project tRPC endpoints and membership isolation", async (t) => {
     }
     assert.equal((await call("get", owner, { id: "invalid" })).status, 400);
     assert.equal((await call("get", owner, { id: randomUUID() })).status, 404);
+    assert.equal((await call("get", owner, { id: createId() })).status, 404);
   });
   await t.test("persists uploaded logos and allows removing them", async () => {
     const logo = `data:image/svg+xml;base64,${Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><rect width="32" height="32" fill="blue"/></svg>').toString("base64")}`;

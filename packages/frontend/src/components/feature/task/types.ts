@@ -1,7 +1,10 @@
-export type Task = {
+import type { IssueSummary, IssueTrigger } from "@spectron/shared";
+export type Task = IssueSummary & {
   id: string;
   title: string;
-  status: "In progress" | "In review" | "Todo" | "Done";
+  status: string;
+  statusTrigger: IssueTrigger;
+  stateColor: string | null;
   updated: string;
   preview: string;
   initials: string;

@@ -30,7 +30,7 @@ export function TaskItem({
               <span className="task-context-divider">/</span>
             </>
           )}
-          <span>{item.id}</span>
+          <span>{item.key}</span>
         </span>
         {!!item.unread && (
           <span
@@ -43,12 +43,18 @@ export function TaskItem({
       </div>
       <h2>{item.title}</h2>
       <div className="task-status">
-        <StatusDot status={item.status} />
+        <StatusDot status={item.statusTrigger} color={item.stateColor} />
         <span>{item.status}</span>
         <span className="status-age">{item.updated}</span>
       </div>
       <div className="task-preview">
-        <Avatar initials={item.initials.slice(0, 1)} color={item.color} small />
+        {item.initials && (
+          <Avatar
+            initials={item.initials.slice(0, 1)}
+            color={item.color}
+            small
+          />
+        )}
         <span>{item.preview}</span>
         <time>{item.time}</time>
       </div>

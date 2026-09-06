@@ -7,3 +7,5 @@ Run `pnpm dev:api` from the root. Auth configuration belongs in `@spectron/backe
 `pnpm test:auth` exercises real HTTP handlers against a disposable Postgres database. See the root README for endpoint contracts and configuration.
 
 `src/trpc` contains the authenticated context and project router. `pnpm test:projects` tests project endpoints and membership isolation in a disposable Postgres database. `./router` exports `AppRouter` for type-only browser imports.
+
+The authenticated `issues` router provides persistence, workflow options, soft deletion/restoration, and history. `pnpm test:issues` exercises real HTTP routes and disposable Postgres data, including concurrency and rollback. Browser code uses the shared issue contracts.

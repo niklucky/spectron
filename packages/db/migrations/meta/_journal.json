@@ -29,6 +29,20 @@
       "when": 1788718819603,
       "tag": "0003_project_invitations",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1788722427787,
+      "tag": "0004_material_harrier",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1788723680083,
+      "tag": "0005_tricky_smiling_tiger",
+      "breakpoints": true
     }
   ]
 }

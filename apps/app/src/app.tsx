@@ -1,12 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { AccountMenu } from "@spectron/frontend/components/feature/account";
 import {
-  ChatPanel,
-  ChatHeader,
-  ChatTimeline,
-  ChatComposer,
-} from "@spectron/frontend/components/feature/chat";
-import { TaskList } from "@spectron/frontend/components/feature/task";
+  TaskList,
+  IssuePanel,
+} from "@spectron/frontend/components/feature/task";
 import {
   Sidebar,
   WorkspaceLayout,
@@ -69,12 +66,28 @@ function Workspace({
         })),
     [projectState.projects],
   );
+  const workspace = useWorkspace(user.name, projects);
   const [settingsId, setSettingsId] = useState<string | null>(null);
   const settingsProject = projectState.projects.find(
     (item) => item.id === settingsId && item.state === "active",
   );
   const settingsActions = useMemo(
     () => ({
+      issueSettings: {
+        load: () => trpc.issues.settings.query({ projectId: settingsId! }),
+        save: async (input: import("@spectron/shared").IssueOptionInput) => {
+          await trpc.issues.saveOption.mutate(input);
+          await workspace.refresh();
+        },
+        remove: async (kind: "state" | "priority", id: string) => {
+          await trpc.issues.deleteOption.mutate({
+            projectId: settingsId!,
+            kind,
+            id,
+          });
+          await workspace.refresh();
+        },
+      },
       update: (input: import("@spectron/shared").CreateProjectInput) =>
         projectState.update(settingsId!, input),
       members: () => trpc.projects.members.query({ id: settingsId! }),
@@ -88,11 +101,21 @@ function Workspace({
         }),
       discoverLogo: (url: string) => trpc.projects.discoverLogo.mutate({ url }),
     }),
-    [settingsId, projectState.update],
+    [settingsId, projectState.update, workspace.refresh],
   );
-  const workspace = useWorkspace(user.name, projects);
   const project = projects.find((item) => item.id === workspace.project);
   const task = workspace.task;
+  const issueActions = useMemo(
+    () => ({
+      members: (projectId: string) =>
+        trpc.projects.members.query({ id: projectId }),
+      history: (projectId: string, id: string, offset: number) =>
+        trpc.issues.history.query({ projectId, id, offset }),
+      save: workspace.saveIssue,
+      setDeleted: workspace.setDeleted,
+    }),
+    [workspace.saveIssue, workspace.setDeleted],
+  );
   const clearFilters = () => {
     workspace.setQuery("");
     workspace.setFilter("all");
@@ -167,6 +190,9 @@ function Workspace({
       ) : (
         <>
           <TaskList
+            loading={workspace.loading}
+            error={workspace.error}
+            onRetry={() => void workspace.refresh()}
             project={workspace.project}
             projects={projects}
             isFlow={workspace.isFlow}
@@ -190,54 +216,31 @@ function Workspace({
             onNewTask={() => workspace.openModal("new-task")}
           />
           {task && project ? (
-            <ChatPanel
-              header={
-                <ChatHeader
-                  assignee={{
-                    name: workspace.name,
-                    initials: workspace.name.slice(0, 2).toUpperCase(),
-                    color: "sage",
-                  }}
-                  sources={[]}
-                  task={task}
-                  projectInfo={project}
-                  isFlow={workspace.isFlow}
-                  details={workspace.details}
-                  onBack={() => workspace.setMobileChat(false)}
-                  onToggleDetails={() =>
-                    workspace.setDetails((value) => !value)
-                  }
-                  onStatusChange={(status) => workspace.updateTask({ status })}
-                  onCopyLink={workspace.copyTaskLink}
-                  onSources={() => workspace.openModal("sources")}
-                />
+            <IssuePanel
+              key={task.id}
+              issue={task}
+              settings={
+                workspace.settings[task.projectId] ?? {
+                  states: [],
+                  priorities: [],
+                }
               }
-              composer={
-                <ChatComposer
-                  project={project.name}
-                  taskId={task.id}
-                  draft={workspace.draft}
-                  attachment={workspace.attachment}
-                  recording={workspace.recording}
-                  composeRef={workspace.composeRef}
-                  onDraftChange={workspace.setDraft}
-                  onSend={workspace.sendMessage}
-                  onAttachFile={workspace.attachFile}
-                  onRemoveAttachment={workspace.removeAttachment}
-                  onToggleRecording={() => void workspace.toggleRecording()}
-                />
-              }
-            >
-              <ChatTimeline
-                title={task.title}
-                historyRef={workspace.historyRef}
-                endRef={workspace.bottomRef}
-                messages={workspace.messages}
-              ></ChatTimeline>
-            </ChatPanel>
+              issues={workspace.allIssues}
+              actions={issueActions}
+              onBack={() => workspace.setMobileChat(false)}
+              onCopy={workspace.copyTaskLink}
+              onSelect={workspace.selectTask}
+            />
           ) : (
             <section className="chat-empty-state">
-              <p>Select a task to start a conversation.</p>
+              <button className="mobile-back" onClick={() => workspace.setMobileChat(false)}>Back to tasks</button>
+              <p>
+                {workspace.loading
+                  ? "Loading issues…"
+                  : workspace.selectedId
+                    ? "Issue not found. Select another issue or create one."
+                    : "Select an issue to view its details."}
+              </p>
             </section>
           )}
         </>

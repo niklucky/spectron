@@ -9,7 +9,7 @@ import {
   createInvitationEmailSender,
   type InvitationEmail,
 } from "@spectron/backend";
-import type { ProjectSummary, InvitationSummary } from "@spectron/shared";
+import { applicationIdPattern, type ProjectSummary, type InvitationSummary } from "@spectron/shared";
 import { createAPI } from "../src/index";
 
 test("Project invitation lifecycle and archive", async (t) => {
@@ -265,6 +265,7 @@ test("Project invitation lifecycle and archive", async (t) => {
           true,
         ),
       );
+      assert.match(sent.id, applicationIdPattern);
       const cancelledToken = token();
       assert.equal(
         (

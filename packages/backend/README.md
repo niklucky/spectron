@@ -7,3 +7,5 @@ Factories accept dependencies so tests can use the real database and replace ema
 `src/project-logo` discovers declared website icons, fetches public resources with bounded requests and DNS pinning, and normalizes uploaded/discovered images into small PNG data URLs. `PROJECT_LOGO_DNS=cloudflare` optionally enables encrypted DNS for VPN environments; system DNS is the default.
 
 `createInvitationService` manages team lists, invitation lifecycle, and transactional acceptance. `createInvitationEmailSender` sends plain-text Resend invitations with idempotency keys. Tests inject a captured sender.
+
+`createIssueService` implements project-scoped issues, configuration, and history. A project row lock serializes writes to protect numbering, hierarchy, configuration and archive races. Updates require the last-seen issue timestamp. History writes share the issue transaction. Project creation seeds default states/priorities; prefixes are immutable.

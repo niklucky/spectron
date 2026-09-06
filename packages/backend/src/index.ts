@@ -16,3 +16,6 @@ export type {
   InvitationConfig,
   InvitationEmail,
 } from "./project-invitations";
+
+export { createIssueService, IssueInputError, IssueConflictError } from "./issues";
+export type { IssueService } from "./issues";

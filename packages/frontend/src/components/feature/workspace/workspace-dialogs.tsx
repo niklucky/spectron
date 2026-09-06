@@ -34,7 +34,7 @@ type WorkspaceDialogsProps = {
   theme: Theme;
   setTheme: (theme: Theme) => void;
   onProfileSave: (name: string) => void | Promise<void>;
-  onCreateTask: (title: string, project: string) => void;
+  onCreateTask: (title: string, project: string) => Promise<void>;
   onClose: () => void;
 };
 export function WorkspaceDialogs({

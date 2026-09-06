@@ -8,9 +8,14 @@ import type {
 import { Dialog } from "../../ui/dialog";
 import { Button } from "../../ui/button";
 import { Input } from "../../ui/input";
+import {
+  ProjectIssueSettings,
+  type IssueSettingsActions,
+} from "./issue-settings";
 import { ProjectForm } from "./project-form";
 
 export type ProjectSettingsActions = {
+  issueSettings: IssueSettingsActions;
   update: (input: CreateProjectInput) => Promise<void>;
   members: () => Promise<ProjectMemberSummary[]>;
   invitations: () => Promise<InvitationSummary[]>;
@@ -43,22 +48,22 @@ export function ProjectSettingsDialog({
           className="project-settings-nav"
           aria-label="Project settings sections"
         >
-          {(["general", "members"] as const).map((item) => (
-            <button
-              key={item}
-              aria-current={tab === item ? "page" : undefined}
-              disabled={busy}
-              onClick={() => setTab(item)}
-            >
-              {item === "general" ? "General" : "Members"}
-            </button>
-          ))}
+          {(["general", "members", "states", "priorities"] as const).map(
+            (item) => (
+              <button
+                key={item}
+                aria-current={tab === item ? "page" : undefined}
+                disabled={busy}
+                onClick={() => setTab(item)}
+              >
+                {item.charAt(0).toUpperCase() + item.slice(1)}
+              </button>
+            ),
+          )}
         </nav>
         <section
           className="project-settings-content"
-          aria-label={
-            tab === "general" ? "General settings" : "Project members"
-          }
+          aria-label={`${tab} settings`}
         >
           {tab === "general" ? (
             <>
@@ -86,6 +91,15 @@ export function ProjectSettingsDialog({
                 </p>
               )}
             </>
+          ) : tab === "states" || tab === "priorities" ? (
+            <ProjectIssueSettings
+              key={tab}
+              projectId={project.id}
+              owner={project.role === "owner"}
+              kind={tab === "states" ? "state" : "priority"}
+              actions={actions.issueSettings}
+              onBusyChange={setBusy}
+            />
           ) : (
             <ProjectMembers
               owner={project.role === "owner"}
