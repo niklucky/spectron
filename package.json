@@ -20,7 +20,8 @@
     "test:projects": "pnpm --filter @spectron/api test:projects",
     "test:issues": "pnpm --filter @spectron/api test:issues",
     "test:files": "pnpm --filter @spectron/api test:files",
-    "test:files:nginx": "python3 packages/api/test/nginx-files.py"
+    "test:files:nginx": "python3 packages/api/test/nginx-files.py",
+    "test:comments": "pnpm --filter @spectron/api test:comments"
   },
   "devDependencies": {
     "turbo": "2.10.12",

@@ -21,3 +21,4 @@ export { createIssueService, IssueInputError, IssueConflictError } from "./issue
 export type { IssueService } from "./issues";
 export { createFileService, FileInputError, FileSizeError, FileUnavailableError } from "./files";
 export type { FileService, FileStorageConfig } from "./files";
+export { createCommentService, type CommentService } from "./comments";

@@ -56,6 +56,7 @@ pnpm test:auth
 pnpm test:projects
 pnpm test:issues
 pnpm test:files
+pnpm test:comments
 pnpm test:files:nginx  # Requires Docker
 ```
 
@@ -69,7 +70,7 @@ Registration signs the user in immediately. Login sessions are stored in Postgre
 
 Add `RESEND_API_KEY` and `EMAIL_FROM` in `.env`, then restart the API to enable reset emails. The sender must belong to a [verified Resend domain](https://resend.com/docs/send-with-nodejs). Without email configuration, registration and login work; reset email delivery failures are reported in server logs. Reset requests always show the same public response whether the email exists or delivery fails. Tokens and provider response bodies are not logged.
 
-The current flow uses [Better Auth email/password authentication](https://better-auth.com/docs/authentication/email-password). Registration is open and does not require email verification yet. Team invitations, permissions, and provider logins can be added later. Issues now persist in Postgres. Files and reusable issue attachments also persist. Threaded comments and worklogs are the next implementation slices.
+The current flow uses [Better Auth email/password authentication](https://better-auth.com/docs/authentication/email-password). Registration is open and does not require email verification yet. Team invitations, permissions, and provider logins can be added later. Issues now persist in Postgres. Files and reusable issue attachments also persist. Threaded comments, mentions and comment attachments are implemented; manual worklogs are next.
 
 | Method | Endpoint                           | Purpose                                           |
 | ------ | ---------------------------------- | ------------------------------------------------- |
@@ -126,7 +127,7 @@ Put a TLS reverse proxy in front of the app on port 8080. The public page is on 
 
 ## Next steps
 
-Threaded comments, mentions, worklogs, broader team permissions, integrations, and agent execution remain to be implemented.
+Worklogs, comment notifications, broader team permissions, integrations, and agent execution remain to be implemented.
 
 An open source license still needs to be selected before public distribution.
 
@@ -168,7 +169,7 @@ Project settings has States and Priorities sections. Owners can add, rename, reo
 
 Issue history is append-only and written in the same transaction as each create/update/delete/restore. It records the actor and old/new field values. All project members can read it, including deleted issue history. Database triggers reject history updates/deletes. Configuration changes are recorded separately in `project_history`. Editors send the last-seen `updated_at` and receive a conflict instead of overwriting newer changes.
 
-The UI replaces temporary task creation with persisted issues. Use Edit issue for title, description, state, priority, assignee and parent. Child issues link back into the same panel. The Deleted tasks filter exposes soft-deleted issues and their Restore issue action. Files are available in the issue panel. Comments are deferred, so the temporary chat composer is no longer shown. Old in-memory tasks were never saved and cannot survive reloads.
+The UI replaces temporary task creation with persisted issues. Use Edit issue for title, description, state, priority, assignee and parent. Child issues link back into the same panel. The Deleted tasks filter exposes soft-deleted issues and their Restore issue action. Files are available in the issue panel. Threaded comments use a persistent composer below attachments. Old in-memory tasks were never saved and cannot survive reloads.
 
 | tRPC procedure | Purpose |
 | --- | --- |
@@ -202,8 +203,22 @@ mkdir -p data/files
 sudo chown 1000:1000 data/files
 ```
 
-Set different IDs to match the host directory owner when needed. Back up both Postgres and the host file directory. Failed, abandoned and detached uploads are retained; there is no automatic byte cleanup. Global file deletion and project-library removal are not exposed in this slice. Comment attachments arrive with comments.
+Set different IDs to match the host directory owner when needed. Back up both Postgres and the host file directory. Failed, abandoned and detached uploads are retained; there is no automatic byte cleanup. Global file deletion and project-library removal are not exposed in this slice. Comments can reuse these same files.
 
 `POST /api/files/upload?projectId=...&filename=...` accepts raw file bytes with the session cookie and exact app Origin. `GET`/`HEAD /api/files/:projectId/:projectFileId` authorize downloads; `?download=1` requests a download. The authenticated tRPC `files` router provides `limits`, `library`, `attachments`, `link`, and `unlink`.
 
 `pnpm test:files` covers upload validation, membership isolation, reuse, soft removal, history rollback, range requests and cache authorization with disposable data. `pnpm test:files:nginx` verifies the production Nginx configuration in a disposable Docker container with a controlled upstream, including internal-only delivery, ranges and caching.
+
+## Threaded comments and mentions
+
+Each issue supports a tree of user comments. Write a comment, reply at any depth, or post files without text. Root comments and each expanded reply level load in chronological pages of 20; indentation is capped for readability. Use Refresh comments to see changes from other users. Comments remain readable on deleted issues and archived projects, which reject further writes.
+
+Type `@` and choose a project member to create a structured mention. Names are labels; the saved user ID identifies the mention even when names repeat. Editing inside a mention turns that edited text into ordinary text; select the member again to mention them. The server derives one active mention relation per user and retains removed relations with `deleted_at`. Mention notifications are deferred.
+
+Authors can edit or soft-delete their own comments; project owners can soft-delete others' comments for moderation. A deleted parent remains as a placeholder with its replies. Original content, attachment references and actors remain in history. Restoration UI is deferred. Editors retain the version they opened and reject stale saves; cancel and reopen the editor after a conflict.
+
+The composer supports up to 20 uploads or reused files and 100,000 text characters. Uploads retain the existing per-file size limit. Posting/editing atomically saves the comment body, mentions, attachment links and history. Cancelling after uploading leaves reusable project files. Cross-project reuse checks membership in both projects before granting the destination project access.
+
+The authenticated `comments` tRPC router provides `list` (issue, parent, optional cursor), `create`, `update`, and `delete`. All procedures require project and issue IDs; writes require the app Origin. Updates/deletion require the last-seen comment timestamp. No caller can change a comment's author or parent. Migration `0007` adds comments, mentions and comment attachments with same-issue/same-project foreign keys.
+
+Run `pnpm test:comments` for authorization, tree and pagination constraints, structured mention edits, attachment reuse, audit rollback, soft deletion and stale-write checks. Manual worklogs are the next slice; stop here for manual testing.

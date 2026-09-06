@@ -25,3 +25,5 @@ Migration `0003_project_invitations` adds active/archived project state and proj
 Migration `0005` adds issues, project issue counters, states, priorities, issue history, and configuration history. Composite foreign keys enforce same-project parent/state/priority references. New issue relations restrict physical deletion. History tables have append-only triggers. Existing projects receive default workflow options; new projects seed them transactionally through the backend.
 
 Migration `0006` adds files, project-file associations, issue attachments, and history entity type/ID. Files have no project ownership. Composite foreign keys keep attachments within their issue project, and unique association/link indexes allow soft-deleted relations to be restored. Physical file bytes live outside Postgres; backups must include the host file directory.
+
+Migration `0007` adds `issue_comments`, `comment_mentions` and `comment_attachments`. Composite foreign keys enforce same-issue parents and same-project files; unique relations permit soft-deleted mentions/attachments to be reactivated. Comment mutations write to existing append-only issue history.

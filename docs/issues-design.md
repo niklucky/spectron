@@ -12,7 +12,7 @@ Priorities are configurable per project. States are project-owned labels mapped 
 
 The first slice uses plain-text issue descriptions, a separate issue history panel, and whole-project list loading. These can evolve with rich content and pagination.
 
-## 2. Files — manually approved
+## 2. Files — manually approved and committed (`eec58a0`)
 
 Use host-mounted files, not MinIO: `/data/files/{yyyy-mm-dd}/{file_id}.ext`. File IDs use NanoIDs. The physical path has no project ownership. Store relative object keys and original filenames separately. The API mounts files read/write; Nginx mounts read-only.
 
@@ -26,13 +26,17 @@ Soft-delete links or project associations without removing shared bytes. Global 
 
 This slice implements issue attachments, a searchable project library, cross-project reuse, upload previews/downloads, and attachment history. Comment attachments remain for the next slice. Uploads and attachment linking are separate operations; ready uploads remain reusable when linking fails. The default limit is 50 MiB. Failed/pending uploads and detached bytes are retained. Global file deletion and project association removal have no API/UI yet. Development uses authenticated API streaming; Docker uses authenticated Nginx delivery.
 
-## 3. Comments and mentions — designed, not implemented
+## 3. Comments and mentions — manually approved
 
 Comments form a tree: ID, issue ID, optional parent ID, author ID, structured body, lifecycle timestamps. Parent is fixed at creation and must belong to the same issue. Arbitrary data nesting with capped visual indentation. Paginate roots and progressively load replies. Order siblings by creation time and ID. A deleted parent remains as a placeholder while retaining its replies.
 
 Bodies contain structured mentions with a user ID and display label. Maintain backend-derived `comment_mentions` records with lifecycle timestamps. The picker offers project members; mentioning someone never grants access. Repeated mentions of one user in a comment have one active relation. Edits soft-delete removed mentions. Future notifications distinguish replies and mentions, deduplicate recipients, avoid self-notifications, and notify only newly added mentions.
 
 Comments allow text, multiple attachments, or both. Authors can edit/delete their comments; owners can soft-delete for moderation initially. Retain old content and actors in history. User comments, system events and future PR/deploy/agent entries remain distinct models that the timeline can combine.
+
+This slice stores text/mention nodes, uses a textarea with an `@` project-member picker, and commits comment body, derived mention relations, attachment changes and history together. Roots and each reply level use cursor pages of 20; visual indentation stops growing after three levels. Existing files can be reused across accessible projects. Uploads are ready project files before posting; cancelling a draft retains them in the library. Each comment accepts up to 20 files and 100,000 text characters.
+
+Authors can edit and delete; project owners can delete for moderation. Deleted comments are placeholders, with original content retained in history and the database. Replies remain readable and can be added to a deleted parent. Comment restoration, notifications, rich formatting and system events are deferred. Use Refresh comments to load other users' changes; an editor retains its original version to prevent overwriting a concurrent edit.
 
 ## 4. Worklogs — designed, not implemented
 

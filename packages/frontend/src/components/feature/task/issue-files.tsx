@@ -294,7 +294,7 @@ export function IssueFiles({
     </section>
   );
 }
-function FilePicker({
+export function FilePicker({
   projectId,
   actions,
   onClose,

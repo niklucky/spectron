@@ -11,3 +11,5 @@ Run `pnpm dev:api` from the root. Auth configuration belongs in `@spectron/backe
 The authenticated `issues` router provides persistence, workflow options, soft deletion/restoration, and history. `pnpm test:issues` exercises real HTTP routes and disposable Postgres data, including concurrency and rollback. Browser code uses the shared issue contracts.
 
 `src/files.ts` handles streaming uploads and authenticated GET/HEAD downloads at `/api/files`. Development supports conditional and range requests directly; Docker returns an internal Nginx redirect after authorization. The `files` tRPC router handles the library and attachment links. Configure `FILES_ROOT`, `FILES_MAX_BYTES`, and `FILE_DELIVERY` in the server environment. Run `pnpm test:files` and `pnpm test:files:nginx` from the root.
+
+The authenticated `comments` router lists root/reply cursor pages and creates, edits or soft-deletes comments. Write schemas reject author/parent changes and require versions for edits/deletion. `pnpm test:comments` tests the real API and disposable database.

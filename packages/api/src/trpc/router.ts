@@ -117,13 +117,112 @@ const optionRef = issueScope.extend({
   kind: z.enum(["state", "priority"]),
   id: applicationId,
 });
+const commentScope = z
+  .object({ projectId: applicationId, issueId: applicationId })
+  .strict();
+const commentDraft = commentScope.extend({
+  body: z
+    .array(
+      z.discriminatedUnion("type", [
+        z
+          .object({ type: z.literal("text"), text: z.string().max(100000) })
+          .strict(),
+        z
+          .object({
+            type: z.literal("mention"),
+            userId: z.string().min(1).max(128),
+            label: z.string().max(255),
+          })
+          .strict(),
+      ]),
+    )
+    .max(1000),
+  files: z
+    .array(
+      z
+        .object({ projectId: applicationId, projectFileId: applicationId })
+        .strict(),
+    )
+    .max(20),
+});
 export const appRouter = t.router({
+  comments: t.router({
+    list: authenticated
+      .input(
+        commentScope.extend({
+          parentId: applicationId.nullable(),
+          cursor: z
+            .object({ createdAt: z.iso.datetime(), id: applicationId })
+            .strict()
+            .optional(),
+        }),
+      )
+      .query(({ ctx, input }) => ctx.comments.list(ctx.userId, input)),
+    create: authenticated
+      .input(commentDraft.extend({ parentId: applicationId.nullable() }))
+      .mutation(({ ctx, input }) => ctx.comments.save(ctx.userId, input)),
+    update: authenticated
+      .input(
+        commentDraft.extend({
+          id: applicationId,
+          expectedUpdatedAt: z.iso.datetime(),
+        }),
+      )
+      .mutation(({ ctx, input }) => ctx.comments.save(ctx.userId, input)),
+    delete: authenticated
+      .input(
+        commentScope.extend({
+          id: applicationId,
+          expectedUpdatedAt: z.iso.datetime(),
+        }),
+      )
+      .mutation(({ ctx, input }) => ctx.comments.delete(ctx.userId, input)),
+  }),
   files: t.router({
-    limits: authenticated.query(({ ctx }) => ({ maxBytes: ctx.files.maxBytes })),
-    library: authenticated.input(z.object({ projectId: applicationId.optional(), search: z.string().max(255).optional(), offset: z.number().int().min(0).default(0) }).strict()).query(({ ctx, input }) => ctx.files.library(ctx.userId, input)),
-    attachments: authenticated.input(z.object({ projectId: applicationId, issueId: applicationId }).strict()).query(({ ctx, input }) => ctx.files.attachments(ctx.userId, input.projectId, input.issueId)),
-    link: authenticated.input(z.object({ projectId: applicationId, issueId: applicationId, sourceProjectId: applicationId, projectFileId: applicationId }).strict()).mutation(({ ctx, input }) => ctx.files.link(ctx.userId, input)),
-    unlink: authenticated.input(z.object({ projectId: applicationId, issueId: applicationId, attachmentId: applicationId }).strict()).mutation(({ ctx, input }) => ctx.files.unlink(ctx.userId, input)),
+    limits: authenticated.query(({ ctx }) => ({
+      maxBytes: ctx.files.maxBytes,
+    })),
+    library: authenticated
+      .input(
+        z
+          .object({
+            projectId: applicationId.optional(),
+            search: z.string().max(255).optional(),
+            offset: z.number().int().min(0).default(0),
+          })
+          .strict(),
+      )
+      .query(({ ctx, input }) => ctx.files.library(ctx.userId, input)),
+    attachments: authenticated
+      .input(
+        z.object({ projectId: applicationId, issueId: applicationId }).strict(),
+      )
+      .query(({ ctx, input }) =>
+        ctx.files.attachments(ctx.userId, input.projectId, input.issueId),
+      ),
+    link: authenticated
+      .input(
+        z
+          .object({
+            projectId: applicationId,
+            issueId: applicationId,
+            sourceProjectId: applicationId,
+            projectFileId: applicationId,
+          })
+          .strict(),
+      )
+      .mutation(({ ctx, input }) => ctx.files.link(ctx.userId, input)),
+    unlink: authenticated
+      .input(
+        z
+          .object({
+            projectId: applicationId,
+            issueId: applicationId,
+            attachmentId: applicationId,
+          })
+          .strict(),
+      )
+      .mutation(({ ctx, input }) => ctx.files.unlink(ctx.userId, input)),
   }),
   issues: t.router({
     list: authenticated
@@ -143,13 +242,11 @@ export const appRouter = t.router({
       .mutation(({ ctx, input }) => ctx.issues.create(ctx.userId, input)),
     update: authenticated
       .input(
-        issueFields
-          .partial()
-          .extend({
-            projectId: applicationId,
-            id: applicationId,
-            expectedUpdatedAt: z.iso.datetime(),
-          }),
+        issueFields.partial().extend({
+          projectId: applicationId,
+          id: applicationId,
+          expectedUpdatedAt: z.iso.datetime(),
+        }),
       )
       .mutation(({ ctx, input }) => ctx.issues.update(ctx.userId, input)),
     setDeleted: authenticated

@@ -1,4 +1,9 @@
-import { createId, issueTriggers, type HistoryChanges } from "@spectron/shared";
+import {
+  createId,
+  issueTriggers,
+  type CommentBody,
+  type HistoryChanges,
+} from "@spectron/shared";
 import { sql } from "drizzle-orm";
 import {
   pgTable,
@@ -274,9 +279,12 @@ export const issueHistory = pgTable(
     issueId: text("issue_id")
       .notNull()
       .references(() => issue.id, { onDelete: "restrict" }),
-    entityType: text("entity_type").$type<"issue" | "attachment">().default("issue").notNull(),
-  entityId: text("entity_id"),
-  actorUserId: text("actor_user_id")
+    entityType: text("entity_type")
+      .$type<"issue" | "attachment" | "comment">()
+      .default("issue")
+      .notNull(),
+    entityId: text("entity_id"),
+    actorUserId: text("actor_user_id")
       .notNull()
       .references(() => user.id, { onDelete: "restrict" }),
     action: text("action")
@@ -312,35 +320,142 @@ export const projectHistory = pgTable(
 export const fileStatus = pgEnum("file_status", ["pending", "ready", "failed"]);
 export const storedFile = pgTable("files", {
   id: text("id").$defaultFn(createId).primaryKey(),
-  uploadedBy: text("uploaded_by").notNull().references(() => user.id, { onDelete: "restrict" }),
+  uploadedBy: text("uploaded_by")
+    .notNull()
+    .references(() => user.id, { onDelete: "restrict" }),
   storageKey: text("storage_key").notNull().unique(),
   filename: text("filename").notNull(),
-  contentType: text("content_type").default("application/octet-stream").notNull(),
+  contentType: text("content_type")
+    .default("application/octet-stream")
+    .notNull(),
   sizeBytes: bigint("size_bytes", { mode: "number" }).default(0).notNull(),
   status: fileStatus("status").default("pending").notNull(),
   ...dates(),
   deletedAt: timestamp("deleted_at", { withTimezone: true }),
 });
-export const projectFile = pgTable("project_files", {
-  id: text("id").$defaultFn(createId).primaryKey(),
-  projectId: text("project_id").notNull().references(() => project.id, { onDelete: "restrict" }),
-  fileId: text("file_id").notNull().references(() => storedFile.id, { onDelete: "restrict" }),
-  ...dates(),
-  deletedAt: timestamp("deleted_at", { withTimezone: true }),
-}, (t) => [
-  uniqueIndex("project_files_project_file_unique").on(t.projectId, t.fileId),
-  uniqueIndex("project_files_project_id_unique").on(t.projectId, t.id),
-]);
-export const issueAttachment = pgTable("issue_attachments", {
-  id: text("id").$defaultFn(createId).primaryKey(),
-  projectId: text("project_id").notNull(),
-  issueId: text("issue_id").notNull(),
-  projectFileId: text("project_file_id").notNull(),
-  position: integer("position").notNull(),
-  ...dates(),
-  deletedAt: timestamp("deleted_at", { withTimezone: true }),
-}, (t) => [
-  uniqueIndex("issue_attachments_issue_file_unique").on(t.issueId, t.projectFileId),
-  foreignKey({ name: "issue_attachments_issue_fk", columns: [t.projectId, t.issueId], foreignColumns: [issue.projectId, issue.id] }).onDelete("restrict"),
-  foreignKey({ name: "issue_attachments_project_file_fk", columns: [t.projectId, t.projectFileId], foreignColumns: [projectFile.projectId, projectFile.id] }).onDelete("restrict"),
-]);
+export const projectFile = pgTable(
+  "project_files",
+  {
+    id: text("id").$defaultFn(createId).primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => project.id, { onDelete: "restrict" }),
+    fileId: text("file_id")
+      .notNull()
+      .references(() => storedFile.id, { onDelete: "restrict" }),
+    ...dates(),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex("project_files_project_file_unique").on(t.projectId, t.fileId),
+    uniqueIndex("project_files_project_id_unique").on(t.projectId, t.id),
+  ],
+);
+export const issueAttachment = pgTable(
+  "issue_attachments",
+  {
+    id: text("id").$defaultFn(createId).primaryKey(),
+    projectId: text("project_id").notNull(),
+    issueId: text("issue_id").notNull(),
+    projectFileId: text("project_file_id").notNull(),
+    position: integer("position").notNull(),
+    ...dates(),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex("issue_attachments_issue_file_unique").on(
+      t.issueId,
+      t.projectFileId,
+    ),
+    foreignKey({
+      name: "issue_attachments_issue_fk",
+      columns: [t.projectId, t.issueId],
+      foreignColumns: [issue.projectId, issue.id],
+    }).onDelete("restrict"),
+    foreignKey({
+      name: "issue_attachments_project_file_fk",
+      columns: [t.projectId, t.projectFileId],
+      foreignColumns: [projectFile.projectId, projectFile.id],
+    }).onDelete("restrict"),
+  ],
+);
+
+export const issueComment = pgTable(
+  "issue_comments",
+  {
+    id: text("id").$defaultFn(createId).primaryKey(),
+    projectId: text("project_id").notNull(),
+    issueId: text("issue_id").notNull(),
+    parentId: text("parent_id"),
+    authorId: text("author_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "restrict" }),
+    body: jsonb("body").$type<CommentBody>().notNull(),
+    ...dates(),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex("comments_project_id_unique").on(t.projectId, t.id),
+    uniqueIndex("comments_issue_id_unique").on(t.issueId, t.id),
+    index("comments_siblings_idx").on(t.issueId, t.parentId, t.createdAt, t.id),
+    check(
+      "comments_parent_not_self",
+      sql`${t.parentId} IS NULL OR ${t.parentId} <> ${t.id}`,
+    ),
+    foreignKey({
+      name: "comments_issue_fk",
+      columns: [t.projectId, t.issueId],
+      foreignColumns: [issue.projectId, issue.id],
+    }).onDelete("restrict"),
+    foreignKey({
+      name: "comments_parent_fk",
+      columns: [t.issueId, t.parentId],
+      foreignColumns: [t.issueId, t.id],
+    }).onDelete("restrict"),
+  ],
+);
+export const commentMention = pgTable(
+  "comment_mentions",
+  {
+    id: text("id").$defaultFn(createId).primaryKey(),
+    commentId: text("comment_id")
+      .notNull()
+      .references(() => issueComment.id, { onDelete: "restrict" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "restrict" }),
+    ...dates(),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex("comment_mentions_user_unique").on(t.commentId, t.userId),
+  ],
+);
+export const commentAttachment = pgTable(
+  "comment_attachments",
+  {
+    id: text("id").$defaultFn(createId).primaryKey(),
+    projectId: text("project_id").notNull(),
+    commentId: text("comment_id").notNull(),
+    projectFileId: text("project_file_id").notNull(),
+    position: integer("position").notNull(),
+    ...dates(),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex("comment_attachments_file_unique").on(
+      t.commentId,
+      t.projectFileId,
+    ),
+    foreignKey({
+      name: "comment_attachments_comment_fk",
+      columns: [t.projectId, t.commentId],
+      foreignColumns: [issueComment.projectId, issueComment.id],
+    }).onDelete("restrict"),
+    foreignKey({
+      name: "comment_attachments_file_fk",
+      columns: [t.projectId, t.projectFileId],
+      foreignColumns: [projectFile.projectId, projectFile.id],
+    }).onDelete("restrict"),
+  ],
+);

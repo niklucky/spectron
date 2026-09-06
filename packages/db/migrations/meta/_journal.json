@@ -50,6 +50,13 @@
       "when": 1788725728168,
       "tag": "0006_nasty_puma",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1788727270089,
+      "tag": "0007_bitter_pyro",
+      "breakpoints": true
     }
   ]
 }

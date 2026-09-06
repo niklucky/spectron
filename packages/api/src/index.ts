@@ -5,6 +5,7 @@ import type { HttpBindings } from "@hono/node-server";
 import {
   createProjectService,
   createFileService,
+  createCommentService,
   type FileStorageConfig,
   createIssueService,
   createInvitationService,
@@ -35,6 +36,7 @@ export function createAPI(
     sendInvitationEmail?: InvitationConfig["sendInvitationEmail"];
   },
 ) {
+  const comments = createCommentService(db);
   const files = createFileService(db, fileStorage);
   const issues = createIssueService(db);
   const projects = createProjectService(db);
@@ -44,15 +46,18 @@ export function createAPI(
   });
   const api = new Hono<{ Bindings: HttpBindings }>();
   api.use("/api/*", (c, next) =>
-    c.req.path === "/api/files/upload" ? next() : bodyLimit({
-      maxSize: c.req.path.startsWith("/api/trpc/")
-        ? 3 * 1024 * 1024
-        : 16 * 1024,
-    })(c, next),
+    c.req.path === "/api/files/upload"
+      ? next()
+      : bodyLimit({
+          maxSize: c.req.path.startsWith("/api/trpc/")
+            ? 3 * 1024 * 1024
+            : 16 * 1024,
+        })(c, next),
   );
   api.use("/api/*", async (c, next) => {
     await next();
-    if (!c.res.headers.has("Cache-Control")) c.header("Cache-Control", "no-store");
+    if (!c.res.headers.has("Cache-Control"))
+      c.header("Cache-Control", "no-store");
     c.header("Referrer-Policy", "no-referrer");
   });
   api.route("/api/files", createFileRoutes(auth, files, appURL));
@@ -77,7 +82,15 @@ export function createAPI(
       req: c.req.raw,
       router: appRouter,
       createContext: () =>
-        createContext(auth, projects, invitations, c.req.raw, issues, files),
+        createContext(
+          auth,
+          projects,
+          invitations,
+          c.req.raw,
+          issues,
+          files,
+          comments,
+        ),
     });
   });
   api.get("/api/me", async (c) => {
