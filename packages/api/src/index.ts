@@ -7,6 +7,7 @@ import {
   createFileService,
   createCommentService,
   createWorklogService,
+  createActivityService,
   type FileStorageConfig,
   createIssueService,
   createInvitationService,
@@ -37,6 +38,7 @@ export function createAPI(
     sendInvitationEmail?: InvitationConfig["sendInvitationEmail"];
   },
 ) {
+  const activity = createActivityService(db);
   const worklogs = createWorklogService(db);
   const comments = createCommentService(db);
   const files = createFileService(db, fileStorage);
@@ -93,6 +95,7 @@ export function createAPI(
           files,
           comments,
           worklogs,
+          activity,
         ),
     });
   });

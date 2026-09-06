@@ -30,7 +30,7 @@ export type CommentActions = {
     input: CommentScope & { id: string; expectedUpdatedAt: string },
   ) => Promise<void>;
 };
-type Context = {
+export type CommentContext = {
   scope: CommentScope;
   actions: CommentActions;
   files: IssueFileActions;
@@ -47,6 +47,7 @@ export function IssueComments({
   members,
   deleted,
   onChange,
+  refreshKey = 0,
 }: {
   projectId: string;
   issueId: string;
@@ -55,6 +56,7 @@ export function IssueComments({
   members: ProjectMemberSummary[];
   deleted: boolean;
   onChange: () => void;
+  refreshKey?: number;
 }) {
   const [revision, setRevision] = useState(0),
     [composing, setComposing] = useState(false);
@@ -62,13 +64,13 @@ export function IssueComments({
     setRevision((v) => v + 1);
     onChange();
   };
-  const context: Context = {
+  const context: CommentContext = {
     scope: { projectId, issueId },
     actions,
     files,
     members,
     deleted,
-    revision,
+    revision: revision + refreshKey,
     changed,
   };
   return (
@@ -98,7 +100,7 @@ function CommentBranch({
   parentId,
   depth,
 }: {
-  context: Context;
+  context: CommentContext;
   parentId: string | null;
   depth: number;
 }) {
@@ -179,12 +181,14 @@ function CommentBranch({
     </div>
   );
 }
-function CommentItem({
+export function CommentItem({
   context,
   row,
   depth,
+  flat = false,
 }: {
-  context: Context;
+  flat?: boolean;
+  context: CommentContext;
   row: CommentSummary;
   depth: number;
 }) {
@@ -288,7 +292,7 @@ function CommentItem({
             Delete comment
           </Button>
         )}
-        {(row.replyCount > 0 || expanded) && (
+        {!flat && (row.replyCount > 0 || expanded) && (
           <Button variant="ghost" onClick={() => setExpanded((v) => !v)}>
             {expanded ? "Hide replies" : `Show replies (${row.replyCount})`}
           </Button>
@@ -309,7 +313,7 @@ function CommentItem({
           }}
         />
       )}
-      {expanded && (
+      {!flat && expanded && (
         <div className={depth < 3 ? "comment-replies" : "comment-replies-flat"}>
           <CommentBranch
             context={context}
@@ -321,7 +325,7 @@ function CommentItem({
     </article>
   );
 }
-function CommentMedia({ files }: { files: ProjectFileSummary[] }) {
+export function CommentMedia({ files }: { files: ProjectFileSummary[] }) {
   return (
     <ul className="issue-file-grid">
       {files.map((file) => {
@@ -364,16 +368,18 @@ function CommentMedia({ files }: { files: ProjectFileSummary[] }) {
     </ul>
   );
 }
-function CommentEditor({
+export function CommentEditor({
   context,
   parentId,
   existing,
   onClose,
+  chat = false,
 }: {
-  context: Context;
+  context: CommentContext;
   parentId: string | null;
   existing?: CommentSummary;
   onClose: () => void;
+  chat?: boolean;
 }) {
   const baseline = useRef(existing);
   const [draft, setDraft] = useState(() =>
@@ -478,7 +484,13 @@ function CommentEditor({
         }}
       >
         <label>
-          {existing ? "Edit comment" : parentId ? "Your reply" : "Your comment"}
+          {existing
+            ? "Edit comment"
+            : parentId
+              ? "Your reply"
+              : chat
+                ? "Your message"
+                : "Your comment"}
           <textarea
             ref={area}
             className="input comment-textarea"
@@ -585,7 +597,9 @@ function CommentEditor({
                 ? "Save comment"
                 : parentId
                   ? "Post reply"
-                  : "Post comment"}
+                  : chat
+                    ? "Send message"
+                    : "Post comment"}
           </Button>
         </div>
         {status && <p role="status">{status}</p>}

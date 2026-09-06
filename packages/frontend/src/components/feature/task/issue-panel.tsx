@@ -1,3 +1,5 @@
+import { IssueChat } from "./issue-chat";
+import type { IssueActivityPage } from "@spectron/shared";
 import { useEffect, useRef, useState } from "react";
 import type {
   IssueFields,
@@ -16,6 +18,11 @@ import { commentText, type CommentBody } from "@spectron/shared";
 import { StatusDot } from "./status-dot";
 
 export type IssuePanelActions = {
+  activity: (input: {
+    projectId: string;
+    issueId: string;
+    cursor?: string;
+  }) => Promise<IssueActivityPage>;
   files: IssueFileActions;
   comments: CommentActions;
   worklogs: WorklogActions;
@@ -45,6 +52,22 @@ export function IssuePanel({
   onCopy: () => void;
   onSelect: (id: string, projectId: string) => void;
 }) {
+  const [view, setView] = useState<"chat" | "issue">(() => {
+    try {
+      return sessionStorage.getItem("issue-view") === "issue"
+        ? "issue"
+        : "chat";
+    } catch {
+      return "chat";
+    }
+  });
+  const selectView = (value: "chat" | "issue") => {
+    setView(value);
+    setReload((n) => n + 1);
+    try {
+      sessionStorage.setItem("issue-view", value);
+    } catch {}
+  };
   const [editing, setEditing] = useState(false);
   const [entries, setEntries] = useState<IssueHistoryEntry[]>([]);
   const [members, setMembers] = useState<ProjectMemberSummary[]>([]);
@@ -153,11 +176,37 @@ export function IssuePanel({
           <div className="chat-actions">
             <IconButton icon="link" label="Copy issue link" onClick={onCopy} />
             {!issue.deletedAt && (
-              <Button variant="ghost" onClick={() => setEditing(true)}>
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  selectView("issue");
+                  setEditing(true);
+                }}
+              >
                 Edit issue
               </Button>
             )}
           </div>
+        </div>
+        <div
+          className="issue-view-selector"
+          role="group"
+          aria-label="Issue view"
+        >
+          <button
+            type="button"
+            aria-pressed={view === "chat"}
+            onClick={() => selectView("chat")}
+          >
+            Chat
+          </button>
+          <button
+            type="button"
+            aria-pressed={view === "issue"}
+            onClick={() => selectView("issue")}
+          >
+            Issue
+          </button>
         </div>
         <div className="chat-subtitle">
           <StatusDot
@@ -170,7 +219,19 @@ export function IssuePanel({
           {person(issue.assigneeId)}
         </div>
       </header>
-      <div className="issue-content">
+      <IssueChat
+        issue={issue}
+        settings={settings}
+        issues={issues}
+        members={members}
+        actions={actions}
+        active={view === "chat"}
+        revision={reload}
+        onChange={() => setReload((n) => n + 1)}
+        onSelect={onSelect}
+        valueLabel={valueLabel}
+      />
+      <div className="issue-content" hidden={view === "chat"}>
         {issue.deletedAt && (
           <div className="issue-deleted" role="status">
             Deleted {new Date(issue.deletedAt).toLocaleString()}. History is
@@ -244,6 +305,7 @@ export function IssuePanel({
           </section>
         )}
         <IssueFiles
+          refreshKey={reload}
           projectId={issue.projectId}
           issueId={issue.id}
           deleted={!!issue.deletedAt}
@@ -251,6 +313,7 @@ export function IssuePanel({
           onChange={() => setReload((n) => n + 1)}
         />
         <IssueWorklogs
+          refreshKey={reload}
           key={`worklogs:${issue.id}`}
           projectId={issue.projectId}
           issueId={issue.id}
@@ -260,6 +323,7 @@ export function IssuePanel({
           onChange={() => setReload((n) => n + 1)}
         />
         <IssueComments
+          refreshKey={reload}
           key={issue.id}
           projectId={issue.projectId}
           issueId={issue.id}

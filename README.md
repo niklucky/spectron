@@ -127,7 +127,7 @@ Put a TLS reverse proxy in front of the app on port 8080. The public page is on 
 
 ## Next steps
 
-Worklog totals, an additional issue chat view, comment notifications, broader team permissions, integrations, and agent execution remain to be implemented.
+Worklog totals, comment notifications, broader team permissions, integrations, and agent execution remain to be implemented.
 
 An open source license still needs to be selected before public distribution.
 
@@ -234,3 +234,13 @@ Migration `0008` adds `issue_worklogs`; the authenticated `worklogs` router prov
 Delivery order: human entries, totals, then an additional chat view that preserves the existing issue view. Pause for manual testing after each step. Agents and timers are deferred. Jira and Yandex.Tracker integrations belong to a new session.
 
 Human duration input reads numeric groups: one means minutes, two mean hours/minutes, three mean days/hours/minutes (24-hour days). Separators are ignored, so `1h 35m`, `1h30m`, and `1n20m` work. `30` means 30 minutes; `1h` also means one minute under this positional convention—use `1h0m` for one hour. Human entry has no seconds field; storage remains seconds for compatibility, and editing other fields preserves existing durations.
+
+## Chat and Issue views
+
+The issue header offers **Chat | Issue**. Issue retains the existing details, attachments, worklogs, threaded comments and history. Chat presents the same data as a conversation and chronological activity messages; it creates no duplicate comment or worklog records. Switching views preserves open drafts for the current issue and remembers the selection for the browser session. A new session defaults to Chat.
+
+Chat includes a current issue summary, issue changes, editable comment cards, reply previews, file previews/downloads, and worklog events. Deleted comments remain placeholders; their original content remains in audit messages, as in Issue history. Comment cards show current content once at creation; edits/deletion appear as separate events. Use Files for issue attachments, Log work for a manual entry, and Edit issue to open the existing editor. The new worklog duration field starts empty.
+
+The `issues.activity` query checks project membership and returns the newest 50 events in chronological order, with an opaque history-ID cursor for older pages. Its boundary uses the stored database timestamp to retain sub-millisecond precision and stable ordering. Refresh chat loads new activity; no realtime push or notifications are implemented yet. Run `pnpm test:activity` for access isolation, reply/file hydration, deletion behavior and pagination during concurrent inserts.
+
+Worklog totals remain pending. Agents and tracker integrations remain deferred; Jira and Yandex.Tracker will be handled in a new session.

@@ -267,6 +267,9 @@ export const appRouter = t.router({
       .mutation(({ ctx, input }) => ctx.files.unlink(ctx.userId, input)),
   }),
   issues: t.router({
+    activity: authenticated
+      .input(worklogScope.extend({ cursor: applicationId.optional() }))
+      .query(({ ctx, input }) => ctx.activity.list(ctx.userId, input)),
     list: authenticated
       .input(issueScope)
       .query(({ ctx, input }) => ctx.issues.list(ctx.userId, input.projectId)),

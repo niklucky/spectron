@@ -38,7 +38,7 @@ This slice stores text/mention nodes, uses a textarea with an `@` project-member
 
 Authors can edit and delete; project owners can delete for moderation. Deleted comments are placeholders, with original content retained in history and the database. Replies remain readable and can be added to a deleted parent. Comment restoration, notifications, rich formatting and system events are deferred. Use Refresh comments to load other users' changes; an editor retains its original version to prevent overwriting a concurrent edit.
 
-## 4. Human worklogs — manually approved
+## 4. Human worklogs — manually approved and committed (`7c5e941`)
 
 Manual human entries only. Agents and timers are deferred. Fields: ID, project/issue IDs, worker user ID, immutable recorded-by user, start instant with timezone, positive integer duration in seconds, optional description, lifecycle timestamps. Worker and recorder remain distinct. Any project member can record/correct entries; finer permissions are deferred. New worker assignments must be project members. Retain former workers on existing entries.
 
@@ -48,7 +48,7 @@ Allow overlap. Create/edit/delete/restore writes history in the same transaction
 
 Show totals excluding deleted entries. Stop for manual testing after this step.
 
-## 6. Additional chat view — next (user reordered)
+## 6. Additional chat view — manually approved
 
 Keep the existing issue view and add a [Chat | Issue] selector with a chat view presenting issue information as messages. The user moved chat ahead of totals; totals remain pending. Stop for manual testing after this step. Jira and Yandex.Tracker integrations will be designed and implemented in a new session. Agents remain deferred.
 
@@ -57,3 +57,7 @@ Keep the existing issue view and add a [Chat | Issue] selector with a chat view 
 Tracker mappings are separate records scoped to the integration and external tracker project, using provider IDs rather than display names. Extend history with entity type/ID for comments, worklogs and attachment relations, and explicit agent/integration actors when those features arrive. Preserve the same transaction boundary and project membership access.
 
 Human duration input reads numeric groups: one means minutes, two mean hours/minutes, three mean days/hours/minutes (24-hour days). Separators are ignored, so `1h 35m`, `1h30m`, and `1n20m` work. `30` means 30 minutes; `1h` also means one minute under this positional convention—use `1h0m` for one hour. Human entry has no seconds field; storage remains seconds for compatibility, and editing other fields preserves existing durations.
+
+Chat uses the existing issue, comment and history records. The [Chat | Issue] selector remembers the choice for the browser session; both views stay mounted to preserve open drafts for the current issue. Chat defaults for new sessions. The summary message shows current issue details, while the chronological feed shows issue changes, comment creation/edit/deletion, attachments and worklog history. Live comment cards appear once at creation, with reply previews; later changes are separate audit messages. Earlier activity loads in cursor pages of 50, preserving exact stored timestamp ordering. Files are resolved only through accessible project associations. The message composer supports mentions and reusable files, and Chat has file management and human worklog entry. Edit issue opens the retained Issue editor. No notification or realtime transport is added; use Refresh chat for other users' changes. Worklog totals remain pending after the user moved Chat ahead of that step.
+
+Session handoff: Chat now uses rounded message bubbles with tails and side avatars; own messages align right. The existing Issue view is retained. Chat and its UI adjustment were approved. Worklog totals remain pending; agents, timers, notifications and tracker integrations remain deferred. The user will continue in a new session.

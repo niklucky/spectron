@@ -117,6 +117,11 @@ function Workspace({
   const task = workspace.task;
   const issueActions = useMemo(
     () => ({
+      activity: (input: {
+        projectId: string;
+        issueId: string;
+        cursor?: string;
+      }) => trpc.issues.activity.query(input),
       worklogs: {
         currentUserId: user.id,
         list: (

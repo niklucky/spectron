@@ -39,6 +39,7 @@ export function IssueWorklogs({
   members,
   actions,
   onChange,
+  refreshKey = 0,
 }: {
   projectId: string;
   issueId: string;
@@ -46,6 +47,7 @@ export function IssueWorklogs({
   members: ProjectMemberSummary[];
   actions: WorklogActions;
   onChange: () => void;
+  refreshKey?: number;
 }) {
   const [entries, setEntries] = useState<WorklogSummary[]>([]),
     [cursor, setCursor] = useState<WorklogPage["nextCursor"]>(null),
@@ -79,7 +81,7 @@ export function IssueWorklogs({
     return () => {
       generation.current++;
     };
-  }, [refresh]);
+  }, [refresh, refreshKey]);
   return (
     <section className="issue-worklogs" aria-label="Worklogs">
       <div className="issue-files-heading">
@@ -249,7 +251,7 @@ function localTime(iso: string) {
   const d = new Date(iso);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}T${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}:${String(d.getSeconds()).padStart(2, "0")}`;
 }
-function WorklogEditor({
+export function WorklogEditor({
   entry,
   members,
   currentUserId,

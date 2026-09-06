@@ -23,3 +23,5 @@ export { createFileService, FileInputError, FileSizeError, FileUnavailableError 
 export type { FileService, FileStorageConfig } from "./files";
 export { createCommentService, type CommentService } from "./comments";
 export { createWorklogService, type WorklogService } from "./worklogs";
+
+export { createActivityService, type ActivityService } from "./activity";

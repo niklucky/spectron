@@ -13,3 +13,5 @@ Factories accept dependencies so tests can use the real database and replace ema
 `createFileService` streams uploads to immutable local storage, detects content types, enforces size limits, and manages project-file associations and issue attachments. Membership checks gate reads and writes; cross-project reuse checks both projects. Attachment history and link mutations share a transaction. Removing a link retains shared metadata and bytes. Failed and abandoned uploads are retained.
 
 `createCommentService` owns threaded comments, membership and author/moderation checks, canonical mention labels, derived mention relations, reusable comment attachments and atomic history. Writes lock projects in sorted order for cross-project reuse; stale edits fail. Deleted parents retain their children and original content.
+
+`createActivityService` reads existing issue history with current comment cards, parent previews and project-authorized files. It uses one read transaction and exact stored history timestamps for cursor boundaries; it creates no activity copies.

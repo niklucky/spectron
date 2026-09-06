@@ -13,3 +13,5 @@ The authenticated `issues` router provides persistence, workflow options, soft d
 `src/files.ts` handles streaming uploads and authenticated GET/HEAD downloads at `/api/files`. Development supports conditional and range requests directly; Docker returns an internal Nginx redirect after authorization. The `files` tRPC router handles the library and attachment links. Configure `FILES_ROOT`, `FILES_MAX_BYTES`, and `FILE_DELIVERY` in the server environment. Run `pnpm test:files` and `pnpm test:files:nginx` from the root.
 
 The authenticated `comments` router lists root/reply cursor pages and creates, edits or soft-deletes comments. Write schemas reject author/parent changes and require versions for edits/deletion. `pnpm test:comments` tests the real API and disposable database.
+
+`issues.activity` returns an authenticated, cursor-paginated issue activity feed for Chat. `pnpm test:activity` covers isolation, related records and stable history boundaries.

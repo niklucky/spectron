@@ -16,7 +16,8 @@
     "test:issues": "tsx --test test/issues.test.ts",
     "test:files": "tsx --test test/files.test.ts",
     "test:comments": "tsx --test test/comments.test.ts",
-    "test:worklogs": "tsx --test test/worklogs.test.ts"
+    "test:worklogs": "tsx --test test/worklogs.test.ts",
+    "test:activity": "tsx --test test/activity.test.ts"
   },
   "dependencies": {
     "@spectron/backend": "workspace:*",

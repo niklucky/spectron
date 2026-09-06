@@ -46,12 +46,14 @@ export function IssueFiles({
   deleted,
   actions,
   onChange,
+  refreshKey = 0,
 }: {
   projectId: string;
   issueId: string;
   deleted: boolean;
   actions: IssueFileActions;
   onChange: () => void;
+  refreshKey?: number;
 }) {
   const [files, setFiles] = useState<IssueAttachmentSummary[]>([]);
   const [maxBytes, setMaxBytes] = useState<number | null>(null);
@@ -99,7 +101,7 @@ export function IssueFiles({
     };
     window.addEventListener("focus", focus);
     return () => window.removeEventListener("focus", focus);
-  }, [refresh]);
+  }, [refresh, refreshKey]);
   async function run(action: () => Promise<void>) {
     if (busy) return;
     setBusy(true);
