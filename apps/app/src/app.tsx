@@ -1,3 +1,4 @@
+import { useEffect, useMemo, useState } from "react";
 import { AccountMenu } from "@spectron/frontend/components/feature/account";
 import {
   ChatPanel,
@@ -12,26 +13,86 @@ import {
   WorkspaceDialogs,
 } from "@spectron/frontend/components/feature/workspace";
 import { Toast } from "@spectron/frontend/components/ui/toast";
+import { previewMedia } from "./fixtures/preview-metadata";
 import {
-  previewAssignee,
-  previewSources,
-  previewMedia,
-} from "./fixtures/preview-metadata";
-import { DemoConversation } from "./fixtures/demo-conversation";
+  CreateProjectDialog,
+  ProjectSettingsDialog,
+  ProjectEmptyState,
+} from "@spectron/frontend/components/feature/project";
+import { InvitationPage } from "./invitation-page";
+import { useProjects } from "./hooks/use-projects";
 import { useWorkspace } from "./hooks/use-workspace";
-import { projects } from "./mock-data";
 import { AuthGate } from "./auth-gate";
 import { authClient } from "./lib/auth-client";
+import { trpc } from "./lib/trpc";
 import "@spectron/frontend/workspace.css";
 
 export function App() {
+  const [hash, setHash] = useState(window.location.hash);
+  useEffect(() => {
+    const change = () => setHash(window.location.hash);
+    window.addEventListener("hashchange", change);
+    return () => window.removeEventListener("hashchange", change);
+  }, []);
   return (
-    <AuthGate>{(user) => <Workspace key={user.id} user={user} />}</AuthGate>
+    <AuthGate>
+      {(user, sessionId) =>
+        hash.startsWith("#invite/") ? (
+          <InvitationPage
+            key={`${sessionId}:${hash}`}
+            token={hash.slice(8)}
+            email={user.email}
+          />
+        ) : (
+          <Workspace key={sessionId} user={user} sessionId={sessionId} />
+        )
+      }
+    </AuthGate>
   );
 }
 
-function Workspace({ user }: { user: { name: string } }) {
-  const workspace = useWorkspace(user.name);
+function Workspace({
+  user,
+  sessionId,
+}: {
+  user: { name: string };
+  sessionId: string;
+}) {
+  const projectState = useProjects(sessionId);
+  const projects = useMemo(
+    () =>
+      projectState.projects
+        .filter((item) => item.state === "active")
+        .map((item) => ({
+          ...item,
+          initial: item.name.slice(0, 1).toUpperCase(),
+        })),
+    [projectState.projects],
+  );
+  const [settingsId, setSettingsId] = useState<string | null>(null);
+  const settingsProject = projectState.projects.find(
+    (item) => item.id === settingsId && item.state === "active",
+  );
+  const settingsActions = useMemo(
+    () => ({
+      update: (input: import("@spectron/shared").CreateProjectInput) =>
+        projectState.update(settingsId!, input),
+      members: () => trpc.projects.members.query({ id: settingsId! }),
+      invitations: () => trpc.projects.invitations.query({ id: settingsId! }),
+      invite: (email: string) =>
+        trpc.projects.invite.mutate({ id: settingsId!, email }),
+      cancel: (invitationId: string) =>
+        trpc.projects.cancelInvitation.mutate({
+          id: settingsId!,
+          invitationId,
+        }),
+      discoverLogo: (url: string) => trpc.projects.discoverLogo.mutate({ url }),
+    }),
+    [settingsId, projectState.update],
+  );
+  const workspace = useWorkspace(user.name, projects);
+  const project = projects.find((item) => item.id === workspace.project);
+  const task = workspace.task;
   const clearFilters = () => {
     workspace.setQuery("");
     workspace.setFilter("all");
@@ -49,6 +110,23 @@ function Workspace({ user }: { user: { name: string } }) {
         onToggleCollapse={() => workspace.setCollapsed((value) => !value)}
         onSelectProject={workspace.selectProject}
         onSelectFlow={workspace.selectFlow}
+        onCreateProject={projectState.openCreate}
+        onProjectSettings={setSettingsId}
+        onArchiveProject={(id) => {
+          void projectState
+            .archive(id)
+            .then(() => {
+              workspace.selectFlow();
+              workspace.showNotice("Project archived.");
+            })
+            .catch((cause) =>
+              workspace.showNotice(
+                cause instanceof Error
+                  ? cause.message
+                  : "Couldn’t archive project.",
+              ),
+            );
+        }}
         onNavigate={workspace.openModal}
         accountMenu={
           <AccountMenu
@@ -76,82 +154,114 @@ function Workspace({ user }: { user: { name: string } }) {
           />
         }
       />
-      <TaskList
-        project={workspace.project}
-        projects={projects}
-        isFlow={workspace.isFlow}
-        tasks={workspace.tasks}
-        selectedId={workspace.selectedId}
-        query={workspace.query}
-        searchOpen={workspace.searchOpen}
-        filter={workspace.filter}
-        onSearchToggle={() => {
-          workspace.setSearchOpen((value) => !value);
-          workspace.setQuery("");
-        }}
-        onSearchClear={() => {
-          workspace.setSearchOpen(false);
-          workspace.setQuery("");
-        }}
-        onQueryChange={workspace.setQuery}
-        onFilterChange={workspace.setFilter}
-        onClearFilters={clearFilters}
-        onSelectTask={workspace.selectTask}
-        onNewTask={() => workspace.openModal("new-task")}
-      />
-      <ChatPanel
-        header={
-          <ChatHeader
-            assignee={previewAssignee}
-            sources={previewSources}
-            task={workspace.task}
-            projectInfo={
-              projects.find((project) => project.name === workspace.project)!
-            }
-            isFlow={workspace.isFlow}
-            details={workspace.details}
-            onBack={() => workspace.setMobileChat(false)}
-            onToggleDetails={() => workspace.setDetails((value) => !value)}
-            onStatusChange={(status) => workspace.updateTask({ status })}
-            onCopyLink={workspace.copyTaskLink}
-            onSources={() => workspace.openModal("sources")}
-          />
-        }
-        composer={
-          <ChatComposer
-            project={workspace.project}
-            taskId={workspace.task.id}
-            draft={workspace.draft}
-            attachment={workspace.attachment}
-            recording={workspace.recording}
-            composeRef={workspace.composeRef}
-            onDraftChange={workspace.setDraft}
-            onSend={workspace.sendMessage}
-            onAttachFile={workspace.attachFile}
-            onRemoveAttachment={workspace.removeAttachment}
-            onToggleRecording={() => void workspace.toggleRecording()}
-          />
-        }
-      >
-        <ChatTimeline
-          title={workspace.task.title}
-          historyRef={workspace.historyRef}
-          endRef={workspace.bottomRef}
-          messages={workspace.messages}
-        >
-          {workspace.task.id === "SP-123" && (
-            <DemoConversation
-              onImage={(url) => {
-                workspace.setImage(url);
-                workspace.openModal("image");
-              }}
-              onVideo={() => workspace.openModal("video")}
-              onSource={() => workspace.openModal("sources")}
-            />
+      {projectState.loading || !projects.length ? (
+        <ProjectEmptyState
+          hasArchived={projectState.projects.some(
+            (item) => item.state === "archived",
           )}
-        </ChatTimeline>
-      </ChatPanel>
-      <Toast message={workspace.notice} />
+          loading={projectState.loading}
+          error={projectState.error}
+          onRetry={() => void projectState.refresh()}
+          onCreate={projectState.openCreate}
+        />
+      ) : (
+        <>
+          <TaskList
+            project={workspace.project}
+            projects={projects}
+            isFlow={workspace.isFlow}
+            tasks={workspace.tasks}
+            selectedId={workspace.selectedId}
+            query={workspace.query}
+            searchOpen={workspace.searchOpen}
+            filter={workspace.filter}
+            onSearchToggle={() => {
+              workspace.setSearchOpen((value) => !value);
+              workspace.setQuery("");
+            }}
+            onSearchClear={() => {
+              workspace.setSearchOpen(false);
+              workspace.setQuery("");
+            }}
+            onQueryChange={workspace.setQuery}
+            onFilterChange={workspace.setFilter}
+            onClearFilters={clearFilters}
+            onSelectTask={workspace.selectTask}
+            onNewTask={() => workspace.openModal("new-task")}
+          />
+          {task && project ? (
+            <ChatPanel
+              header={
+                <ChatHeader
+                  assignee={{
+                    name: workspace.name,
+                    initials: workspace.name.slice(0, 2).toUpperCase(),
+                    color: "sage",
+                  }}
+                  sources={[]}
+                  task={task}
+                  projectInfo={project}
+                  isFlow={workspace.isFlow}
+                  details={workspace.details}
+                  onBack={() => workspace.setMobileChat(false)}
+                  onToggleDetails={() =>
+                    workspace.setDetails((value) => !value)
+                  }
+                  onStatusChange={(status) => workspace.updateTask({ status })}
+                  onCopyLink={workspace.copyTaskLink}
+                  onSources={() => workspace.openModal("sources")}
+                />
+              }
+              composer={
+                <ChatComposer
+                  project={project.name}
+                  taskId={task.id}
+                  draft={workspace.draft}
+                  attachment={workspace.attachment}
+                  recording={workspace.recording}
+                  composeRef={workspace.composeRef}
+                  onDraftChange={workspace.setDraft}
+                  onSend={workspace.sendMessage}
+                  onAttachFile={workspace.attachFile}
+                  onRemoveAttachment={workspace.removeAttachment}
+                  onToggleRecording={() => void workspace.toggleRecording()}
+                />
+              }
+            >
+              <ChatTimeline
+                title={task.title}
+                historyRef={workspace.historyRef}
+                endRef={workspace.bottomRef}
+                messages={workspace.messages}
+              ></ChatTimeline>
+            </ChatPanel>
+          ) : (
+            <section className="chat-empty-state">
+              <p>Select a task to start a conversation.</p>
+            </section>
+          )}
+        </>
+      )}
+      <Toast message={workspace.notice || projectState.error} />
+      {projectState.showCreate && (
+        <CreateProjectDialog
+          first={!projectState.projects.length}
+          onClose={projectState.closeCreate}
+          onDiscoverLogo={(url) => trpc.projects.discoverLogo.mutate({ url })}
+          onCreate={async (input) => {
+            const created = await projectState.create(input);
+            workspace.selectProject(created.id);
+          }}
+        />
+      )}
+      {settingsProject && (
+        <ProjectSettingsDialog
+          key={settingsProject.id}
+          project={settingsProject}
+          actions={settingsActions}
+          onClose={() => setSettingsId(null)}
+        />
+      )}
       <WorkspaceDialogs
         modal={workspace.modal}
         project={workspace.project}

@@ -50,12 +50,14 @@ export function NewTaskDialog({
                 onChange={(event) => setNewTaskProject(event.target.value)}
               >
                 {projects.map((item) => (
-                  <option key={item.name}>{item.name}</option>
+                  <option key={item.id} value={item.id}>
+                    {item.name}
+                  </option>
                 ))}
               </Select>
             </label>
           ) : (
-            <span>{project}</span>
+            <span>{projects.find((item) => item.id === project)?.name}</span>
           )}
           <Button type="submit" disabled={!newTitle.trim()}>
             Create task

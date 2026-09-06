@@ -37,13 +37,15 @@ export function TaskList({
   onSelectTask,
   onNewTask,
 }: TaskListProps) {
+  const projectName =
+    projects.find((item) => item.id === project)?.name || "Project";
   return (
     <section
       className="task-panel"
-      aria-label={isFlow ? "Flow tasks" : `${project} tasks`}
+      aria-label={isFlow ? "Flow tasks" : `${projectName} tasks`}
     >
       <header className="task-panel-header">
-        <h1>{isFlow ? "Flow" : project}</h1>
+        <h1>{isFlow ? "Flow" : projectName}</h1>
         <div>
           <IconButton
             icon="search"
@@ -90,7 +92,7 @@ export function TaskList({
           <TaskItem
             key={item.id}
             item={item}
-            project={projects.find((project) => project.name === item.project)!}
+            project={projects.find((project) => project.id === item.project)!}
             isFlow={isFlow}
             selectedId={selectedId}
             onSelect={onSelectTask}
@@ -98,8 +100,16 @@ export function TaskList({
         ))}
         {!tasks.length && (
           <div className="list-empty">
-            No tasks found.
-            <button onClick={onClearFilters}>Clear filters</button>
+            {query || filter !== "all" ? (
+              <>
+                No tasks found.
+                <button onClick={onClearFilters}>Clear filters</button>
+              </>
+            ) : (
+              <>
+                No tasks yet.<button onClick={onNewTask}>Create a task</button>
+              </>
+            )}
           </div>
         )}
       </div>

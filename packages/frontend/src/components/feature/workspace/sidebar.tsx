@@ -1,6 +1,8 @@
 import type { ReactNode } from "react";
 import { Icon } from "../../ui/icon";
 import { IconButton } from "../../ui/button";
+import { Menu } from "../../ui/menu";
+import { ProjectMark } from "../project";
 import type { Project } from "../task/types";
 
 type SidebarProps = {
@@ -12,6 +14,9 @@ type SidebarProps = {
   onToggleCollapse: () => void;
   onSelectProject: (project: string) => void;
   onSelectFlow: () => void;
+  onCreateProject: () => void;
+  onProjectSettings: (id: string) => void;
+  onArchiveProject: (id: string) => void;
   onNavigate: (page: "overview" | "issues" | "settings") => void;
 };
 export function Sidebar({
@@ -23,16 +28,19 @@ export function Sidebar({
   onToggleCollapse,
   onSelectProject,
   onSelectFlow,
+  onCreateProject,
+  onProjectSettings,
+  onArchiveProject,
   onNavigate,
 }: SidebarProps) {
   return (
     <aside className="sidebar" aria-label="Main navigation">
       <div className="brand-row">
         <a
-          href="#SP-123"
+          href="#flow"
           onClick={(event) => {
             event.preventDefault();
-            onSelectProject("Spectron");
+            onSelectFlow();
           }}
           className="brand"
           aria-label="Spectron home"
@@ -73,25 +81,48 @@ export function Sidebar({
         <div className="nav-divider" />
         <div className="projects">
           {projects.map((item) => (
-            <button
-              key={item.name}
-              className={`nav-item ${!isFlow && project === item.name ? "active" : ""}`}
-              title={item.name}
-              aria-label={item.name}
-              aria-current={
-                !isFlow && project === item.name ? "page" : undefined
-              }
-              onClick={() => onSelectProject(item.name)}
-            >
-              <span className={`project-icon ${item.color}`}>
-                {item.initial}
-              </span>
-              <span className="sidebar-label">{item.name}</span>
-              {item.name === "Spectron" && (
-                <span className="project-unread sidebar-label" />
-              )}
-            </button>
+            <div key={item.id} className="project-nav-row">
+              <button
+                className={`nav-item ${!isFlow && project === item.id ? "active" : ""}`}
+                title={item.name}
+                aria-label={item.name}
+                aria-current={
+                  !isFlow && project === item.id ? "page" : undefined
+                }
+                onClick={() => onSelectProject(item.id)}
+              >
+                <ProjectMark project={item} />
+                <span className="sidebar-label">{item.name}</span>
+              </button>
+              <Menu
+                className="project-menu-trigger"
+                label={`${item.name} options`}
+                items={[
+                  {
+                    label: "Settings",
+                    onSelect: () => onProjectSettings(item.id),
+                  },
+                  ...(item.role === "owner"
+                    ? [
+                        {
+                          label: "Archive",
+                          onSelect: () => onArchiveProject(item.id),
+                        },
+                      ]
+                    : []),
+                ]}
+              />
+            </div>
           ))}
+          <button
+            className="nav-item"
+            title="New project"
+            aria-label="New project"
+            onClick={onCreateProject}
+          >
+            <Icon name="plus" />
+            <span className="sidebar-label">New project</span>
+          </button>
         </div>
         <div className="nav-divider" />
         <button

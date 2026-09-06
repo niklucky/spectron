@@ -18,6 +18,11 @@ export function Dialog({
   useEffect(() => {
     const dialog = ref.current;
     dialog?.showModal();
+    dialog
+      ?.querySelector<HTMLElement>(
+        "input:not([disabled]), textarea:not([disabled]), select:not([disabled])",
+      )
+      ?.focus();
     return () => dialog?.close();
   }, []);
   return (
@@ -25,7 +30,10 @@ export function Dialog({
       ref={ref}
       aria-labelledby={titleId}
       className={`dialog ${className}`}
-      onCancel={onClose}
+      onCancel={(event) => {
+        event.preventDefault();
+        onClose();
+      }}
       onClick={(event) => {
         if (event.target === event.currentTarget) onClose();
       }}

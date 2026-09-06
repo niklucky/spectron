@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import {
   pgTable,
   text,
@@ -7,6 +8,9 @@ import {
   uniqueIndex,
   integer,
   bigint,
+  uuid,
+  primaryKey,
+  pgEnum,
 } from "drizzle-orm/pg-core";
 
 const dates = () => ({
@@ -102,3 +106,74 @@ export type User = typeof user.$inferSelect;
 export type Session = typeof session.$inferSelect;
 export type Account = typeof account.$inferSelect;
 export type Verification = typeof verification.$inferSelect;
+
+export const projectColor = pgEnum("project_color", ["blue", "slate", "sand"]);
+export const projectRole = pgEnum("project_role", ["owner", "member"]);
+
+export const projectState = pgEnum("project_state", ["active", "archived"]);
+export const invitationStatus = pgEnum("invitation_status", [
+  "sending",
+  "pending",
+  "accepted",
+  "cancelled",
+  "expired",
+  "failed",
+]);
+
+export const project = pgTable("projects", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  name: text("name").notNull(),
+  key: text("key").notNull(),
+  state: projectState("state").default("active").notNull(),
+  color: projectColor("color").default("blue").notNull(),
+  url: text("url"),
+  logo: text("logo"),
+  ...dates(),
+});
+
+export const projectMember = pgTable(
+  "project_members",
+  {
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => project.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    role: projectRole("role").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.projectId, table.userId] }),
+    index("project_members_user_idx").on(table.userId),
+  ],
+);
+
+export type Project = typeof project.$inferSelect;
+export type ProjectMember = typeof projectMember.$inferSelect;
+
+export const projectInvitation = pgTable(
+  "project_invitations",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => project.id, { onDelete: "cascade" }),
+    email: text("email").notNull(),
+    invitedBy: text("invited_by").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    tokenHash: text("token_hash").notNull().unique(),
+    status: invitationStatus("status").default("sending").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    ...dates(),
+  },
+  (table) => [
+    index("project_invitations_project_idx").on(table.projectId),
+    uniqueIndex("project_invitations_pending_unique")
+      .on(table.projectId, table.email)
+      .where(sql`${table.status} in ('sending', 'pending')`),
+  ],
+);

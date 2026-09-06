@@ -34,5 +34,8 @@
   },
   "devDependencies": {
     "@types/react": "19.2.18"
+  },
+  "dependencies": {
+    "@spectron/shared": "workspace:*"
   }
 }

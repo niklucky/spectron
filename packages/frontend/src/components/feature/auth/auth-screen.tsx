@@ -19,10 +19,12 @@ export function AuthScreen({
   mode,
   onSubmit,
   invalidReset = false,
+  continueHash = "",
 }: {
   mode: AuthMode;
   onSubmit: (fields: AuthFields) => Promise<void>;
   invalidReset?: boolean;
+  continueHash?: string;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -53,14 +55,14 @@ export function AuthScreen({
                 ? "If an account exists for that email, you’ll receive a link to reset your password."
                 : "You can now sign in with your new password."}
             </p>
-            <a className="auth-link" href="/login">
+            <a className="auth-link" href={`/login${continueHash}`}>
               Back to sign in
             </a>
           </>
         ) : invalidReset ? (
           <>
             <p>Request a new link to reset your password.</p>
-            <a className="auth-link" href="/forgot-password">
+            <a className="auth-link" href={`/forgot-password${continueHash}`}>
               Get a new reset link
             </a>
           </>
@@ -184,7 +186,10 @@ export function AuthScreen({
                   </label>
                 )}
                 {mode === "login" && (
-                  <a className="auth-forgot auth-link" href="/forgot-password">
+                  <a
+                    className="auth-forgot auth-link"
+                    href={`/forgot-password${continueHash}`}
+                  >
                     Forgot password?
                   </a>
                 )}
@@ -210,12 +215,12 @@ export function AuthScreen({
               {mode === "login" ? (
                 <>
                   New to Spectron?{" "}
-                  <a className="auth-link" href="/register">
+                  <a className="auth-link" href={`/register${continueHash}`}>
                     Create an account
                   </a>
                 </>
               ) : (
-                <a className="auth-link" href="/login">
+                <a className="auth-link" href={`/login${continueHash}`}>
                   Back to sign in
                 </a>
               )}

@@ -110,7 +110,10 @@ export function WorkspaceDialogs({
           </label>
           <div className="setting-row">
             <span>Workspace</span>
-            <span>{project}</span>
+            <span>
+              {projects.find((item) => item.id === project)?.name ||
+                "No project"}
+            </span>
           </div>
           <p className="muted">
             Connections and team settings will be added as we build.

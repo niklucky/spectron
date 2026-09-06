@@ -36,6 +36,7 @@ services:
       RESEND_API_KEY: ${RESEND_API_KEY:-}
       EMAIL_FROM: ${EMAIL_FROM:-}
       TRUST_PROXY: "true"
+      PROJECT_LOGO_DNS: ${PROJECT_LOGO_DNS:-system}
     depends_on:
       migrate:
         condition: service_completed_successfully

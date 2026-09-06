@@ -4,7 +4,14 @@ import * as schema from "./schema";
 
 export { schema };
 export { migrateDatabase } from "./migrations";
-export type { User, Session, Account, Verification } from "./schema";
+export type {
+  User,
+  Session,
+  Account,
+  Verification,
+  Project,
+  ProjectMember,
+} from "./schema";
 export function getDatabaseURL(env: NodeJS.ProcessEnv = process.env) {
   if (env.DATABASE_URL) return env.DATABASE_URL;
   if (env.DATABASE_HOST && env.POSTGRES_PASSWORD) {

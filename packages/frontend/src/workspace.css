@@ -11,9 +11,12 @@
 @import "./components/feature/chat/video-preview.css";
 @import "./components/feature/chat/voice-message.css";
 @import "./components/feature/project/project-mark.css";
+@import "./components/feature/project/project.css";
 @import "./components/feature/task/new-task-dialog.css";
 @import "./components/feature/task/status-dot.css";
 @import "./components/feature/task/task-list.css";
 @import "./components/feature/workspace/layout.css";
 @import "./components/feature/workspace/sidebar.css";
 @import "./components/feature/workspace/workspace-dialogs.css";
+
+@import "./components/ui/menu/menu.css";

@@ -2,7 +2,11 @@ import { config } from "dotenv";
 import { fileURLToPath } from "node:url";
 import { serve } from "@hono/node-server";
 import { createDatabase, getDatabaseURL } from "@spectron/db";
-import { createAuth, createResetEmailSender } from "@spectron/backend";
+import {
+  createAuth,
+  createResetEmailSender,
+  createInvitationEmailSender,
+} from "@spectron/backend";
 import { createAPI } from "./index";
 
 config({
@@ -36,7 +40,12 @@ const auth = createAuth(db, {
   secret: BETTER_AUTH_SECRET,
   sendResetEmail: createResetEmailSender(RESEND_API_KEY, EMAIL_FROM),
 });
-const api = createAPI(auth, { trustProxy: process.env.TRUST_PROXY === "true" });
+const api = createAPI(auth, {
+  db,
+  appURL: APP_URL,
+  trustProxy: process.env.TRUST_PROXY === "true",
+  sendInvitationEmail: createInvitationEmailSender(RESEND_API_KEY, EMAIL_FROM),
+});
 const server = serve(
   { fetch: api.fetch, port, hostname: process.env.API_HOST || "127.0.0.1" },
   () => {

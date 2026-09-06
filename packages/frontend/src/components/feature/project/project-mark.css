@@ -8,16 +8,12 @@
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-bold);
   flex: 0 0 auto;
-}
-.project-spectron {
+  overflow: hidden;
   color: var(--color-project-blue-text);
   background: var(--color-project-blue-bg);
 }
-.project-orbit {
-  color: var(--color-project-slate-text);
-  background: var(--color-project-slate-bg);
-}
-.project-studio {
-  color: var(--color-project-sand-text);
-  background: var(--color-project-sand-bg);
+.project-icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
 }

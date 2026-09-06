@@ -1,69 +1,42 @@
 import { useEffect, useRef, useState } from "react";
 import { useTheme } from "@spectron/frontend/hooks/use-theme";
 import type { WorkspaceDialogName } from "@spectron/frontend/components/feature/workspace";
-import type { Task } from "@spectron/frontend/components/feature/task";
+import type { Task, Project } from "@spectron/frontend/components/feature/task";
 import type {
   Attachment,
   LocalMessage,
 } from "@spectron/frontend/components/feature/chat";
-import { initialTasks } from "../mock-data";
-
-const startingTasks: Record<string, Task[]> = {
-  Spectron: initialTasks,
-  Orbit: [
-    {
-      id: "OR-21",
-      title: "Plan the next release",
-      status: "In progress",
-      updated: "Today",
-      preview: "Bring the release notes together",
-      initials: "JL",
-      color: "lavender",
-      time: "1h",
-    },
-  ],
-  Studio: [
-    {
-      id: "ST-14",
-      title: "Explore the new website",
-      status: "Todo",
-      updated: "Today",
-      preview: "A place for references and ideas",
-      initials: "AM",
-      color: "sand",
-      time: "3h",
-    },
-  ],
-};
-
-function readRoute(tasks: Record<string, Task[]>) {
-  const hash = window.location.hash.slice(1);
-  const flow = hash === "flow" || hash.startsWith("flow/");
-  const id = flow ? hash.slice(5) : hash;
-  const project = Object.keys(tasks).find((name) =>
-    tasks[name]!.some((task) => task.id === id),
-  );
-  return { flow, project: project || "Spectron", id: project ? id : "SP-123" };
+function readRoute(projects: Project[], tasks: Record<string, Task[]>) {
+  const parts = window.location.hash.slice(1).split("/");
+  const flow = parts[0] === "flow" || !projects.length;
+  const project =
+    projects.find((item) => item.id === parts[1])?.id || projects[0]?.id || "";
+  const id =
+    (tasks[project] || []).find((item) => item.id === parts[2])?.id || "";
+  return { flow, project, id };
 }
-
-const taskHash = (id: string, flow: boolean) =>
-  flow ? `#flow/${id}` : `#${id}`;
+const taskHash = (project: string, id: string, flow: boolean) =>
+  flow
+    ? id
+      ? `#flow/${project}/${id}`
+      : "#flow"
+    : `#project/${project}${id ? `/${id}` : ""}`;
 const activityAge = (time: string) =>
   time === "now"
     ? 0
     : Number.parseInt(time) *
       (time.endsWith("d") ? 1440 : time.endsWith("h") ? 60 : 1);
 
-export function useWorkspace(initialName: string) {
+export function useWorkspace(initialName: string, projects: Project[]) {
   const [collapsed, setCollapsed] = useState(false);
   const [mobileChat, setMobileChat] = useState(false);
-  const [project, setProject] = useState(
-    () => readRoute(startingTasks).project,
+  const [project, setProject] = useState(() => readRoute(projects, {}).project);
+  const [isFlow, setIsFlow] = useState(() => readRoute(projects, {}).flow);
+  const [tasksByProject, setTasksByProject] = useState<Record<string, Task[]>>(
+    {},
   );
-  const [isFlow, setIsFlow] = useState(() => readRoute(startingTasks).flow);
-  const [tasksByProject, setTasksByProject] = useState(startingTasks);
   const [selectedId, setSelectedId] = useState(
-    () => readRoute(startingTasks).id,
+    () => readRoute(projects, {}).id,
   );
   const [query, setQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
@@ -89,19 +62,20 @@ export function useWorkspace(initialName: string) {
   const objectUrls = useRef<string[]>([]);
   const task = (tasksByProject[project] || []).find(
     (item) => item.id === selectedId,
-  )!;
+  );
   const draft = drafts[selectedId] || "";
   const attachment = attachments[selectedId];
-  const allTasks = Object.entries(tasksByProject).flatMap(
-    ([projectName, projectTasks]) =>
+  const allTasks = Object.entries(tasksByProject)
+    .filter(([id]) => projects.some((item) => item.id === id))
+    .flatMap(([projectName, projectTasks]) =>
       projectTasks.map((item) => ({ ...item, project: projectName })),
-  );
+    );
   const visibleTasks = isFlow
     ? allTasks.sort((a, b) => activityAge(a.time) - activityAge(b.time))
     : allTasks.filter((item) => item.project === project);
   const tasks = visibleTasks.filter(
     (item) =>
-      `${item.project} ${item.id} ${item.title} ${item.preview}`
+      `${projects.find((project) => project.id === item.project)?.name || ""} ${item.id} ${item.title} ${item.preview}`
         .toLowerCase()
         .includes(query.toLowerCase()) &&
       (filter !== "open" || item.status !== "Done") &&
@@ -127,23 +101,28 @@ export function useWorkspace(initialName: string) {
   );
   useEffect(() => {
     const change = () => {
-      const route = readRoute(tasksByProject);
+      const route = readRoute(projects, tasksByProject);
       setProject(route.project);
       setSelectedId(route.id);
       setIsFlow(route.flow);
+      if (!route.id) setMobileChat(false);
+    };
+    const onHashChange = () => {
+      change();
       setQuery("");
       setFilter("all");
     };
-    window.addEventListener("hashchange", change);
-    return () => window.removeEventListener("hashchange", change);
-  }, [tasksByProject]);
+    change();
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, [tasksByProject, projects]);
 
   const openModal = (value: WorkspaceDialogName) => setModal(value);
   const selectTask = (id: string, owner: string) => {
     setProject(owner);
     setSelectedId(id);
     setMobileChat(true);
-    history.replaceState(null, "", taskHash(id, isFlow));
+    history.replaceState(null, "", taskHash(owner, id, isFlow));
     setTasksByProject((previous) => ({
       ...previous,
       [owner]: previous[owner]!.map((item) =>
@@ -156,14 +135,14 @@ export function useWorkspace(initialName: string) {
     setQuery("");
     setFilter("all");
     setMobileChat(false);
-    history.replaceState(null, "", taskHash(selectedId, true));
+    history.replaceState(null, "", taskHash(project, selectedId, true));
   };
   const selectProject = (value: string) => {
     setIsFlow(false);
     setProject(value);
-    const first = tasksByProject[value]![0]!;
-    setSelectedId(first.id);
-    history.replaceState(null, "", `#${first.id}`);
+    const first = tasksByProject[value]?.[0];
+    setSelectedId(first?.id || "");
+    history.replaceState(null, "", taskHash(value, first?.id || "", false));
     setQuery("");
     setFilter("all");
     setMobileChat(false);
@@ -171,12 +150,12 @@ export function useWorkspace(initialName: string) {
   const updateTask = (changes: Partial<Task>) =>
     setTasksByProject((previous) => ({
       ...previous,
-      [project]: previous[project]!.map((item) =>
+      [project]: (previous[project] || []).map((item) =>
         item.id === selectedId ? { ...item, ...changes } : item,
       ),
     }));
   const sendMessage = () => {
-    if ((!draft.trim() && !attachment) || recording) return;
+    if (!task || (!draft.trim() && !attachment) || recording) return;
     const message: LocalMessage = {
       id: crypto.randomUUID(),
       text: draft.trim(),
@@ -194,7 +173,7 @@ export function useWorkspace(initialName: string) {
     setAttachments((previous) => ({ ...previous, [selectedId]: undefined }));
     updateTask({
       preview: draft.trim() || attachment?.name || "New message",
-      initials: "NK",
+      initials: name.slice(0, 2).toUpperCase(),
       color: "sage",
       time: "now",
       unread: 0,
@@ -262,32 +241,34 @@ export function useWorkspace(initialName: string) {
     }
   };
   const createTask = (title: string, destination: string) => {
-    if (!title.trim() || !tasksByProject[destination]) return;
-    const prefix =
-      destination === "Spectron" ? "SP" : destination === "Orbit" ? "OR" : "ST";
+    const owner = projects.find((item) => item.id === destination);
+    if (!title.trim() || !owner) return;
+    const prefix = owner.key;
     const number =
+      1 +
       Math.max(
-        ...tasksByProject[destination]!.map((item) =>
-          Number(item.id.split("-")[1]),
-        ),
-      ) + 1;
+        0,
+        ...Object.values(tasksByProject)
+          .flat()
+          .map((item) => Number(item.id.split("-").at(-1)) || 0),
+      );
     const item: Task = {
       id: `${prefix}-${number}`,
       title: title.trim(),
       status: "Todo",
       updated: "Just now",
       preview: "Start the conversation",
-      initials: "NK",
+      initials: name.slice(0, 2).toUpperCase(),
       color: "sage",
       time: "now",
     };
     setTasksByProject((previous) => ({
       ...previous,
-      [destination]: [item, ...previous[destination]!],
+      [destination]: [item, ...(previous[destination] || [])],
     }));
     setProject(destination);
     setSelectedId(item.id);
-    history.replaceState(null, "", taskHash(item.id, isFlow));
+    history.replaceState(null, "", taskHash(destination, item.id, isFlow));
     setQuery("");
     setFilter("all");
     setMobileChat(true);
@@ -301,7 +282,7 @@ export function useWorkspace(initialName: string) {
   const copyTaskLink = () => {
     void navigator.clipboard
       .writeText(
-        `${location.origin}${location.pathname}${taskHash(task.id, isFlow)}`,
+        `${location.origin}${location.pathname}${taskHash(project, task?.id || "", isFlow)}`,
       )
       .then(
         () => setNotice("Task link copied"),

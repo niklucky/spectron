@@ -31,7 +31,7 @@ test("Postgres auth lifecycle", async (t) => {
       sent.push(email);
     },
   });
-  const api = createAPI(auth);
+  const api = createAPI(auth, { db, appURL: origin });
   const email = "developer@example.test";
   const password = "a sufficiently long password";
   let cookie = "";
@@ -255,6 +255,7 @@ test("Postgres auth lifecycle", async (t) => {
           secret: "integration-test-secret-with-at-least-32-characters",
           sendResetEmail: async () => {},
         }),
+        { db, appURL: origin },
       );
       const response = await otherAPI.request(
         `${origin}/api/auth/request-password-reset`,
@@ -285,6 +286,7 @@ test("Postgres auth lifecycle", async (t) => {
             throw new Error("Simulated delivery failure");
           },
         }),
+        { db, appURL: origin },
       );
       const request = (email: string) =>
         failingAPI.request(`${origin}/api/auth/request-password-reset`, {
@@ -313,6 +315,7 @@ test("Postgres auth lifecycle", async (t) => {
           secret: "integration-test-secret-with-at-least-32-characters",
           sendResetEmail: async () => {},
         }),
+        { db, appURL: secureOrigin },
       );
       const login = await secureAPI.request(
         `${secureOrigin}/api/auth/sign-in/email`,

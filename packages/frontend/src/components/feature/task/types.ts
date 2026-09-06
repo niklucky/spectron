@@ -10,5 +10,13 @@ export type Task = {
   unread?: number;
 };
 
-export type Project = { name: string; initial: string; color: string };
+export type Project = {
+  role: "owner" | "member";
+  id: string;
+  name: string;
+  key: string;
+  initial: string;
+  logo: string | null;
+  url: string | null;
+};
 export type TaskListItem = Task & { project: string };

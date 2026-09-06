@@ -13,7 +13,7 @@ type AuthUser = { id: string; name: string; email: string };
 export function AuthGate({
   children,
 }: {
-  children: (user: AuthUser) => ReactNode;
+  children: (user: AuthUser, sessionId: string) => ReactNode;
 }) {
   useTheme();
   const { data, isPending, error, refetch } = authClient.useSession();
@@ -39,7 +39,8 @@ export function AuthGate({
         <Button onClick={() => void refetch()}>Try again</Button>
       </main>
     );
-  if (data && mode !== "reset-password") return children(data.user);
+  if (data && mode !== "reset-password")
+    return children(data.user, data.session.id);
 
   async function submit(fields: AuthFields) {
     const result =
@@ -81,6 +82,11 @@ export function AuthGate({
     <AuthScreen
       key={mode}
       mode={mode}
+      continueHash={
+        /^#invite\/[a-f0-9]{64}$/.test(window.location.hash)
+          ? window.location.hash
+          : ""
+      }
       onSubmit={submit}
       invalidReset={
         mode === "reset-password" && (!token || params.has("error"))

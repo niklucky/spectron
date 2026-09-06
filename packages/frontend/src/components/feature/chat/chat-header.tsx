@@ -74,19 +74,21 @@ export function ChatHeader({
         <span className="created-label">
           Created {task.updated.toLowerCase()}
         </span>
-        <button
-          className="source-stack"
-          aria-label="Conversation sources"
-          onClick={() => onSources()}
-        >
-          {sources.map((source) => (
-            <Icon
-              key={source}
-              name={source}
-              size={source === "gitlab" ? 16 : 15}
-            />
-          ))}
-        </button>
+        {!!sources.length && (
+          <button
+            className="source-stack"
+            aria-label="Conversation sources"
+            onClick={() => onSources()}
+          >
+            {sources.map((source) => (
+              <Icon
+                key={source}
+                name={source}
+                size={source === "gitlab" ? 16 : 15}
+              />
+            ))}
+          </button>
+        )}
       </div>
       {details && (
         <div className="task-details">

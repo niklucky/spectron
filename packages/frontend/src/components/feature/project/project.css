@@ -1,0 +1,254 @@
+.project-intro {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-base);
+  line-height: var(--line-height-body);
+  margin-bottom: 24px !important;
+}
+.project-form fieldset {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+.project-form label {
+  display: block;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-base);
+  margin-bottom: 8px;
+}
+.project-form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-top: 20px;
+}
+.project-form-row .text-input,
+.project-form-row .select-input {
+  width: 100%;
+  min-height: 44px;
+  margin-top: 8px;
+}
+.project-error {
+  color: var(--color-text-danger);
+  font-size: var(--font-size-base);
+  margin-top: 16px !important;
+}
+.project-empty-state {
+  grid-column: 2 / -1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 32px;
+  text-align: center;
+  background: var(--color-surface);
+}
+.project-empty-state h1 {
+  font-size: var(--font-size-page-title);
+  font-weight: var(--font-weight-semibold);
+}
+.project-empty-state p {
+  max-width: 360px;
+  color: var(--color-text-secondary);
+}
+.chat-empty-state {
+  display: grid;
+  place-content: center;
+  gap: 12px;
+  padding: 32px;
+  text-align: center;
+  color: var(--color-text-secondary);
+  background: var(--color-surface);
+}
+@media (max-width: 700px) {
+  .chat-empty-state {
+    display: none;
+  }
+}
+
+.project-url-label {
+  margin-top: 20px;
+}
+.project-optional {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-md);
+  margin-left: 4px;
+}
+.project-logo-field {
+  margin-top: 20px;
+}
+.project-field-label {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-base);
+}
+.project-logo-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 10px;
+}
+.project-logo-preview {
+  width: 48px;
+  height: 48px;
+  border: 1px solid var(--color-line);
+  border-radius: 8px;
+  background: var(--color-list);
+  display: grid;
+  place-items: center;
+  color: var(--color-text-muted);
+  flex: 0 0 auto;
+}
+.project-logo-preview img {
+  width: 40px;
+  height: 40px;
+  object-fit: contain;
+}
+.project-logo-controls button {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-base);
+}
+.project-logo-file {
+  display: none;
+}
+.project-logo-status {
+  margin-top: 10px !important;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-md);
+  line-height: var(--line-height-body);
+}
+
+.project-settings-dialog {
+  width: min(800px, calc(100vw - 36px));
+}
+.project-settings-dialog > .dialog-body {
+  padding: 0;
+}
+.project-settings-layout {
+  display: grid;
+  grid-template-columns: 160px minmax(0, 1fr);
+  min-height: 520px;
+}
+.project-settings-nav {
+  padding: 20px 12px;
+  border-right: 1px solid var(--color-line);
+}
+.project-settings-nav button {
+  display: block;
+  width: 100%;
+  padding: 10px 12px;
+  margin-bottom: 4px;
+  border-radius: 6px;
+  text-align: left;
+  color: var(--color-text-secondary);
+}
+.project-settings-nav button[aria-current],
+.project-settings-nav button:hover {
+  background: var(--color-nav-active);
+  color: var(--color-text-primary);
+}
+.project-settings-content {
+  padding: 24px;
+  min-width: 0;
+}
+.project-invite-form label {
+  display: block;
+  margin-bottom: 10px;
+}
+.project-invite-form > div {
+  display: flex;
+  gap: 10px;
+}
+.project-invite-form input {
+  min-width: 0;
+  flex: 1;
+}
+.project-invite-form button {
+  flex-shrink: 0;
+}
+.project-settings-content .project-section-title {
+  font-size: var(--font-size-ui);
+  font-weight: var(--font-weight-semibold);
+  margin: 28px 0 12px;
+}
+.project-people-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.project-people-list li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--color-line);
+}
+.project-people-list li:last-child {
+  border-bottom: 0;
+}
+.project-people-list li > div {
+  flex: 1;
+  min-width: 0;
+}
+.project-people-list strong {
+  display: block;
+  font-weight: var(--font-weight-medium);
+  overflow-wrap: anywhere;
+}
+.project-people-list li > div > span {
+  display: block;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-md);
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+}
+.project-person-initial {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--color-nav-active);
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+.project-person-role {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-md);
+}
+.project-feedback {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-base);
+  margin-top: 14px !important;
+}
+@media (max-width: 600px) {
+  .project-settings-layout {
+    grid-template-columns: 100px minmax(0, 1fr);
+  }
+  .project-settings-nav {
+    padding: 14px 6px;
+  }
+  .project-settings-nav button {
+    padding: 10px 8px;
+  }
+  .project-settings-content {
+    padding: 18px 14px;
+  }
+  .project-invite-form > div {
+    flex-direction: column;
+  }
+  .project-people-list li {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .project-settings-content .project-logo-controls {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .project-settings-content .project-form-row {
+    grid-template-columns: 1fr;
+  }
+  .project-settings-content .dialog-footer {
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+}

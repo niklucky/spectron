@@ -26,7 +26,7 @@ export function TaskItem({
           {isFlow && (
             <>
               <ProjectMark project={project} />
-              <span className="task-project-name">{item.project}</span>
+              <span className="task-project-name">{project.name}</span>
               <span className="task-context-divider">/</span>
             </>
           )}
