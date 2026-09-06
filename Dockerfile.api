@@ -1,0 +1,10 @@
+FROM node:24-alpine
+WORKDIR /workspace
+RUN npm install --global pnpm@9.15.0
+COPY --chown=node:node . .
+RUN pnpm install --frozen-lockfile
+ENV NODE_ENV=production
+ENV API_HOST=0.0.0.0
+USER node
+EXPOSE 3001
+CMD ["pnpm", "--filter", "@spectron/api", "start"]

@@ -1,0 +1,30 @@
+.avatar {
+  width: 29px;
+  height: 29px;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  letter-spacing: var(--letter-spacing-avatar);
+}
+.sage {
+  background: var(--color-avatar-blue-bg);
+  color: var(--color-avatar-blue-text);
+}
+.sand {
+  background: var(--color-avatar-sand-bg);
+  color: var(--color-avatar-sand-text);
+}
+.lavender {
+  background: var(--color-avatar-purple-bg);
+  color: var(--color-avatar-purple-text);
+}
+.avatar-small {
+  width: 19px;
+  height: 19px;
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-strong);
+}

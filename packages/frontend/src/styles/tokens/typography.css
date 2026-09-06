@@ -1,0 +1,32 @@
+:root {
+  --font-family-sans: system-ui, sans-serif;
+  --font-size-2xs: 0.625rem;
+  --font-size-xs: 0.6875rem;
+  --font-size-sm: 0.75rem;
+  --font-size-md: 0.8125rem;
+  --font-size-base: 0.875rem;
+  --font-size-ui: 0.9375rem;
+  --font-size-lg: 1rem;
+  --font-size-brand-compact: 1.0625rem;
+  --font-size-xl: 1.125rem;
+  --font-size-2xl: 1.25rem;
+  --font-size-page-title: 1.5rem;
+  --font-weight-light: 300;
+  --font-weight-regular: 400;
+  --font-weight-book: 450;
+  --font-weight-medium: 500;
+  --font-weight-strong: 550;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 650;
+  --line-height-ui: 1.45;
+  --line-height-body: 1.6;
+  --line-height-dialog: 1.65;
+  --line-height-message: 1.7;
+  --letter-spacing-ui: -0.012em;
+  --letter-spacing-brand: -0.8px;
+  --letter-spacing-avatar: -0.3px;
+  --letter-spacing-heading: -0.45px;
+  --letter-spacing-compact: -0.15px;
+  --letter-spacing-label: 0.15px;
+  --letter-spacing-title: -0.25px;
+}

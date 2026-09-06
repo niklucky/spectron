@@ -1,0 +1,52 @@
+.setting-row select {
+  border: 1px solid var(--color-line);
+  border-radius: 5px;
+  background: var(--color-surface);
+  padding: 4px 8px;
+  font-size: var(--font-size-base);
+}
+.setting-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 20px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--color-line);
+  font-size: var(--font-size-base);
+}
+.setting-row:first-child {
+  padding-top: 0;
+}
+.setting-row:last-child {
+  border-bottom: 0;
+}
+.setting-row + .muted {
+  margin-top: 20px;
+}
+.source-name {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.source-name svg {
+  color: var(--color-text-secondary);
+}
+.media-dialog {
+  width: min(880px, calc(100vw - 40px));
+}
+.media-dialog .dialog-body {
+  padding: 12px;
+}
+.expanded-image,
+.expanded-video {
+  width: 100%;
+  max-height: 70dvh;
+  object-fit: contain;
+  display: block;
+  border-radius: 5px;
+}
+.media-note {
+  text-align: center;
+  padding-top: 10px;
+  font-size: var(--font-size-sm);
+}

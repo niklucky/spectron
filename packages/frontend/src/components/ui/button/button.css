@@ -1,0 +1,30 @@
+.icon-button {
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  color: var(--color-text-secondary);
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+.icon-button:hover {
+  background: var(--color-hover);
+  color: var(--color-text-primary);
+}
+.icon-button:disabled {
+  opacity: 0.35;
+}
+.primary-button {
+  background: var(--color-action);
+  color: var(--color-on-action);
+  border-radius: 6px;
+  padding: 8px 13px;
+  font-size: var(--font-size-base);
+}
+.primary-button:disabled {
+  opacity: 0.45;
+}

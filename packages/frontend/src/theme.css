@@ -1,0 +1,6 @@
+@import "./styles/tokens/index.css";
+
+:root {
+  color: var(--color-text-primary);
+  background: var(--color-surface);
+}

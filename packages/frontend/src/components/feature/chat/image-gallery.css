@@ -1,0 +1,22 @@
+.image-gallery {
+  display: flex;
+  gap: 6px;
+  width: 440px;
+  max-width: 100%;
+  margin-top: 7px;
+}
+.image-gallery button {
+  width: 50%;
+  padding: 0;
+  border: 1px solid var(--color-line);
+  border-radius: 7px;
+  overflow: hidden;
+}
+.image-gallery img {
+  width: 100%;
+  display: block;
+  transition: transform 0.2s;
+}
+.image-gallery button:hover img {
+  transform: scale(1.035);
+}

@@ -1,0 +1,49 @@
+.file-bubble {
+  display: flex;
+  width: 302px;
+  max-width: 100%;
+  align-items: center;
+  gap: 11px;
+  padding: 11px 12px;
+  background: var(--color-bubble);
+  border-radius: 8px;
+  margin-top: 7px;
+  text-decoration: none;
+  color: var(--color-text-primary);
+}
+.file-bubble:hover {
+  background: var(--color-hover);
+}
+.file-icon {
+  height: 35px;
+  width: 32px;
+  border-radius: 5px;
+  background: var(--color-surface);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-line);
+}
+.file-bubble > span:nth-child(2) {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  gap: 3px;
+}
+.file-bubble strong {
+  font-weight: var(--font-weight-medium);
+  font-size: var(--font-size-md);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.file-bubble small {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+}
+.file-bubble > svg {
+  color: var(--color-text-secondary);
+  flex-shrink: 0;
+}

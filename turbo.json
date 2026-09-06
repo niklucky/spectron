@@ -1,0 +1,30 @@
+{
+  "$schema": "https://turborepo.dev/schema.json",
+  "globalDependencies": ["tsconfig.base.json"],
+  "tasks": {
+    "dev": {
+      "cache": false,
+      "persistent": true,
+      "passThroughEnv": [
+        "DATABASE_URL",
+        "DATABASE_HOST",
+        "POSTGRES_PASSWORD",
+        "APP_URL",
+        "API_PORT",
+        "API_HOST",
+        "BETTER_AUTH_SECRET",
+        "RESEND_API_KEY",
+        "EMAIL_FROM",
+        "TRUST_PROXY"
+      ]
+    },
+    "build": {
+      "dependsOn": ["^build", "^typecheck"],
+      "outputs": ["dist/**"]
+    },
+    "typecheck": {
+      "dependsOn": ["^typecheck"],
+      "outputs": []
+    }
+  }
+}

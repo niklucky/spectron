@@ -1,0 +1,147 @@
+.composer-area {
+  flex: 0 0 auto;
+  width: 100%;
+  max-width: 790px;
+  margin: 0 auto;
+  padding: 8px 34px 14px;
+}
+.composer {
+  border: 1px solid var(--color-line);
+  background: var(--color-surface);
+  border-radius: 11px;
+  box-shadow: 0 2px 5px var(--color-shadow-faint);
+  padding: 13px 11px 9px;
+}
+[data-theme="dark"] .composer {
+  border-color: var(--color-line);
+}
+.composer:focus-within {
+  border-color: var(--color-focus);
+}
+.composer textarea {
+  resize: none;
+  width: 100%;
+  padding: 0 4px;
+  background: transparent;
+  border: 0;
+  font-size: var(--font-size-ui);
+  line-height: var(--line-height-body);
+  height: 48px;
+  max-height: 160px;
+}
+.composer textarea::placeholder {
+  color: var(--color-text-muted);
+}
+.composer-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 5px;
+}
+.composer-destination {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+}
+.composer-buttons {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+.composer .send-button {
+  background: var(--color-action);
+  color: var(--color-on-action);
+  border-radius: 7px;
+  width: 29px;
+  height: 29px;
+}
+.composer .send-button:disabled {
+  opacity: 0.5;
+}
+.composer .send-button:hover:not(:disabled) {
+  filter: brightness(1.2);
+}
+.composer-hint {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  margin-top: 9px;
+}
+.attachment-preview {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  background: var(--color-bubble);
+  border-radius: 5px;
+  padding: 4px 7px;
+  margin: 0 3px 10px;
+  width: fit-content;
+  max-width: 100%;
+  font-size: var(--font-size-md);
+  color: var(--color-text-secondary);
+}
+.attachment-preview > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.attachment-preview .icon-button {
+  width: 24px;
+  height: 24px;
+}
+.recording-label {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+  color: var(--color-recording);
+  font-size: var(--font-size-sm);
+}
+.recording-label > span {
+  width: 6px;
+  height: 6px;
+  background: currentColor;
+  border-radius: 50%;
+  animation: pulse 1s infinite;
+}
+.recording-button {
+  color: var(--color-recording);
+}
+.is-recording {
+  border-color: var(--color-recording-border);
+}
+@keyframes pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+@media (min-width: 1600px) {
+  .composer-area {
+    max-width: 850px;
+  }
+}
+@media (max-width: 1150px) {
+  .composer-area {
+    padding-left: 23px;
+    padding-right: 23px;
+  }
+}
+@media (max-width: 700px) {
+  .composer-area {
+    padding: 6px 13px 12px;
+  }
+  .composer {
+    padding: 11px 8px 7px;
+  }
+  .composer textarea {
+    font-size: var(--font-size-lg);
+    height: 48px;
+  }
+  .composer-hint {
+    display: none;
+  }
+}

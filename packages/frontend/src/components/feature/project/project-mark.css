@@ -1,0 +1,23 @@
+.project-icon {
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 5px;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-bold);
+  flex: 0 0 auto;
+}
+.project-spectron {
+  color: var(--color-project-blue-text);
+  background: var(--color-project-blue-bg);
+}
+.project-orbit {
+  color: var(--color-project-slate-text);
+  background: var(--color-project-slate-bg);
+}
+.project-studio {
+  color: var(--color-project-sand-text);
+  background: var(--color-project-sand-bg);
+}

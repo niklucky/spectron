@@ -1,0 +1,19 @@
+.toast {
+  position: fixed;
+  z-index: 30;
+  bottom: 28px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--color-action);
+  color: var(--color-on-action);
+  box-shadow: 0 4px 18px var(--color-shadow-toast);
+  padding: 11px 17px;
+  border-radius: 8px;
+  font-size: var(--font-size-base);
+  max-width: calc(100vw - 30px);
+}
+@media (max-width: 700px) {
+  .toast {
+    bottom: 16px;
+  }
+}

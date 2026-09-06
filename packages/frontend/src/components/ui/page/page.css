@@ -1,0 +1,12 @@
+.page {
+  max-width: 64rem;
+  margin: 0 auto;
+  padding: 3rem 1.5rem;
+}
+.page h1 {
+  font-size: var(--font-size-page-title);
+  font-weight: var(--font-weight-semibold);
+}
+.page p {
+  line-height: var(--line-height-body);
+}

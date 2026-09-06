@@ -1,0 +1,24 @@
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border: 1.5px solid var(--color-status-todo);
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+}
+.status-dot.in-progress {
+  border-color: var(--color-status-progress);
+  background: linear-gradient(
+    90deg,
+    var(--color-status-progress) 50%,
+    transparent 50%
+  );
+}
+.status-dot.in-review {
+  border-color: var(--color-status-review);
+  background: var(--color-status-review);
+}
+.status-dot.done {
+  border-color: var(--color-status-done);
+  background: var(--color-status-done);
+}

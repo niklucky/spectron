@@ -1,0 +1,99 @@
+.sidebar-account {
+  margin-top: auto;
+  padding: 16px 0;
+  position: relative;
+}
+.account-button {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  gap: 10px;
+  padding: 8px;
+  border-radius: 7px;
+  text-align: left;
+}
+.account-button:hover,
+.account-active {
+  background: var(--color-hover);
+}
+.account-button > svg {
+  margin-left: auto;
+  color: var(--color-text-muted);
+}
+.account-menu {
+  position: absolute;
+  left: 0;
+  bottom: 77px;
+  width: 235px;
+  background: var(--color-menu);
+  border: 1px solid var(--color-line);
+  box-shadow:
+    0 8px 35px var(--color-shadow-soft),
+    0 1px 4px var(--color-shadow-subtle);
+  border-radius: 10px;
+  padding: 5px;
+  z-index: 20;
+}
+.account-menu > button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  width: 100%;
+  border-radius: 5px;
+  text-align: left;
+  font-size: var(--font-size-base);
+}
+.account-menu > button:hover,
+.theme-options button:hover {
+  background: var(--color-hover);
+}
+.account-menu svg {
+  color: var(--color-text-secondary);
+}
+.menu-value {
+  margin-left: auto;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-md);
+  text-transform: capitalize;
+}
+.menu-divider {
+  height: 1px;
+  background: var(--color-line);
+  margin: 4px 5px;
+}
+.theme-options {
+  padding: 0 8px 7px 30px;
+}
+.theme-options button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  text-transform: capitalize;
+  padding: 7px 10px;
+  width: 100%;
+  border-radius: 4px;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-base);
+}
+.sidebar-collapsed .account-button {
+  padding: 8px;
+  justify-content: center;
+}
+.sidebar-collapsed .account-button > svg {
+  display: none;
+}
+@media (max-width: 930px) {
+  .account-button > svg {
+    display: none;
+  }
+  .account-button {
+    padding: 8px;
+    justify-content: center;
+  }
+}
+@media (max-width: 700px) {
+  .account-menu {
+    left: 3px;
+  }
+}

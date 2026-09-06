@@ -1,0 +1,38 @@
+{
+  "name": "@spectron/frontend",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./styles.css": "./src/styles.css",
+    "./theme.css": "./src/theme.css",
+    "./components/ui/button": "./src/components/ui/button/index.ts",
+    "./components/ui/input": "./src/components/ui/input/index.ts",
+    "./components/ui/icon": "./src/components/ui/icon/index.ts",
+    "./components/ui/avatar": "./src/components/ui/avatar/index.ts",
+    "./components/ui/dialog": "./src/components/ui/dialog/index.ts",
+    "./components/ui/toast": "./src/components/ui/toast/index.tsx",
+    "./components/ui/page": "./src/components/ui/page/index.ts",
+    "./components/feature/chat": "./src/components/feature/chat/index.ts",
+    "./components/feature/task": "./src/components/feature/task/index.ts",
+    "./components/feature/project": "./src/components/feature/project/index.ts",
+    "./components/feature/account": "./src/components/feature/account/index.ts",
+    "./components/feature/workspace": "./src/components/feature/workspace/index.ts",
+    "./tokens.css": "./src/styles/tokens/index.css",
+    "./workspace.css": "./src/workspace.css",
+    "./hooks/use-theme": "./src/hooks/use-theme.ts",
+    "./ui.css": "./src/ui.css",
+    "./components/feature/auth": "./src/components/feature/auth/index.ts",
+    "./auth.css": "./src/auth.css"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "peerDependencies": {
+    "react": "^19.2.8"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.18"
+  }
+}

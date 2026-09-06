@@ -1,0 +1,13 @@
+.sent-image,
+.sent-video {
+  max-width: 100%;
+  width: 360px;
+  max-height: 300px;
+  object-fit: contain;
+  border-radius: 9px;
+  margin-top: 6px;
+}
+.sent-audio {
+  max-width: 100%;
+  margin-top: 6px;
+}

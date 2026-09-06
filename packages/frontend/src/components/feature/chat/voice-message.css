@@ -1,0 +1,55 @@
+.voice-bubble {
+  width: 306px;
+  max-width: 100%;
+  background: var(--color-bubble);
+  border-radius: 0 10px 10px 10px;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 11px 13px;
+}
+.voice-play {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--color-surface);
+  color: var(--color-accent);
+  border: 1px solid var(--color-line);
+}
+.voice-play svg {
+  width: 14px;
+  height: 14px;
+}
+.voice-track {
+  flex: 1;
+  min-width: 0;
+}
+.waveform {
+  display: flex;
+  align-items: center;
+  height: 28px;
+  gap: 2px;
+  color: var(--color-accent);
+}
+.waveform span {
+  width: 2px;
+  flex: 1;
+  border-radius: 2px;
+  background: currentColor;
+}
+.voice-caption {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  display: flex;
+  justify-content: space-between;
+  margin-top: 3px;
+}
+@media (max-width: 700px) {
+  .voice-bubble {
+    padding: 10px;
+    gap: 8px;
+  }
+  .waveform {
+    gap: 1px;
+  }
+}

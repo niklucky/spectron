@@ -1,0 +1,25 @@
+{
+  "name": "spectron",
+  "private": true,
+  "packageManager": "pnpm@9.15.0",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "dev": "turbo run dev",
+    "dev:app": "pnpm --filter @spectron/app dev",
+    "dev:web": "pnpm --filter @spectron/web dev",
+    "build": "turbo run build",
+    "typecheck": "turbo run typecheck",
+    "compose:up": "docker compose -f compose.local.yml up -d --wait",
+    "compose:down": "docker compose -f compose.local.yml down",
+    "dev:api": "pnpm --filter @spectron/api dev",
+    "db:generate": "pnpm --filter @spectron/db generate",
+    "db:migrate": "pnpm --filter @spectron/db migrate",
+    "test:auth": "pnpm --filter @spectron/api test"
+  },
+  "devDependencies": {
+    "turbo": "2.10.12",
+    "typescript": "7.0.2"
+  }
+}
