@@ -25,3 +25,8 @@ export { createCommentService, type CommentService } from "./comments";
 export { createWorklogService, type WorklogService } from "./worklogs";
 
 export { createActivityService, type ActivityService } from "./activity";
+export { createFieldService, type FieldService } from "./fields";
+export { createJiraService, type JiraService } from "./integrations/jira";
+export { JiraApiError } from "./integrations/jira-client";
+
+export { createJiraScheduler } from "./integrations/jira-scheduler";

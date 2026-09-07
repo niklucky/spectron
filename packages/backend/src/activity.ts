@@ -1,3 +1,4 @@
+import { normalizeHistoryChanges } from "./history-changes";
 import { and, or, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { schema, type Database } from "@spectron/db";
 import { commentText } from "@spectron/shared";
@@ -89,11 +90,22 @@ export function createActivityService(db: Database) {
           ? await tx
               .select({
                 row: comment,
-                authorName: user.name,
+                authorName: sql<string>`coalesce(${user.name}, ${schema.externalIdentity.displayName}, 'Imported user')`,
+                resolvedAuthorId: sql<string>`coalesce(${user.id}, ${schema.externalIdentity.id})`,
                 replyCount: sql<number>`(select count(*)::int from issue_comments replies where replies.issue_id = ${comment.issueId} and replies.parent_id = ${comment.id})`,
               })
               .from(comment)
-              .innerJoin(user, eq(user.id, comment.authorId))
+              .leftJoin(
+                schema.externalIdentity,
+                eq(schema.externalIdentity.id, comment.externalAuthorId),
+              )
+              .leftJoin(
+                user,
+                eq(
+                  user.id,
+                  sql`coalesce(${comment.authorId}, ${schema.externalIdentity.localUserId})`,
+                ),
+              )
               .where(
                 and(
                   eq(comment.issueId, input.issueId),
@@ -108,9 +120,22 @@ export function createActivityService(db: Database) {
         ];
         const parents = parentIds.length
           ? await tx
-              .select({ row: comment, authorName: user.name })
+              .select({
+                row: comment,
+                authorName: sql<string>`coalesce(${user.name}, ${schema.externalIdentity.displayName}, 'Imported user')`,
+              })
               .from(comment)
-              .innerJoin(user, eq(user.id, comment.authorId))
+              .leftJoin(
+                schema.externalIdentity,
+                eq(schema.externalIdentity.id, comment.externalAuthorId),
+              )
+              .leftJoin(
+                user,
+                eq(
+                  user.id,
+                  sql`coalesce(${comment.authorId}, ${schema.externalIdentity.localUserId})`,
+                ),
+              )
               .where(
                 and(
                   eq(comment.issueId, input.issueId),
@@ -172,13 +197,14 @@ export function createActivityService(db: Database) {
             filename: f.filename,
             contentType: f.contentType,
             sizeBytes: f.sizeBytes,
-            uploadedBy: f.uploadedBy,
+            uploadedBy: f.uploadedBy ?? f.externalUploaderId!,
             createdAt: f.createdAt.toISOString(),
           }),
         );
         return {
           nextCursor: rows.length > 50 ? page.at(-1)!.entry.id : null,
           events: page.reverse().map(({ entry: e, actorName }) => {
+            e.changes = normalizeHistoryChanges(e.changes);
             const found =
                 e.entityType === "comment" && e.action === "created"
                   ? comments.find((c) => c.row.id === e.entityId)
@@ -225,7 +251,7 @@ export function createActivityService(db: Database) {
                       id: r.id,
                       issueId: r.issueId,
                       parentId: r.parentId,
-                      authorId: r.authorId,
+                      authorId: found.resolvedAuthorId,
                       authorName: found.authorName,
                       body: r.deletedAt ? [] : r.body,
                       attachments: r.deletedAt ? [] : commentFiles,
@@ -237,12 +263,13 @@ export function createActivityService(db: Database) {
                         p.state === "active" &&
                         !i.deletedAt &&
                         !r.deletedAt &&
-                        r.authorId === actor,
+                        found.resolvedAuthorId === actor,
                       canDelete:
                         p.state === "active" &&
                         !i.deletedAt &&
                         !r.deletedAt &&
-                        (r.authorId === actor || m.role === "owner"),
+                        (found.resolvedAuthorId === actor ||
+                          m.role === "owner"),
                     }
                   : null,
             };

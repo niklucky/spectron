@@ -4,6 +4,8 @@ import { getConnInfo } from "@hono/node-server/conninfo";
 import type { HttpBindings } from "@hono/node-server";
 import {
   createProjectService,
+  createFieldService,
+  createJiraService,
   createFileService,
   createCommentService,
   createWorklogService,
@@ -27,6 +29,7 @@ export function createAPI(
     appURL,
     trustProxy = false,
     fileStorage,
+    integrationSecret,
     sendInvitationEmail = async () => {
       throw new Error("Invitation email is unavailable.");
     },
@@ -35,6 +38,7 @@ export function createAPI(
     appURL: string;
     trustProxy?: boolean;
     fileStorage?: FileStorageConfig;
+    integrationSecret?: string;
     sendInvitationEmail?: InvitationConfig["sendInvitationEmail"];
   },
 ) {
@@ -43,6 +47,8 @@ export function createAPI(
   const comments = createCommentService(db);
   const files = createFileService(db, fileStorage);
   const issues = createIssueService(db);
+  const fields = createFieldService(db);
+  const jira = createJiraService(db, files, integrationSecret);
   const projects = createProjectService(db);
   const invitations = createInvitationService(db, {
     appURL,
@@ -96,6 +102,8 @@ export function createAPI(
           comments,
           worklogs,
           activity,
+          fields,
+          jira,
         ),
     });
   });

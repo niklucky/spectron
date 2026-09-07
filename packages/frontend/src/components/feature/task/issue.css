@@ -595,3 +595,86 @@
     grid-template-columns: 80px minmax(0, 1fr);
   }
 }
+
+.chat-message-composer {
+  border-top: 0;
+  padding: 12px 24px 20px;
+}
+.chat-message-composer .new-issue-composer {
+  margin: 0 auto;
+}
+.chat-message-composer .new-issue-composer label {
+  display: block;
+}
+.chat-message-composer .new-issue-composer label[hidden] {
+  display: none;
+}
+.chat-message-composer .new-issue-composer textarea {
+  padding: 0;
+}
+.chat-message-composer .comment-draft-files:empty {
+  display: none;
+}
+
+.chat-message-composer .new-issue-composer {
+  width: 100%;
+  max-width: 75%;
+}
+.chat-title-row h2 {
+  flex: 1;
+  min-width: 0;
+}
+.chat-title-row .issue-view-selector {
+  margin: 0;
+  flex: 0 0 auto;
+  gap: 2px;
+}
+.chat-title-row .issue-view-selector button {
+  padding: 6px;
+}
+.chat-title-row .chat-actions {
+  margin-left: 0;
+  flex: 0 0 auto;
+}
+.initial-description {
+  padding: 14px 16px;
+}
+.initial-description .message-markdown {
+  margin: 8px 0;
+}
+.initial-description time {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+}
+.chat-activity-message header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.chat-activity-message header time {
+  margin-left: auto;
+}
+.chat-activity-message header .user-info {
+  max-width: 35%;
+}
+.chat-conversation-message .comment-item header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+@media (max-width: 700px) {
+  .chat-message-composer .new-issue-composer {
+    max-width: 100%;
+  }
+  .chat-title-row {
+    flex-wrap: wrap;
+  }
+  .chat-title-row h2 {
+    flex-basis: 45%;
+  }
+  .chat-title-row .chat-actions {
+    margin-left: auto;
+  }
+}

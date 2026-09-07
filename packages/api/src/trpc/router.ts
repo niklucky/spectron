@@ -2,6 +2,7 @@ import { initTRPC, TRPCError } from "@trpc/server";
 import { z } from "zod";
 import {
   ProjectAccessError,
+  JiraApiError,
   IssueInputError,
   FileInputError,
   IssueConflictError,
@@ -44,7 +45,8 @@ const authenticated = t.procedure.use(async ({ ctx, next }) => {
     });
   if (
     !result.ok &&
-    (result.error.cause instanceof FileInputError ||
+    (result.error.cause instanceof JiraApiError ||
+      result.error.cause instanceof FileInputError ||
       result.error.cause instanceof IssueInputError ||
       result.error.cause instanceof LogoError ||
       result.error.cause instanceof InvitationError)
@@ -105,6 +107,13 @@ const issueScope = z.object({ projectId: applicationId }).strict();
 const issueRef = issueScope.extend({ id: applicationId });
 const issueFields = z
   .object({
+    estimateTime: z.number().int().min(0).max(2147483647).nullable(),
+    startAt: z.iso.datetime({ offset: true }).nullable(),
+    finishAt: z.iso.datetime({ offset: true }).nullable(),
+    fieldValues: z.record(
+      z.string().min(1).max(128),
+      z.union([z.string().max(100000), z.number().finite(), z.null()]),
+    ),
     title: z.string().trim().min(1).max(140),
     description: z.string().max(100_000),
     parentId: applicationId.nullable(),
@@ -154,7 +163,170 @@ const worklogDraft = worklogScope.extend({
   durationSeconds: z.number().int().min(1).max(2147483647),
   description: z.string().max(10000),
 });
+const jiraConfig = z
+  .object({
+    baseUrl: z.url().max(2048),
+    projectKey: z
+      .string()
+      .regex(/^[A-Z][A-Z0-9_]*$/)
+      .max(80),
+    email: z.email().max(254),
+    apiToken: z.string().max(4096).optional(),
+    issueTypeId: z.string().max(128),
+  })
+  .strict();
+const mapping = z.record(
+  z.string().min(1).max(255),
+  z.string().min(1).max(128),
+);
 export const appRouter = t.router({
+  fields: t.router({
+    save: authenticated
+      .input(
+        issueScope.extend({
+          id: applicationId.optional(),
+          name: z.string().trim().min(1).max(80),
+          type: z.enum(["text", "date", "number", "user"]),
+        }),
+      )
+      .mutation(({ ctx, input }) => ctx.fields.save(ctx.userId, input)),
+  }),
+  jira: t.router({
+    get: authenticated
+      .input(issueScope)
+      .query(({ ctx, input }) => ctx.jira.get(ctx.userId, input.projectId)),
+    save: authenticated
+      .input(issueScope.extend({ config: jiraConfig }))
+      .mutation(({ ctx, input }) =>
+        ctx.jira.save(ctx.userId, input.projectId, input.config),
+      ),
+    discover: authenticated
+      .input(issueScope.extend({ config: jiraConfig.optional() }))
+      .mutation(({ ctx, input }) =>
+        ctx.jira.discover(ctx.userId, input.projectId, input.config),
+      ),
+    mappings: authenticated
+      .input(
+        issueScope.extend({
+          mappings: z
+            .object({
+              statuses: mapping,
+              priorities: mapping,
+              users: mapping,
+              fields: z.record(
+                z.string().min(1).max(255),
+                z.string().min(1).max(128).nullable(),
+              ),
+            })
+            .strict(),
+        }),
+      )
+      .mutation(({ ctx, input }) =>
+        ctx.jira.mappings(ctx.userId, input.projectId, input.mappings),
+      ),
+    schedule: authenticated
+      .input(
+        issueScope.extend({
+          minutes: z
+            .union([z.literal(15), z.literal(60), z.literal(1440)])
+            .nullable(),
+        }),
+      )
+      .mutation(({ ctx, input }) =>
+        ctx.jira.schedule(ctx.userId, input.projectId, input.minutes),
+      ),
+    startImport: authenticated
+      .input(issueScope)
+      .mutation(({ ctx, input }) =>
+        ctx.jira.startImport(ctx.userId, input.projectId),
+      ),
+    stopImport: authenticated
+      .input(issueScope.extend({ runId: applicationId }))
+      .mutation(({ ctx, input }) =>
+        ctx.jira.stopImport(ctx.userId, input.projectId, input.runId),
+      ),
+    finishImport: authenticated
+      .input(issueScope.extend({ runId: applicationId }))
+      .mutation(({ ctx, input }) =>
+        ctx.jira.finishImport(ctx.userId, input.projectId, input.runId),
+      ),
+    prepare: authenticated
+      .input(issueScope.extend({ runId: applicationId.optional() }))
+      .mutation(({ ctx, input }) =>
+        ctx.jira.prepare(ctx.userId, input.projectId, input.runId),
+      ),
+    search: authenticated
+      .input(
+        issueScope.extend({
+          runId: applicationId.optional(),
+          nextPageToken: z.string().max(10000).optional(),
+        }),
+      )
+      .mutation(({ ctx, input }) =>
+        ctx.jira.search(
+          ctx.userId,
+          input.projectId,
+          input.nextPageToken,
+          input.runId,
+        ),
+      ),
+    import: authenticated
+      .input(
+        issueScope.extend({
+          externalId: z.string().min(1).max(128),
+          overwriteLocal: z.boolean().default(false),
+          runId: applicationId.optional(),
+        }),
+      )
+      .mutation(({ ctx, input }) =>
+        ctx.jira.import(
+          ctx.userId,
+          input.projectId,
+          input.externalId,
+          input.overwriteLocal,
+          input.runId,
+        ),
+      ),
+    pushIssue: authenticated
+      .input(issueRef.extend({ overwriteRemote: z.boolean().default(false) }))
+      .mutation(({ ctx, input }) =>
+        ctx.jira.pushIssue(
+          ctx.userId,
+          input.projectId,
+          input.id,
+          input.overwriteRemote,
+        ),
+      ),
+    pushComment: authenticated
+      .input(issueRef.extend({ overwriteRemote: z.boolean().default(false) }))
+      .mutation(({ ctx, input }) =>
+        ctx.jira.pushComment(
+          ctx.userId,
+          input.projectId,
+          input.id,
+          input.overwriteRemote,
+        ),
+      ),
+    pending: authenticated
+      .input(issueScope)
+      .query(({ ctx, input }) => ctx.jira.pending(ctx.userId, input.projectId)),
+    reconcile: authenticated
+      .input(
+        issueRef.extend({
+          kind: z.enum(["issue", "comment"]),
+          externalId: z.string().min(1).max(128),
+        }),
+      )
+      .mutation(({ ctx, input }) =>
+        ctx.jira.reconcile(
+          ctx.userId,
+          input.projectId,
+          input.kind,
+          input.id,
+          input.externalId,
+        ),
+      ),
+  }),
   worklogs: t.router({
     list: authenticated
       .input(
@@ -282,7 +454,11 @@ export const appRouter = t.router({
       .input(
         issueFields
           .partial()
-          .extend({ projectId: applicationId, title: issueFields.shape.title }),
+          .extend({
+            projectId: applicationId,
+            title: issueFields.shape.title,
+            projectFileIds: z.array(applicationId).max(20).optional(),
+          }),
       )
       .mutation(({ ctx, input }) => ctx.issues.create(ctx.userId, input)),
     update: authenticated

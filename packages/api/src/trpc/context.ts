@@ -1,5 +1,7 @@
 import type {
   Auth,
+  FieldService,
+  JiraService,
   ActivityService,
   WorklogService,
   CommentService,
@@ -11,6 +13,8 @@ import type {
 
 export type Context = {
   userId: string | null;
+  fields: FieldService;
+  jira: JiraService;
   projects: ProjectService;
   invitations: InvitationService;
   issues: IssueService;
@@ -29,6 +33,8 @@ export async function createContext(
   comments: CommentService,
   worklogs: WorklogService,
   activity: ActivityService,
+  fields: FieldService,
+  jira: JiraService,
 ): Promise<Context> {
   const session = await auth.api.getSession({ headers: request.headers });
   return {
@@ -40,5 +46,7 @@ export async function createContext(
     comments,
     worklogs,
     activity,
+    fields,
+    jira,
   };
 }

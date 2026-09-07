@@ -1,3 +1,6 @@
+import { UserInfo } from "../../ui/avatar";
+import { Menu } from "../../ui/menu";
+import { MessageMarkdown } from "../../ui/message-markdown";
 import { IssueChat } from "./issue-chat";
 import type { IssueActivityPage } from "@spectron/shared";
 import { useEffect, useRef, useState } from "react";
@@ -18,6 +21,12 @@ import { commentText, type CommentBody } from "@spectron/shared";
 import { StatusDot } from "./status-dot";
 
 export type IssuePanelActions = {
+  canPublish?: (projectId: string) => boolean;
+  pushJira?: (
+    projectId: string,
+    id: string,
+    overwriteRemote?: boolean,
+  ) => Promise<{ key: string }>;
   activity: (input: {
     projectId: string;
     issueId: string;
@@ -43,31 +52,34 @@ export function IssuePanel({
   onBack,
   onCopy,
   onSelect,
+  onActivityChange,
 }: {
   issue: IssueSummary;
   settings: IssueSettings;
   issues: IssueSummary[];
   actions: IssuePanelActions;
+  onActivityChange?: () => void;
   onBack: () => void;
   onCopy: () => void;
   onSelect: (id: string, projectId: string) => void;
 }) {
-  const [view, setView] = useState<"chat" | "issue">(() => {
+  const [view, setView] = useState<"chat" | "all" | "issue">(() => {
     try {
-      return sessionStorage.getItem("issue-view") === "issue"
-        ? "issue"
-        : "chat";
+      const saved = sessionStorage.getItem("issue-view");
+      return saved === "issue" || saved === "all" ? saved : "chat";
     } catch {
       return "chat";
     }
   });
-  const selectView = (value: "chat" | "issue") => {
+  const selectView = (value: "chat" | "all" | "issue") => {
     setView(value);
     setReload((n) => n + 1);
     try {
       sessionStorage.setItem("issue-view", value);
     } catch {}
   };
+  const [chatTool, setChatTool] = useState<"files" | "worklog" | null>(null);
+  const [jiraFeedback, setJiraFeedback] = useState("");
   const [editing, setEditing] = useState(false);
   const [entries, setEntries] = useState<IssueHistoryEntry[]>([]);
   const [members, setMembers] = useState<ProjectMemberSummary[]>([]);
@@ -110,12 +122,29 @@ export function IssuePanel({
       active = false;
     };
   }, [issue.id, issue.projectId, issue.updatedAt, actions, reload]);
+  const identityPeople = (settings.externalIdentities ?? []).map((i) => ({
+    id: i.id,
+    name: i.localUserId
+      ? (members.find((m) => m.id === i.localUserId)?.name ?? i.displayName)
+      : `${i.displayName} (Jira)`,
+  }));
   const person = (id: string | null) =>
     id
-      ? (members.find((m) => m.id === id)?.name ?? "Former member")
+      ? (members.find((m) => m.id === id)?.name ??
+        identityPeople.find((i) => i.id === id)?.name ??
+        "Former member")
       : "Unassigned";
   const valueLabel = (field: string, value: unknown): string => {
     if (value == null || value === "") return "None";
+    if (field.startsWith("fieldValues.")) {
+      const definition = settings.fields?.find((f) => f.id === field.slice(12));
+      return definition?.type === "user"
+        ? person(String(value))
+        : String(value);
+    }
+    if (field === "estimateTime") return formatWorklogDuration(Number(value));
+    if (field === "startAt" || field === "finishAt")
+      return `${new Date(String(value)).toLocaleString(undefined, { timeZone: "UTC" })} UTC`;
     if (field === "durationSeconds")
       return formatWorklogDuration(Number(value));
     if (field === "workerUserId" || field === "recordedBy")
@@ -147,6 +176,9 @@ export function IssuePanel({
     workerUserId: "Worker",
     recordedBy: "Recorded by",
     startedAt: "Started at",
+    estimateTime: "Estimate time",
+    startAt: "Start at",
+    finishAt: "Finish at",
     durationSeconds: "Duration",
     body: "Comment",
     files: "Files",
@@ -173,40 +205,102 @@ export function IssuePanel({
           <span className="chat-task-id">{issue.key}</span>
           <span className="title-divider">/</span>
           <h2>{issue.title}</h2>
+          <div
+            className="issue-view-selector"
+            role="group"
+            aria-label="Issue view"
+          >
+            <IconButton
+              icon="chat"
+              label="Chat simple view"
+              aria-pressed={view === "chat"}
+              onClick={() => selectView("chat")}
+            />
+            <IconButton
+              icon="chats"
+              label="Chat all messages"
+              aria-pressed={view === "all"}
+              onClick={() => selectView("all")}
+            />
+            <IconButton
+              icon="issues"
+              label="Issue view"
+              aria-pressed={view === "issue"}
+              onClick={() => selectView("issue")}
+            />
+          </div>
           <div className="chat-actions">
+            {!issue.deletedAt &&
+              actions.pushJira &&
+              actions.canPublish?.(issue.projectId) && (
+                <IconButton
+                  icon="jira"
+                  label={
+                    issue.externalId ? "Update Jira issue" : "Create in Jira"
+                  }
+                  disabled={busy}
+                  onClick={async () => {
+                    setBusy(true);
+                    setError("");
+                    setJiraFeedback("");
+                    try {
+                      const result = await actions.pushJira!(
+                        issue.projectId,
+                        issue.id,
+                      );
+                      setJiraFeedback(`Saved to Jira: ${result.key}`);
+                    } catch (e) {
+                      setError(
+                        e instanceof Error
+                          ? e.message
+                          : "Could not send to Jira.",
+                      );
+                      selectView("issue");
+                    } finally {
+                      setBusy(false);
+                    }
+                  }}
+                />
+              )}
             <IconButton icon="link" label="Copy issue link" onClick={onCopy} />
             {!issue.deletedAt && (
-              <Button
-                variant="ghost"
+              <IconButton
+                icon="edit"
+                label="Edit issue"
                 onClick={() => {
                   selectView("issue");
                   setEditing(true);
                 }}
-              >
-                Edit issue
-              </Button>
+              />
             )}
+            <Menu
+              label="Conversation actions"
+              items={[
+                {
+                  label: "Refresh chat",
+                  onSelect: () => setReload((n) => n + 1),
+                },
+                ...(!issue.deletedAt
+                  ? [
+                      {
+                        label: "Files",
+                        onSelect: () => {
+                          if (view === "issue") selectView("chat");
+                          setChatTool("files");
+                        },
+                      },
+                      {
+                        label: "Log work",
+                        onSelect: () => {
+                          if (view === "issue") selectView("chat");
+                          setChatTool("worklog");
+                        },
+                      },
+                    ]
+                  : []),
+              ]}
+            />
           </div>
-        </div>
-        <div
-          className="issue-view-selector"
-          role="group"
-          aria-label="Issue view"
-        >
-          <button
-            type="button"
-            aria-pressed={view === "chat"}
-            onClick={() => selectView("chat")}
-          >
-            Chat
-          </button>
-          <button
-            type="button"
-            aria-pressed={view === "issue"}
-            onClick={() => selectView("issue")}
-          >
-            Issue
-          </button>
         </div>
         <div className="chat-subtitle">
           <StatusDot
@@ -216,22 +310,37 @@ export function IssuePanel({
           {state?.name}
           {state?.deletedAt ? " (deleted state)" : ""}
           <span className="metadata-divider" />
-          {person(issue.assigneeId)}
+          <UserInfo
+            name={issue.assignee?.name ?? person(issue.assigneeId)}
+            image={issue.assignee?.image}
+            label="Assignee"
+          />
         </div>
       </header>
+      {jiraFeedback && (
+        <p role="status" className="project-feedback">
+          {jiraFeedback}
+        </p>
+      )}
       <IssueChat
         issue={issue}
         settings={settings}
         issues={issues}
         members={members}
         actions={actions}
-        active={view === "chat"}
+        active={view !== "issue"}
+        showHistory={view === "all"}
+        tool={chatTool}
+        setTool={setChatTool}
         revision={reload}
-        onChange={() => setReload((n) => n + 1)}
+        onChange={() => {
+          setReload((n) => n + 1);
+          onActivityChange?.();
+        }}
         onSelect={onSelect}
         valueLabel={valueLabel}
       />
-      <div className="issue-content" hidden={view === "chat"}>
+      <div className="issue-content" hidden={view !== "issue"}>
         {issue.deletedAt && (
           <div className="issue-deleted" role="status">
             Deleted {new Date(issue.deletedAt).toLocaleString()}. History is
@@ -250,6 +359,48 @@ export function IssuePanel({
         ) : (
           <>
             <dl className="issue-metadata">
+              <div>
+                <dt>Estimate time</dt>
+                <dd>
+                  {issue.estimateTime == null
+                    ? "Not set"
+                    : formatWorklogDuration(issue.estimateTime)}
+                </dd>
+              </div>
+              <div>
+                <dt>Start at</dt>
+                <dd>
+                  {issue.startAt
+                    ? `${new Date(issue.startAt).toLocaleString(undefined, { timeZone: "UTC" })} UTC`
+                    : "Not set"}
+                </dd>
+              </div>
+              <div>
+                <dt>Finish at / deadline</dt>
+                <dd>
+                  {issue.finishAt
+                    ? `${new Date(issue.finishAt).toLocaleString(undefined, { timeZone: "UTC" })} UTC`
+                    : "Not set"}
+                </dd>
+              </div>
+              {issue.externalKey && (
+                <div>
+                  <dt>Jira issue</dt>
+                  <dd>{issue.externalKey}</dd>
+                </div>
+              )}
+              {(settings.fields ?? []).map((field) => (
+                <div key={field.id}>
+                  <dt>{field.name}</dt>
+                  <dd>
+                    {field.type === "user"
+                      ? person(
+                          String(issue.fieldValues?.[field.id] ?? "") || null,
+                        )
+                      : String(issue.fieldValues?.[field.id] ?? "Not set")}
+                  </dd>
+                </div>
+              ))}
               <div>
                 <dt>Priority</dt>
                 <dd>
@@ -283,7 +434,9 @@ export function IssuePanel({
             </dl>
             <section className="issue-description">
               <h3>Description</h3>
-              <p>{issue.description || "No description yet."}</p>
+              <MessageMarkdown
+                text={issue.description || "No description yet."}
+              />
             </section>
           </>
         )}
@@ -310,7 +463,10 @@ export function IssuePanel({
           issueId={issue.id}
           deleted={!!issue.deletedAt}
           actions={actions.files}
-          onChange={() => setReload((n) => n + 1)}
+          onChange={() => {
+            setReload((n) => n + 1);
+            onActivityChange?.();
+          }}
         />
         <IssueWorklogs
           refreshKey={reload}
@@ -320,7 +476,10 @@ export function IssuePanel({
           deleted={!!issue.deletedAt}
           members={members}
           actions={actions.worklogs}
-          onChange={() => setReload((n) => n + 1)}
+          onChange={() => {
+            setReload((n) => n + 1);
+            onActivityChange?.();
+          }}
         />
         <IssueComments
           refreshKey={reload}
@@ -331,7 +490,10 @@ export function IssuePanel({
           files={actions.files}
           members={members}
           deleted={!!issue.deletedAt}
-          onChange={() => setReload((n) => n + 1)}
+          onChange={() => {
+            setReload((n) => n + 1);
+            onActivityChange?.();
+          }}
         />
         <section className="issue-history">
           <h3>History</h3>
@@ -367,7 +529,13 @@ export function IssuePanel({
                         )
                         .map(([field, change]) => (
                           <div key={field}>
-                            <dt>{labels[field] ?? field}</dt>
+                            <dt>
+                              {field.startsWith("fieldValues.")
+                                ? (settings.fields?.find(
+                                    (f) => f.id === field.slice(12),
+                                  )?.name ?? "Custom field")
+                                : (labels[field] ?? field)}
+                            </dt>
                             <dd>
                               <span>{valueLabel(field, change.before)}</span>
                               <span aria-label="changed to"> → </span>
@@ -413,6 +581,34 @@ export function IssuePanel({
         {error && (
           <p className="project-error" role="alert">
             {error}{" "}
+            {error.includes("Jira changed since") && actions.pushJira && (
+              <Button
+                variant="ghost"
+                disabled={busy}
+                onClick={async () => {
+                  setBusy(true);
+                  try {
+                    const result = await actions.pushJira!(
+                      issue.projectId,
+                      issue.id,
+                      true,
+                    );
+                    setError("");
+                    setJiraFeedback(`Replaced Jira values: ${result.key}`);
+                  } catch (e) {
+                    setError(
+                      e instanceof Error
+                        ? e.message
+                        : "Could not send to Jira.",
+                    );
+                  } finally {
+                    setBusy(false);
+                  }
+                }}
+              >
+                Replace Jira values with local values
+              </Button>
+            )}
             <Button variant="ghost" onClick={() => setReload((n) => n + 1)}>
               Reload
             </Button>
@@ -462,8 +658,21 @@ function IssueEditor({
   onSave: IssuePanelActions["save"];
   onClose: () => void;
 }) {
+  const people = [
+    ...members,
+    ...(settings.externalIdentities ?? []).map((i) => ({
+      id: i.id,
+      name: i.localUserId
+        ? (members.find((m) => m.id === i.localUserId)?.name ?? i.displayName)
+        : `${i.displayName} (Jira)`,
+    })),
+  ];
   const baseline = useRef(issue);
   const [fields, setFields] = useState<IssueFields>(() => ({
+    estimateTime: issue.estimateTime ?? null,
+    startAt: issue.startAt ?? null,
+    finishAt: issue.finishAt ?? null,
+    fieldValues: issue.fieldValues ?? {},
     title: issue.title,
     description: issue.description,
     stateId: issue.stateId,
@@ -530,6 +739,104 @@ function IssueEditor({
         </label>
         <div className="issue-field-grid">
           <label>
+            Estimate time (minutes)
+            <Input
+              type="number"
+              min={0}
+              step="any"
+              value={
+                fields.estimateTime == null ? "" : fields.estimateTime / 60
+              }
+              onChange={(e) =>
+                set(
+                  "estimateTime",
+                  e.target.value === ""
+                    ? null
+                    : Math.round(Number(e.target.value) * 60),
+                )
+              }
+            />
+          </label>
+          <label>
+            Start at (UTC)
+            <Input
+              type="datetime-local"
+              step="1"
+              value={fields.startAt?.slice(0, 19) ?? ""}
+              onChange={(e) =>
+                set(
+                  "startAt",
+                  e.target.value
+                    ? new Date(`${e.target.value}Z`).toISOString()
+                    : null,
+                )
+              }
+            />
+          </label>
+          <label>
+            Finish at / deadline (UTC)
+            <Input
+              type="datetime-local"
+              step="1"
+              min={fields.startAt?.slice(0, 19)}
+              value={fields.finishAt?.slice(0, 19) ?? ""}
+              onChange={(e) =>
+                set(
+                  "finishAt",
+                  e.target.value
+                    ? new Date(`${e.target.value}Z`).toISOString()
+                    : null,
+                )
+              }
+            />
+          </label>
+          {(settings.fields ?? []).map((field) => (
+            <label key={field.id}>
+              {field.name}
+              {field.type === "user" ? (
+                <Select
+                  value={String(fields.fieldValues?.[field.id] ?? "")}
+                  onChange={(e) =>
+                    set("fieldValues", {
+                      ...fields.fieldValues,
+                      [field.id]: e.target.value || null,
+                    })
+                  }
+                >
+                  <option value="">Not set</option>
+                  {people.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.name}
+                    </option>
+                  ))}
+                </Select>
+              ) : (
+                <Input
+                  type={
+                    field.type === "date"
+                      ? "date"
+                      : field.type === "number"
+                        ? "number"
+                        : "text"
+                  }
+                  step={field.type === "number" ? "any" : undefined}
+                  value={fields.fieldValues?.[field.id] ?? ""}
+                  onChange={(e) =>
+                    set("fieldValues", {
+                      ...fields.fieldValues,
+                      [field.id]:
+                        e.target.value === ""
+                          ? null
+                          : field.type === "number"
+                            ? Number(e.target.value)
+                            : e.target.value,
+                    })
+                  }
+                />
+              )}
+            </label>
+          ))}
+          <label>
             State
             <Select
               value={fields.stateId}
@@ -570,10 +877,10 @@ function IssueEditor({
             >
               <option value="">Unassigned</option>
               {fields.assigneeId &&
-                !members.some((m) => m.id === fields.assigneeId) && (
+                !people.some((m) => m.id === fields.assigneeId) && (
                   <option value={fields.assigneeId}>Former member</option>
                 )}
-              {members.map((m) => (
+              {people.map((m) => (
                 <option key={m.id} value={m.id}>
                   {m.name}
                 </option>

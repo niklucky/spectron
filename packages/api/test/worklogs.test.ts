@@ -98,7 +98,7 @@ test("Human worklogs and transactional history", async (t) => {
     await call(
       "issues.create",
       owner,
-      { projectId: p.id, title: "Work" },
+      { projectId: p.id, title: "Work", assigneeId: member.id },
       true,
     ),
   );
@@ -150,6 +150,14 @@ test("Human worklogs and transactional history", async (t) => {
       assert.equal(row.recordedBy, owner.id);
       assert.equal(row.startedAt, "2026-09-07T09:30:00.000Z");
       assert.equal(row.durationSeconds, 5401);
+      const cards = await data<IssueSummary[]>(
+        await call("issues.list", owner, { projectId: p.id }),
+      );
+      const card = cards.find((card) => card.id === i.id)!;
+      assert.equal(card.author?.name, "owner");
+      assert.equal(card.assignee?.name, "member");
+      assert.equal(card.lastActivity?.preview, "logged 1h 30m 1s");
+
       await assert.rejects(
         pool.query("UPDATE issue_worklogs SET duration_seconds=0 WHERE id=$1", [
           row.id,

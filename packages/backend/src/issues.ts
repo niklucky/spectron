@@ -1,12 +1,22 @@
-import { and, asc, desc, eq, isNull } from "drizzle-orm";
+import {
+  historyChanges as changes,
+  normalizeHistoryChanges,
+} from "./history-changes";
+import { and, asc, desc, eq, isNull, inArray } from "drizzle-orm";
 import { schema, type Database } from "@spectron/db";
+import {
+  formatWorklogDuration,
+  issueTimestamp,
+  validateIssueTiming,
+} from "@spectron/shared";
 import type {
-  HistoryChanges,
   IssueFields,
   IssueOptionInput,
   IssueSettings,
   IssueSummary,
 } from "@spectron/shared";
+import { findExternalIdentity } from "./external-identities";
+import { validateFieldValues } from "./fields";
 import { ProjectAccessError } from "./projects";
 
 const {
@@ -34,48 +44,29 @@ export async function seedIssueSettings(tx: Tx, projectId: string) {
       { name: "Done", trigger: "finished" as const },
     ].map((s, position) => ({ ...s, projectId, position })),
   );
-  await tx
-    .insert(issuePriority)
-    .values(
-      ["Urgent", "High", "Normal", "Low"].map((name, position) => ({
-        projectId,
-        name,
-        position,
-      })),
-    );
-}
-function changes(
-  before: Record<string, unknown>,
-  after: Record<string, unknown>,
-): HistoryChanges {
-  return JSON.parse(
-    JSON.stringify(
-      Object.fromEntries(
-        Object.keys(after)
-          .filter(
-            (key) =>
-              JSON.stringify(before[key] ?? null) !==
-              JSON.stringify(after[key] ?? null),
-          )
-          .map((key) => [
-            key,
-            { before: before[key] ?? null, after: after[key] ?? null },
-          ]),
-      ),
-    ),
-  ) as HistoryChanges;
+  await tx.insert(issuePriority).values(
+    ["Urgent", "High", "Normal", "Low"].map((name, position) => ({
+      projectId,
+      name,
+      position,
+    })),
+  );
 }
 const summary = (
   row: typeof issue.$inferSelect,
   prefix: string,
 ): IssueSummary => ({
   ...row,
+  startAt: issueTimestamp(row.startAt),
+  finishAt: issueTimestamp(row.finishAt),
+  authorId: row.authorId ?? row.externalAuthorId!,
+  assigneeId: row.assigneeId ?? row.externalAssigneeId,
   key: `${prefix}-${row.number}`,
   createdAt: row.createdAt.toISOString(),
   updatedAt: row.updatedAt.toISOString(),
   deletedAt: row.deletedAt?.toISOString() ?? null,
 });
-async function access(
+export async function issueAccess(
   tx: Tx,
   userId: string,
   projectId: string,
@@ -110,6 +101,18 @@ async function validate(
   input: OptionalFields,
   current?: typeof issue.$inferSelect,
 ) {
+  try {
+    validateIssueTiming({
+      ...current,
+      ...Object.fromEntries(
+        Object.entries(input).filter(([, v]) => v !== undefined),
+      ),
+    });
+  } catch (e) {
+    throw new IssueInputError((e as Error).message);
+  }
+  if (input.fieldValues !== undefined)
+    await validateFieldValues(tx, projectId, input.fieldValues);
   if (
     input.title !== undefined &&
     (!input.title.trim() || input.title.length > 140)
@@ -156,7 +159,10 @@ async function validate(
         ),
       )
       .for("share");
-    if (!member)
+    if (
+      !member &&
+      !(await findExternalIdentity(tx, projectId, input.assigneeId))
+    )
       throw new IssueInputError("Assignee must belong to this project.");
   }
   if (input.parentId && input.parentId !== current?.parentId) {
@@ -184,22 +190,151 @@ async function validate(
     }
   }
 }
+function activityPreview(entry: typeof issueHistory.$inferSelect): string {
+  if (entry.action === "deleted")
+    return `${entry.entityType === "issue" ? "Issue" : entry.entityType === "comment" ? "Comment" : entry.entityType === "worklog" ? "Worklog" : "Attachment"} deleted`;
+  const changes = normalizeHistoryChanges(entry.changes);
+  const body = changes.body?.after;
+  if (Array.isArray(body)) {
+    const text = body
+      .map((node) =>
+        node && typeof node === "object" && !Array.isArray(node)
+          ? String(node.text ?? (node.label ? `@${node.label}` : ""))
+          : "",
+      )
+      .join("");
+    if (text.trim()) return text.replace(/\s+/g, " ").slice(0, 240);
+  }
+  const attachment = changes.attachment?.after;
+  const files = changes.files?.after;
+  const file = attachment ?? (Array.isArray(files) ? files[0] : null);
+  if (
+    file &&
+    typeof file === "object" &&
+    !Array.isArray(file) &&
+    typeof file.filename === "string"
+  ) {
+    const kind = /\.(png|jpe?g|gif|webp|svg|avif)$/i.test(file.filename)
+      ? "Image"
+      : /\.(mp4|mov|webm|mkv)$/i.test(file.filename)
+        ? "Video"
+        : "File";
+    return `${kind}: ${file.filename}`.slice(0, 240);
+  }
+  if (entry.entityType === "worklog") {
+    const seconds = changes.durationSeconds?.after;
+    if (typeof seconds === "number")
+      return `${entry.action === "created" ? "logged" : "updated work to"} ${formatWorklogDuration(seconds)}`;
+    return entry.action === "created" ? "Logged work" : "Updated worklog";
+  }
+  if (entry.entityType === "issue" && entry.action === "created")
+    return "Created issue";
+  if (entry.action === "restored") return "Restored issue";
+  const labels: Record<string, string> = {
+    title: "title",
+    description: "description",
+    stateId: "state",
+    priorityId: "priority",
+    assigneeId: "assignee",
+    parentId: "parent",
+    estimateTime: "estimate",
+    startAt: "start date",
+    finishAt: "finish date",
+  };
+  const fields = Object.keys(changes).map(
+    (key) =>
+      labels[key] ?? (key.startsWith("fieldValues.") ? "custom field" : key),
+  );
+  return (
+    fields.length
+      ? `Updated ${[...new Set(fields)].join(", ")}`
+      : `Updated ${entry.entityType}`
+  ).slice(0, 240);
+}
+
 export function createIssueService(db: Database) {
   return {
-    async list(userId: string, projectId: string) {
+    async list(userId: string, projectId: string): Promise<IssueSummary[]> {
       return db.transaction(async (tx) => {
-        const p = await access(tx, userId, projectId);
+        const p = await issueAccess(tx, userId, projectId);
         const rows = await tx
           .select()
           .from(issue)
           .where(eq(issue.projectId, projectId))
           .orderBy(desc(issue.updatedAt), desc(issue.number));
-        return rows.map((row) => summary(row, p.key));
+        const userIds = [
+          ...new Set(
+            rows
+              .flatMap((row) => [row.authorId, row.assigneeId])
+              .filter((id): id is string => !!id),
+          ),
+        ];
+        const people = userIds.length
+          ? await tx
+              .select({ id: user.id, name: user.name, image: user.image })
+              .from(user)
+              .where(inArray(user.id, userIds))
+          : [];
+        const external = await tx
+          .select()
+          .from(schema.externalIdentity)
+          .where(eq(schema.externalIdentity.projectId, projectId));
+        const identities = new Map<
+          string,
+          { name: string; image: string | null }
+        >([
+          ...people.map(
+            (person) =>
+              [person.id, { name: person.name, image: person.image }] as const,
+          ),
+          ...external.map(
+            (person) =>
+              [
+                person.id,
+                { name: person.displayName, image: person.avatarUrl },
+              ] as const,
+          ),
+        ]);
+        const latest = await tx
+          .selectDistinctOn([issueHistory.issueId], {
+            entry: issueHistory,
+            actorName: user.name,
+            actorImage: user.image,
+          })
+          .from(issueHistory)
+          .innerJoin(issue, eq(issue.id, issueHistory.issueId))
+          .innerJoin(user, eq(user.id, issueHistory.actorUserId))
+          .where(eq(issue.projectId, projectId))
+          .orderBy(
+            issueHistory.issueId,
+            desc(issueHistory.createdAt),
+            desc(issueHistory.id),
+          );
+        const activity = new Map(
+          latest.map(({ entry, actorName, actorImage }) => [
+            entry.issueId,
+            {
+              actorName,
+              actorImage,
+              preview: activityPreview(entry),
+              createdAt: entry.createdAt.toISOString(),
+            },
+          ]),
+        );
+        return rows.map((row) => ({
+          ...summary(row, p.key),
+          lastActivity: activity.get(row.id) ?? null,
+          author:
+            identities.get(row.authorId ?? row.externalAuthorId ?? "") ?? null,
+          assignee:
+            identities.get(row.assigneeId ?? row.externalAssigneeId ?? "") ??
+            null,
+        }));
       });
     },
     async settings(userId: string, projectId: string): Promise<IssueSettings> {
       return db.transaction(async (tx) => {
-        await access(tx, userId, projectId);
+        await issueAccess(tx, userId, projectId);
         const states = await tx
           .select()
           .from(issueState)
@@ -210,7 +345,37 @@ export function createIssueService(db: Database) {
           .from(issuePriority)
           .where(eq(issuePriority.projectId, projectId))
           .orderBy(asc(issuePriority.position), asc(issuePriority.id));
+        const fields = await tx
+          .select()
+          .from(schema.projectField)
+          .where(
+            and(
+              eq(schema.projectField.projectId, projectId),
+              isNull(schema.projectField.deletedAt),
+            ),
+          )
+          .orderBy(asc(schema.projectField.createdAt));
+        const [integration] = await tx
+          .select({ id: schema.jiraIntegration.id })
+          .from(schema.jiraIntegration)
+          .where(eq(schema.jiraIntegration.projectId, projectId));
         return {
+          jiraConnected: !!integration,
+          externalIdentities: await tx
+            .select({
+              id: schema.externalIdentity.id,
+              externalId: schema.externalIdentity.externalId,
+              displayName: schema.externalIdentity.displayName,
+              localUserId: schema.externalIdentity.localUserId,
+            })
+            .from(schema.externalIdentity)
+            .where(eq(schema.externalIdentity.projectId, projectId)),
+          fields: fields.map(({ id, name, type, externalId }) => ({
+            id,
+            name,
+            type,
+            externalId,
+          })),
           states: states.map((s) => ({
             ...s,
             deletedAt: s.deletedAt?.toISOString() ?? null,
@@ -224,13 +389,14 @@ export function createIssueService(db: Database) {
     },
     async create(
       userId: string,
-      input: { projectId: string; title: string } & Omit<
-        OptionalFields,
-        "title"
-      >,
+      input: {
+        projectId: string;
+        title: string;
+        projectFileIds?: string[] | undefined;
+      } & Omit<OptionalFields, "title">,
     ) {
       return db.transaction(async (tx) => {
-        const p = await access(tx, userId, input.projectId, true);
+        const p = await issueAccess(tx, userId, input.projectId, true);
         const [defaultState] = await tx
           .select()
           .from(issueState)
@@ -246,6 +412,10 @@ export function createIssueService(db: Database) {
             "Select a default Opened state in project settings.",
           );
         const values: IssueFields = {
+          estimateTime: input.estimateTime ?? null,
+          startAt: issueTimestamp(input.startAt),
+          finishAt: issueTimestamp(input.finishAt),
+          fieldValues: input.fieldValues ?? {},
           title: input.title.trim(),
           description: input.description ?? "",
           parentId: input.parentId ?? null,
@@ -254,25 +424,91 @@ export function createIssueService(db: Database) {
           stateId: input.stateId ?? defaultState.id,
         };
         await validate(tx, p.id, values);
+        const attachmentIds = [...new Set(input.projectFileIds ?? [])];
+        if (attachmentIds.length > 20)
+          throw new IssueInputError("Attach up to 20 files per issue.");
+        const attachments = [];
+        for (const id of attachmentIds) {
+          const [file] = await tx
+            .select({
+              association: schema.projectFile,
+              file: schema.storedFile,
+            })
+            .from(schema.projectFile)
+            .innerJoin(
+              schema.storedFile,
+              eq(schema.storedFile.id, schema.projectFile.fileId),
+            )
+            .where(
+              and(
+                eq(schema.projectFile.id, id),
+                eq(schema.projectFile.projectId, p.id),
+                isNull(schema.projectFile.deletedAt),
+                isNull(schema.storedFile.deletedAt),
+                eq(schema.storedFile.status, "ready"),
+              ),
+            );
+          if (!file)
+            throw new IssueInputError(
+              "An attachment is unavailable in this project. Remove it and try again.",
+            );
+          attachments.push(file);
+        }
         const number = p.issueCounter + 1;
         await tx
           .update(project)
           .set({ issueCounter: number })
           .where(eq(project.id, p.id));
+        const identity = values.assigneeId
+          ? await findExternalIdentity(tx, p.id, values.assigneeId)
+          : undefined;
         const [row] = await tx
           .insert(issue)
-          .values({ ...values, projectId: p.id, number, authorId: userId })
+          .values({
+            ...values,
+            assigneeId: identity ? null : values.assigneeId,
+            externalAssigneeId: identity?.id ?? null,
+            projectId: p.id,
+            number,
+            authorId: userId,
+          })
           .returning();
         const result = summary(row!, p.key);
-        await tx
-          .insert(issueHistory)
-          .values({
+        await tx.insert(issueHistory).values({
+          issueId: row!.id,
+          actorUserId: userId,
+          action: "created",
+          createdAt: row!.createdAt,
+          changes: changes({}, result),
+        });
+        for (const [position, { association, file }] of attachments.entries()) {
+          const [attachment] = await tx
+            .insert(schema.issueAttachment)
+            .values({
+              projectId: p.id,
+              issueId: row!.id,
+              projectFileId: association.id,
+              position,
+            })
+            .returning();
+          await tx.insert(issueHistory).values({
             issueId: row!.id,
             actorUserId: userId,
+            entityType: "attachment",
+            entityId: attachment!.id,
             action: "created",
-            createdAt: row!.createdAt,
-            changes: changes({}, result),
+            changes: {
+              attachment: {
+                before: null,
+                after: {
+                  filename: file.filename,
+                  fileId: file.id,
+                  projectFileId: association.id,
+                },
+              },
+            },
           });
+        }
         return result;
       });
     },
@@ -285,7 +521,7 @@ export function createIssueService(db: Database) {
       } & OptionalFields,
     ) {
       return db.transaction(async (tx) => {
-        const p = await access(tx, userId, input.projectId, true);
+        const p = await issueAccess(tx, userId, input.projectId, true);
         const [row] = await tx
           .select()
           .from(issue)
@@ -303,31 +539,50 @@ export function createIssueService(db: Database) {
           expectedUpdatedAt: ___,
           ...values
         } = input;
+        if (values.startAt !== undefined)
+          values.startAt = issueTimestamp(values.startAt);
+        if (values.finishAt !== undefined)
+          values.finishAt = issueTimestamp(values.finishAt);
         if (values.title !== undefined) values.title = values.title.trim();
         await validate(tx, p.id, values, row);
         const clean = Object.fromEntries(
           Object.entries(values).filter(([, value]) => value !== undefined),
         );
-        const diff = changes(row, clean);
+        const diff = changes(
+          {
+            ...row,
+            startAt: issueTimestamp(row.startAt),
+            finishAt: issueTimestamp(row.finishAt),
+            assigneeId: row.assigneeId ?? row.externalAssigneeId,
+          },
+          clean,
+        );
+        const identity = values.assigneeId
+          ? await findExternalIdentity(tx, p.id, values.assigneeId)
+          : undefined;
         if (!Object.keys(diff).length) return summary(row, p.key);
         const [updated] = await tx
           .update(issue)
           .set({
             ...values,
+            ...(values.assigneeId !== undefined
+              ? {
+                  assigneeId: identity ? null : values.assigneeId,
+                  externalAssigneeId: identity?.id ?? null,
+                }
+              : {}),
             updatedAt: new Date(
               Math.max(Date.now(), row.updatedAt.getTime() + 1),
             ),
           })
           .where(eq(issue.id, row.id))
           .returning();
-        await tx
-          .insert(issueHistory)
-          .values({
-            issueId: row.id,
-            actorUserId: userId,
-            action: "updated",
-            changes: diff,
-          });
+        await tx.insert(issueHistory).values({
+          issueId: row.id,
+          actorUserId: userId,
+          action: "updated",
+          changes: diff,
+        });
         return summary(updated!, p.key);
       });
     },
@@ -341,7 +596,7 @@ export function createIssueService(db: Database) {
       },
     ) {
       return db.transaction(async (tx) => {
-        const p = await access(tx, userId, input.projectId, true);
+        const p = await issueAccess(tx, userId, input.projectId, true);
         const [row] = await tx
           .select()
           .from(issue)
@@ -377,25 +632,23 @@ export function createIssueService(db: Database) {
           })
           .where(eq(issue.id, row.id))
           .returning();
-        await tx
-          .insert(issueHistory)
-          .values({
-            issueId: row.id,
-            actorUserId: userId,
-            action: input.deleted ? "deleted" : "restored",
-            changes: {
-              deletedAt: {
-                before: row.deletedAt?.toISOString() ?? null,
-                after: deletedAt?.toISOString() ?? null,
-              },
+        await tx.insert(issueHistory).values({
+          issueId: row.id,
+          actorUserId: userId,
+          action: input.deleted ? "deleted" : "restored",
+          changes: {
+            deletedAt: {
+              before: row.deletedAt?.toISOString() ?? null,
+              after: deletedAt?.toISOString() ?? null,
             },
-          });
+          },
+        });
         return summary(updated!, p.key);
       });
     },
     async history(userId: string, projectId: string, id: string, offset = 0) {
       return db.transaction(async (tx) => {
-        await access(tx, userId, projectId);
+        await issueAccess(tx, userId, projectId);
         const [row] = await tx
           .select({ id: issue.id })
           .from(issue)
@@ -411,6 +664,7 @@ export function createIssueService(db: Database) {
           .offset(offset);
         return rows.map(({ entry, actorName }) => ({
           ...entry,
+          changes: normalizeHistoryChanges(entry.changes),
           actorName,
           createdAt: entry.createdAt.toISOString(),
         }));
@@ -418,7 +672,7 @@ export function createIssueService(db: Database) {
     },
     async saveOption(userId: string, input: IssueOptionInput) {
       return db.transaction(async (tx) => {
-        await access(tx, userId, input.projectId, true, true);
+        await issueAccess(tx, userId, input.projectId, true, true);
         if (!input.name.trim() || input.name.length > 80)
           throw new IssueInputError("Enter a name of up to 80 characters.");
         const table = input.kind === "state" ? issueState : issuePriority;
@@ -473,15 +727,13 @@ export function createIssueService(db: Database) {
                 .update(issueState)
                 .set({ isDefault: false })
                 .where(eq(issueState.id, previousDefault.id));
-              await tx
-                .insert(projectHistory)
-                .values({
-                  projectId: input.projectId,
-                  actorUserId: userId,
-                  entityId: previousDefault.id,
-                  entityType: "state",
-                  changes: { isDefault: { before: true, after: false } },
-                });
+              await tx.insert(projectHistory).values({
+                projectId: input.projectId,
+                actorUserId: userId,
+                entityId: previousDefault.id,
+                entityType: "state",
+                changes: { isDefault: { before: true, after: false } },
+              });
             }
           }
           const values = { ...common, trigger: input.trigger, isDefault };
@@ -507,15 +759,13 @@ export function createIssueService(db: Database) {
                 .values({ ...common, projectId: input.projectId })
                 .returning();
         }
-        await tx
-          .insert(projectHistory)
-          .values({
-            projectId: input.projectId,
-            actorUserId: userId,
-            entityType: input.kind,
-            entityId: result!.id,
-            changes: changes(before ?? {}, result!),
-          });
+        await tx.insert(projectHistory).values({
+          projectId: input.projectId,
+          actorUserId: userId,
+          entityType: input.kind,
+          entityId: result!.id,
+          changes: changes(before ?? {}, result!),
+        });
         return { id: result!.id };
       });
     },
@@ -524,7 +774,7 @@ export function createIssueService(db: Database) {
       input: { projectId: string; kind: "state" | "priority"; id: string },
     ) {
       return db.transaction(async (tx) => {
-        await access(tx, userId, input.projectId, true, true);
+        await issueAccess(tx, userId, input.projectId, true, true);
         const table = input.kind === "state" ? issueState : issuePriority;
         const [row] = await tx
           .select()
@@ -540,17 +790,15 @@ export function createIssueService(db: Database) {
           );
         const deletedAt = new Date();
         await tx.update(table).set({ deletedAt }).where(eq(table.id, row.id));
-        await tx
-          .insert(projectHistory)
-          .values({
-            projectId: input.projectId,
-            actorUserId: userId,
-            entityId: row.id,
-            entityType: input.kind,
-            changes: {
-              deletedAt: { before: null, after: deletedAt.toISOString() },
-            },
-          });
+        await tx.insert(projectHistory).values({
+          projectId: input.projectId,
+          actorUserId: userId,
+          entityId: row.id,
+          entityType: input.kind,
+          changes: {
+            deletedAt: { before: null, after: deletedAt.toISOString() },
+          },
+        });
       });
     },
   };

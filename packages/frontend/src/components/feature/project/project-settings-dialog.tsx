@@ -14,7 +14,11 @@ import {
 } from "./issue-settings";
 import { ProjectForm } from "./project-form";
 
+import { JiraSettings, type JiraActions } from "./jira-settings";
+import { ProjectFields, type FieldActions } from "./project-fields";
 export type ProjectSettingsActions = {
+  jira: JiraActions;
+  fields: FieldActions;
   issueSettings: IssueSettingsActions;
   update: (input: CreateProjectInput) => Promise<void>;
   members: () => Promise<ProjectMemberSummary[]>;
@@ -48,18 +52,25 @@ export function ProjectSettingsDialog({
           className="project-settings-nav"
           aria-label="Project settings sections"
         >
-          {(["general", "members", "states", "priorities"] as const).map(
-            (item) => (
-              <button
-                key={item}
-                aria-current={tab === item ? "page" : undefined}
-                disabled={busy}
-                onClick={() => setTab(item)}
-              >
-                {item.charAt(0).toUpperCase() + item.slice(1)}
-              </button>
-            ),
-          )}
+          {(
+            [
+              "general",
+              "members",
+              "states",
+              "priorities",
+              "fields",
+              "integrations",
+            ] as const
+          ).map((item) => (
+            <button
+              key={item}
+              aria-current={tab === item ? "page" : undefined}
+              disabled={busy}
+              onClick={() => setTab(item)}
+            >
+              {item.charAt(0).toUpperCase() + item.slice(1)}
+            </button>
+          ))}
         </nav>
         <section
           className="project-settings-content"
@@ -91,6 +102,18 @@ export function ProjectSettingsDialog({
                 </p>
               )}
             </>
+          ) : tab === "fields" ? (
+            <ProjectFields
+              actions={actions.fields}
+              owner={project.role === "owner"}
+              onBusyChange={setBusy}
+            />
+          ) : tab === "integrations" ? (
+            <JiraSettings
+              actions={actions.jira}
+              owner={project.role === "owner"}
+              onBusyChange={setBusy}
+            />
           ) : tab === "states" || tab === "priorities" ? (
             <ProjectIssueSettings
               key={tab}

@@ -7,7 +7,7 @@
 }
 .composer {
   border: 1px solid var(--color-line);
-  background: var(--color-surface);
+  background: var(--color-composer);
   border-radius: 11px;
   box-shadow: 0 2px 5px var(--color-shadow-faint);
   padding: 13px 11px 9px;

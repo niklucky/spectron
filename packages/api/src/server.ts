@@ -4,6 +4,9 @@ import { serve } from "@hono/node-server";
 import { createDatabase, getDatabaseURL } from "@spectron/db";
 import {
   createAuth,
+  createFileService,
+  createJiraService,
+  createJiraScheduler,
   createResetEmailSender,
   createInvitationEmailSender,
 } from "@spectron/backend";
@@ -40,17 +43,34 @@ const auth = createAuth(db, {
   secret: BETTER_AUTH_SECRET,
   sendResetEmail: createResetEmailSender(RESEND_API_KEY, EMAIL_FROM),
 });
-const api = createAPI(auth, {
+const apiOptions = {
   db,
   appURL: APP_URL,
+  integrationSecret: process.env.INTEGRATION_SECRET || BETTER_AUTH_SECRET,
   trustProxy: process.env.TRUST_PROXY === "true",
   fileStorage: {
-    root: process.env.FILES_ROOT || fileURLToPath(new URL("../../../data/files", import.meta.url)),
-    ...(process.env.FILES_MAX_BYTES ? { maxBytes: Number(process.env.FILES_MAX_BYTES) } : {}),
-    delivery: process.env.FILE_DELIVERY === "nginx" ? "nginx" : "stream",
+    root:
+      process.env.FILES_ROOT ||
+      fileURLToPath(new URL("../../../data/files", import.meta.url)),
+    ...(process.env.FILES_MAX_BYTES
+      ? { maxBytes: Number(process.env.FILES_MAX_BYTES) }
+      : {}),
+    delivery:
+      process.env.FILE_DELIVERY === "nginx"
+        ? ("nginx" as const)
+        : ("stream" as const),
   },
   sendInvitationEmail: createInvitationEmailSender(RESEND_API_KEY, EMAIL_FROM),
-});
+};
+const api = createAPI(auth, apiOptions);
+const stopScheduler = createJiraScheduler(
+  db,
+  createJiraService(
+    db,
+    createFileService(db, apiOptions.fileStorage),
+    apiOptions.integrationSecret,
+  ),
+).start();
 const server = serve(
   { fetch: api.fetch, port, hostname: process.env.API_HOST || "127.0.0.1" },
   () => {
@@ -60,7 +80,9 @@ const server = serve(
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.once(signal, () => {
     server.close(() => {
-      void pool.end().then(() => process.exit(0));
+      void stopScheduler()
+        .then(() => pool.end())
+        .then(() => process.exit(0));
     });
   });
 }
