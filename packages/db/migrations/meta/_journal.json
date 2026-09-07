@@ -64,6 +64,13 @@
       "when": 1788729349251,
       "tag": "0008_nice_medusa",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1788765500393,
+      "tag": "0009_yandex_tracker",
+      "breakpoints": true
     }
   ]
 }

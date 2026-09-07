@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import type {
   CreateProjectInput,
   ProjectSummary,
@@ -27,7 +27,11 @@ export function ProjectSettingsDialog({
   project,
   actions,
   onClose,
+  extraSections,
+  externalBusy = false,
 }: {
+  externalBusy?: boolean;
+  extraSections?: { fields: ReactNode; integrations: ReactNode };
   project: ProjectSummary;
   actions: ProjectSettingsActions;
   onClose: () => void;
@@ -40,7 +44,7 @@ export function ProjectSettingsDialog({
       title={`${project.name} settings`}
       className="project-settings-dialog"
       onClose={() => {
-        if (!busy) onClose();
+        if (!busy && !externalBusy) onClose();
       }}
     >
       <div className="project-settings-layout">
@@ -48,24 +52,34 @@ export function ProjectSettingsDialog({
           className="project-settings-nav"
           aria-label="Project settings sections"
         >
-          {(["general", "members", "states", "priorities"] as const).map(
-            (item) => (
-              <button
-                key={item}
-                aria-current={tab === item ? "page" : undefined}
-                disabled={busy}
-                onClick={() => setTab(item)}
-              >
-                {item.charAt(0).toUpperCase() + item.slice(1)}
-              </button>
-            ),
-          )}
+          {(
+            [
+              "general",
+              "members",
+              "states",
+              "priorities",
+              ...(extraSections ? ["fields", "integrations"] : []),
+            ] as const
+          ).map((item) => (
+            <button
+              key={item}
+              aria-current={tab === item ? "page" : undefined}
+              disabled={busy || externalBusy}
+              onClick={() => setTab(item)}
+            >
+              {item.charAt(0).toUpperCase() + item.slice(1)}
+            </button>
+          ))}
         </nav>
         <section
           className="project-settings-content"
           aria-label={`${tab} settings`}
         >
-          {tab === "general" ? (
+          {tab === "fields" ? (
+            extraSections?.fields
+          ) : tab === "integrations" ? (
+            extraSections?.integrations
+          ) : tab === "general" ? (
             <>
               {project.role !== "owner" && (
                 <p className="muted">

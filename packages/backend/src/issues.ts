@@ -7,6 +7,7 @@ import type {
   IssueSettings,
   IssueSummary,
 } from "@spectron/shared";
+import { validateCustomFields } from "./project-fields";
 import { ProjectAccessError } from "./projects";
 
 const {
@@ -75,7 +76,7 @@ const summary = (
   updatedAt: row.updatedAt.toISOString(),
   deletedAt: row.deletedAt?.toISOString() ?? null,
 });
-async function access(
+export async function issueAccess(
   tx: Tx,
   userId: string,
   projectId: string,
@@ -110,6 +111,8 @@ async function validate(
   input: OptionalFields,
   current?: typeof issue.$inferSelect,
 ) {
+  if (input.customFields !== undefined)
+    await validateCustomFields(tx, projectId, input.customFields);
   if (
     input.title !== undefined &&
     (!input.title.trim() || input.title.length > 140)
@@ -188,7 +191,7 @@ export function createIssueService(db: Database) {
   return {
     async list(userId: string, projectId: string) {
       return db.transaction(async (tx) => {
-        const p = await access(tx, userId, projectId);
+        const p = await issueAccess(tx, userId, projectId);
         const rows = await tx
           .select()
           .from(issue)
@@ -199,7 +202,7 @@ export function createIssueService(db: Database) {
     },
     async settings(userId: string, projectId: string): Promise<IssueSettings> {
       return db.transaction(async (tx) => {
-        await access(tx, userId, projectId);
+        await issueAccess(tx, userId, projectId);
         const states = await tx
           .select()
           .from(issueState)
@@ -211,6 +214,14 @@ export function createIssueService(db: Database) {
           .where(eq(issuePriority.projectId, projectId))
           .orderBy(asc(issuePriority.position), asc(issuePriority.id));
         return {
+          fields: await tx
+            .select({
+              id: schema.projectField.id,
+              name: schema.projectField.name,
+              type: schema.projectField.type,
+            })
+            .from(schema.projectField)
+            .where(eq(schema.projectField.projectId, projectId)),
           states: states.map((s) => ({
             ...s,
             deletedAt: s.deletedAt?.toISOString() ?? null,
@@ -230,7 +241,7 @@ export function createIssueService(db: Database) {
       >,
     ) {
       return db.transaction(async (tx) => {
-        const p = await access(tx, userId, input.projectId, true);
+        const p = await issueAccess(tx, userId, input.projectId, true);
         const [defaultState] = await tx
           .select()
           .from(issueState)
@@ -252,6 +263,7 @@ export function createIssueService(db: Database) {
           assigneeId: input.assigneeId ?? null,
           priorityId: input.priorityId ?? null,
           stateId: input.stateId ?? defaultState.id,
+          customFields: input.customFields ?? {},
         };
         await validate(tx, p.id, values);
         const number = p.issueCounter + 1;
@@ -285,7 +297,7 @@ export function createIssueService(db: Database) {
       } & OptionalFields,
     ) {
       return db.transaction(async (tx) => {
-        const p = await access(tx, userId, input.projectId, true);
+        const p = await issueAccess(tx, userId, input.projectId, true);
         const [row] = await tx
           .select()
           .from(issue)
@@ -341,7 +353,7 @@ export function createIssueService(db: Database) {
       },
     ) {
       return db.transaction(async (tx) => {
-        const p = await access(tx, userId, input.projectId, true);
+        const p = await issueAccess(tx, userId, input.projectId, true);
         const [row] = await tx
           .select()
           .from(issue)
@@ -395,7 +407,7 @@ export function createIssueService(db: Database) {
     },
     async history(userId: string, projectId: string, id: string, offset = 0) {
       return db.transaction(async (tx) => {
-        await access(tx, userId, projectId);
+        await issueAccess(tx, userId, projectId);
         const [row] = await tx
           .select({ id: issue.id })
           .from(issue)
@@ -418,7 +430,7 @@ export function createIssueService(db: Database) {
     },
     async saveOption(userId: string, input: IssueOptionInput) {
       return db.transaction(async (tx) => {
-        await access(tx, userId, input.projectId, true, true);
+        await issueAccess(tx, userId, input.projectId, true, true);
         if (!input.name.trim() || input.name.length > 80)
           throw new IssueInputError("Enter a name of up to 80 characters.");
         const table = input.kind === "state" ? issueState : issuePriority;
@@ -524,7 +536,7 @@ export function createIssueService(db: Database) {
       input: { projectId: string; kind: "state" | "priority"; id: string },
     ) {
       return db.transaction(async (tx) => {
-        await access(tx, userId, input.projectId, true, true);
+        await issueAccess(tx, userId, input.projectId, true, true);
         const table = input.kind === "state" ? issueState : issuePriority;
         const [row] = await tx
           .select()

@@ -18,10 +18,18 @@ export type IssueState = {
 };
 export type IssuePriority = Omit<IssueState, "trigger" | "isDefault">;
 export type IssueSettings = {
+  fields?: Array<{
+    id: string;
+    name: string;
+    type: "text" | "date" | "number" | "user";
+  }>;
   states: IssueState[];
   priorities: IssuePriority[];
 };
 export type IssueSummary = {
+  externalId?: string | null;
+  externalKey?: string | null;
+  customFields?: Record<string, string | number | null>;
   id: string;
   projectId: string;
   parentId: string | null;
@@ -39,7 +47,13 @@ export type IssueSummary = {
 };
 export type IssueFields = Pick<
   IssueSummary,
-  "title" | "description" | "parentId" | "assigneeId" | "stateId" | "priorityId"
+  | "title"
+  | "description"
+  | "parentId"
+  | "assigneeId"
+  | "stateId"
+  | "priorityId"
+  | "customFields"
 >;
 export type HistoryValue =
   | string

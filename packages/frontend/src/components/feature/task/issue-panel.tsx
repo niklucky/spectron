@@ -1,6 +1,6 @@
 import { IssueChat } from "./issue-chat";
 import type { IssueActivityPage } from "@spectron/shared";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type {
   IssueFields,
   IssueHistoryEntry,
@@ -37,6 +37,7 @@ export type IssuePanelActions = {
 };
 export function IssuePanel({
   issue,
+  customFields,
   settings,
   issues,
   actions,
@@ -44,6 +45,7 @@ export function IssuePanel({
   onCopy,
   onSelect,
 }: {
+  customFields?: ReactNode;
   issue: IssueSummary;
   settings: IssueSettings;
   issues: IssueSummary[];
@@ -116,6 +118,17 @@ export function IssuePanel({
       : "Unassigned";
   const valueLabel = (field: string, value: unknown): string => {
     if (value == null || value === "") return "None";
+    if (field === "customFields" && typeof value === "object") {
+      return (
+        Object.entries(value)
+          .map(([id, v]) => {
+            const definition = settings.fields?.find((f) => f.id === id);
+            const label = definition?.name ?? "Project field";
+            return `${label}: ${v === null ? "None" : definition?.type === "user" ? person(String(v)) : String(v)}`;
+          })
+          .join(", ") || "None"
+      );
+    }
     if (field === "durationSeconds")
       return formatWorklogDuration(Number(value));
     if (field === "workerUserId" || field === "recordedBy")
@@ -144,6 +157,9 @@ export function IssuePanel({
     return typeof value === "string" ? value : JSON.stringify(value);
   };
   const labels: Record<string, string> = {
+    customFields: "Project fields",
+    externalId: "Tracker ID",
+    externalKey: "Tracker key",
     workerUserId: "Worker",
     recordedBy: "Recorded by",
     startedAt: "Started at",
@@ -281,6 +297,7 @@ export function IssuePanel({
                 </dd>
               </div>
             </dl>
+            {customFields}
             <section className="issue-description">
               <h3>Description</h3>
               <p>{issue.description || "No description yet."}</p>

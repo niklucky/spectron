@@ -25,3 +25,7 @@ export { createCommentService, type CommentService } from "./comments";
 export { createWorklogService, type WorklogService } from "./worklogs";
 
 export { createActivityService, type ActivityService } from "./activity";
+
+export { createTrackerService, type TrackerService } from "./integrations/tracker";
+export { createProjectFieldService, type ProjectFieldService } from "./project-fields";
+export { YTApiError as TrackerRequestError } from "./integrations/yandex-client";

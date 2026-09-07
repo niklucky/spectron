@@ -1,3 +1,8 @@
+import {
+  ProjectIntegrationSettings,
+  ProjectFieldsSettings,
+} from "./project-integration-settings";
+import { IssueCustomFields } from "./issue-custom-fields";
 import type {
   WorklogFields,
   WorklogPage,
@@ -77,6 +82,7 @@ function Workspace({
     [projectState.projects],
   );
   const workspace = useWorkspace(user.name, projects);
+  const [integrationBusy, setIntegrationBusy] = useState(false);
   const [settingsId, setSettingsId] = useState<string | null>(null);
   const settingsProject = projectState.projects.find(
     (item) => item.id === settingsId && item.state === "active",
@@ -334,6 +340,9 @@ function Workspace({
             <IssuePanel
               key={task.id}
               issue={task}
+              customFields={
+                <IssueCustomFields issue={task} save={issueActions.save} />
+              }
               settings={
                 workspace.settings[task.projectId] ?? {
                   states: [],
@@ -380,7 +389,26 @@ function Workspace({
       {settingsProject && (
         <ProjectSettingsDialog
           key={settingsProject.id}
+          externalBusy={integrationBusy}
           project={settingsProject}
+          extraSections={{
+            fields: (
+              <ProjectFieldsSettings
+                projectId={settingsProject.id}
+                owner={settingsProject.role === "owner"}
+              />
+            ),
+            integrations:
+              settingsProject.role === "owner" ? (
+                <ProjectIntegrationSettings
+                  onBusyChange={setIntegrationBusy}
+                  projectId={settingsProject.id}
+                  onChanged={workspace.refresh}
+                />
+              ) : (
+                <p>Only project owners can configure integrations.</p>
+              ),
+          }}
           actions={settingsActions}
           onClose={() => setSettingsId(null)}
         />

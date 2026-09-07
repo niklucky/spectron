@@ -231,7 +231,7 @@ All project members can add, edit, soft-delete and restore worklogs for now. New
 
 Migration `0008` adds `issue_worklogs`; the authenticated `worklogs` router provides `list`, `create`, `update`, and `setDeleted`. Lists use cursor pages of 20. Durations are positive integer seconds (up to PostgreSQL's integer limit); descriptions allow 10,000 characters. Run `pnpm test:worklogs` for persistence, access, attribution, concurrency, rollback, deletion/restoration, and pagination checks.
 
-Delivery order: human entries, totals, then an additional chat view that preserves the existing issue view. Pause for manual testing after each step. Agents and timers are deferred. Jira and Yandex.Tracker integrations belong to a new session.
+Delivery order: human entries, totals, then an additional chat view that preserves the existing issue view. Pause for manual testing after each step. Agents and timers are deferred. Yandex Tracker integration is documented below. Jira remains deferred.
 
 Human duration input reads numeric groups: one means minutes, two mean hours/minutes, three mean days/hours/minutes (24-hour days). Separators are ignored, so `1h 35m`, `1h30m`, and `1n20m` work. `30` means 30 minutes; `1h` also means one minute under this positional convention—use `1h0m` for one hour. Human entry has no seconds field; storage remains seconds for compatibility, and editing other fields preserves existing durations.
 
@@ -243,4 +243,10 @@ Chat includes a current issue summary, issue changes, editable comment cards, re
 
 The `issues.activity` query checks project membership and returns the newest 50 events in chronological order, with an opaque history-ID cursor for older pages. Its boundary uses the stored database timestamp to retain sub-millisecond precision and stable ordering. Refresh chat loads new activity; no realtime push or notifications are implemented yet. Run `pnpm test:activity` for access isolation, reply/file hydration, deletion behavior and pagination during concurrent inserts.
 
-Worklog totals remain pending. Agents and tracker integrations remain deferred; Jira and Yandex.Tracker will be handled in a new session.
+Worklog totals, agents and Jira integration remain pending.
+
+## Yandex Tracker and project fields
+
+Project owners can configure a Yandex Tracker queue in **Project settings → Integrations**, map statuses, priorities, users and additional fields, import issues/comments, and manually push local issue/comment changes. **Project settings → Fields** creates Text, Date, Number and User fields for issues in that project.
+
+See [Yandex Tracker setup and sync behavior](docs/yandex-tracker.md) for the implementation plan, credential encryption setup, migration, conflict handling and tests. The API requires `INTEGRATION_ENCRYPTION_KEY` to store Tracker credentials. Run `pnpm test:integrations` for the database-backed regression suite.

@@ -2,6 +2,7 @@ import { initTRPC, TRPCError } from "@trpc/server";
 import { z } from "zod";
 import {
   ProjectAccessError,
+  TrackerRequestError,
   IssueInputError,
   FileInputError,
   IssueConflictError,
@@ -44,7 +45,8 @@ const authenticated = t.procedure.use(async ({ ctx, next }) => {
     });
   if (
     !result.ok &&
-    (result.error.cause instanceof FileInputError ||
+    (result.error.cause instanceof TrackerRequestError ||
+      result.error.cause instanceof FileInputError ||
       result.error.cause instanceof IssueInputError ||
       result.error.cause instanceof LogoError ||
       result.error.cause instanceof InvitationError)
@@ -105,6 +107,10 @@ const issueScope = z.object({ projectId: applicationId }).strict();
 const issueRef = issueScope.extend({ id: applicationId });
 const issueFields = z
   .object({
+    customFields: z.record(
+      applicationId,
+      z.union([z.string().max(10000), z.number().finite(), z.null()]),
+    ),
     title: z.string().trim().min(1).max(140),
     description: z.string().max(100_000),
     parentId: applicationId.nullable(),
@@ -154,7 +160,79 @@ const worklogDraft = worklogScope.extend({
   durationSeconds: z.number().int().min(1).max(2147483647),
   description: z.string().max(10000),
 });
+const mapping = z.record(z.string().min(1).max(255), applicationId.nullable());
 export const appRouter = t.router({
+  projectFields: t.router({
+    list: authenticated
+      .input(issueScope)
+      .query(({ ctx, input }) =>
+        ctx.projectFields!.list(ctx.userId, input.projectId),
+      ),
+    create: authenticated
+      .input(
+        issueScope.extend({
+          name: z.string().trim().min(1).max(80),
+          type: z.enum(["text", "date", "number", "user"]),
+        }),
+      )
+      .mutation(({ ctx, input }) =>
+        ctx.projectFields!.create(ctx.userId, input),
+      ),
+  }),
+  tracker: t.router({
+    get: authenticated
+      .input(issueScope)
+      .query(({ ctx, input }) => ctx.tracker!.get(ctx.userId, input.projectId)),
+    save: authenticated
+      .input(
+        issueScope.extend({
+          token: z.string().trim().min(1).max(4096).optional(),
+          organizationId: z
+            .string()
+            .trim()
+            .regex(/^[a-zA-Z0-9_-]+$/)
+            .max(128),
+          organizationType: z.enum(["cloud", "360"]),
+          queue: z
+            .string()
+            .trim()
+            .regex(/^[A-Z][A-Z0-9_]*$/)
+            .max(80),
+          mappings: z
+            .object({
+              statuses: mapping,
+              priorities: mapping,
+              fields: mapping,
+              users: z.record(
+                z.string().min(1).max(255),
+                z.string().min(1).max(128).nullable(),
+              ),
+            })
+            .strict(),
+        }),
+      )
+      .mutation(({ ctx, input }) => ctx.tracker!.save(ctx.userId, input)),
+    metadata: authenticated
+      .input(issueScope)
+      .mutation(({ ctx, input }) =>
+        ctx.tracker!.metadata(ctx.userId, input.projectId),
+      ),
+    run: authenticated
+      .input(
+        issueScope.extend({
+          direction: z.enum(["import", "push"]),
+          overwriteConflicts: z.boolean().default(false),
+        }),
+      )
+      .mutation(({ ctx, input }) =>
+        ctx.tracker!.run(
+          ctx.userId,
+          input.projectId,
+          input.direction,
+          input.overwriteConflicts,
+        ),
+      ),
+  }),
   worklogs: t.router({
     list: authenticated
       .input(
