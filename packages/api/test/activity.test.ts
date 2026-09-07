@@ -274,6 +274,93 @@ test("Unified issue activity preserves access, history and pagination", async (t
     },
   );
   await t.test(
+    "issue list previews use latest activity and preserve project access",
+    async () => {
+      const row = await data<IssueSummary>(
+        await call(
+          "issues.create",
+          owner,
+          { projectId: q.id, title: "Preview coverage" },
+          true,
+        ),
+      );
+      async function callList() {
+        return call("issues.list", owner, { projectId: q.id });
+      }
+      const latest = async () =>
+        (await data<IssueSummary[]>(await callList())).find(
+          (i) => i.id === row.id,
+        )!.lastActivity!;
+      assert.equal((await latest()).preview, "Created issue");
+      const add = async (
+        entityType: string,
+        action: string,
+        changes: unknown,
+        date: string,
+      ) => {
+        await pool.query(
+          "INSERT INTO issue_history(id,issue_id,entity_type,actor_user_id,action,changes,created_at) VALUES($1,$2,$3,$4,$5,$6,$7)",
+          [
+            createId(),
+            row.id,
+            entityType,
+            owner.id,
+            action,
+            JSON.stringify(changes),
+            date,
+          ],
+        );
+      };
+      await add(
+        "comment",
+        "created",
+        {
+          body: {
+            before: null,
+            after: [{ type: "text", text: "Latest message" }],
+          },
+        },
+        "2030-01-01T12:00:00Z",
+      );
+      assert.equal((await latest()).preview, "Latest message");
+      assert.equal((await latest()).actorName, "owner");
+      await add(
+        "attachment",
+        "created",
+        { attachment: { before: null, after: { filename: "demo.mp4" } } },
+        "2030-01-02T12:00:00Z",
+      );
+      assert.equal((await latest()).preview, "Video: demo.mp4");
+      await add(
+        "comment",
+        "deleted",
+        {
+          body: {
+            before: [{ type: "text", text: "Removed content" }],
+            after: null,
+          },
+        },
+        "2030-01-03T12:00:00Z",
+      );
+      assert.equal((await latest()).preview, "Comment deleted");
+      assert.equal(
+        (await call("issues.list", member, { projectId: q.id })).status,
+        404,
+      );
+      assert.equal(
+        (await call("issues.list", outsider, { projectId: q.id })).status,
+        404,
+      );
+      assert.ok(
+        !(
+          await data<IssueSummary[]>(
+            await call("issues.list", owner, { projectId: p.id }),
+          )
+        ).some((i) => i.id === row.id),
+      );
+    },
+  );
+  await t.test(
     "revoked access hides the whole feed; deleted issue keeps history readable",
     async () => {
       await data(

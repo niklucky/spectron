@@ -231,7 +231,7 @@ All project members can add, edit, soft-delete and restore worklogs for now. New
 
 Migration `0008` adds `issue_worklogs`; the authenticated `worklogs` router provides `list`, `create`, `update`, and `setDeleted`. Lists use cursor pages of 20. Durations are positive integer seconds (up to PostgreSQL's integer limit); descriptions allow 10,000 characters. Run `pnpm test:worklogs` for persistence, access, attribution, concurrency, rollback, deletion/restoration, and pagination checks.
 
-Delivery order: human entries, totals, then an additional chat view that preserves the existing issue view. Pause for manual testing after each step. Agents and timers are deferred. Yandex Tracker integration is documented below. Jira remains deferred.
+Delivery order: human entries, totals, then an additional chat view that preserves the existing issue view. Pause for manual testing after each step. Agents and timers are deferred. Jira and Yandex.Tracker integrations belong to a new session.
 
 Human duration input reads numeric groups: one means minutes, two mean hours/minutes, three mean days/hours/minutes (24-hour days). Separators are ignored, so `1h 35m`, `1h30m`, and `1n20m` work. `30` means 30 minutes; `1h` also means one minute under this positional convention—use `1h0m` for one hour. Human entry has no seconds field; storage remains seconds for compatibility, and editing other fields preserves existing durations.
 
@@ -243,10 +243,47 @@ Chat includes a current issue summary, issue changes, editable comment cards, re
 
 The `issues.activity` query checks project membership and returns the newest 50 events in chronological order, with an opaque history-ID cursor for older pages. Its boundary uses the stored database timestamp to retain sub-millisecond precision and stable ordering. Refresh chat loads new activity; no realtime push or notifications are implemented yet. Run `pnpm test:activity` for access isolation, reply/file hydration, deletion behavior and pagination during concurrent inserts.
 
-Worklog totals, agents and Jira integration remain pending.
+Worklog totals remain pending. Agents and tracker integrations remain deferred; Jira and Yandex.Tracker will be handled in a new session.
 
-## Yandex Tracker and project fields
+### Jira Cloud and project fields
 
-Project owners can configure a Yandex Tracker queue in **Project settings → Integrations**, map statuses, priorities, users and additional fields, import issues/comments, and manually push local issue/comment changes. **Project settings → Fields** creates Text, Date, Number and User fields for issues in that project.
+Project menu → **Settings → Fields** creates Text, Date, Number and User fields. All issues in that project can use those fields; edit their values in the issue details. Field types are immutable, numeric/date values are validated, and User values must reference project members or imported identities belonging to that project.
 
-See [Yandex Tracker setup and sync behavior](docs/yandex-tracker.md) for the implementation plan, credential encryption setup, migration, conflict handling and tests. The API requires `INTEGRATION_ENCRYPTION_KEY` to store Tracker credentials. Run `pnpm test:integrations` for the database-backed regression suite.
+Issues also have optional built-in `estimate_time`, `start_at` and `finish_at` columns (API: `estimateTime`, `startAt`, `finishAt`). The issue editor accepts estimates in minutes; storage and numeric Jira mappings use whole seconds. Start and finish are timestamps displayed and edited in UTC. Finish cannot precede start. Changes appear in issue history.
+
+Jira field mapping targets include **Estimate time (built-in)**, **Start at (built-in)** and **Finish at / deadline (built-in)** alongside project fields. For example, map Original estimate to Estimate time, Due date to Finish at / deadline, and a Jira start date field to Start at. Date-only imports use midnight UTC; date-only exports use the UTC calendar date. Standard Jira original estimates are published through `timetracking.originalEstimate` in minutes and must contain whole minutes. Clearing a mapped value also clears it on the other side during sync. Unmapped fields remain untouched.
+
+Project owners connect Jira under **Settings → Integrations**:
+
+1. Enter the `https://your-team.atlassian.net` site, project key, account email and an **unscoped API token**. Test the connection to load Jira options, choose the default issue type, and save.
+2. Load mappings. Jira statuses with the same name as an active local status are selected automatically, ignoring capitalization and surrounding whitespace. Existing choices are preserved; ambiguous names are left for manual selection. Review differences and save mappings. Optionally link Jira users to project members and map priorities to existing local options. Create local fields in the Fields tab, then map Jira fields to them; leave unsupported or unwanted fields ignored. Save mappings before importing. Missing users, including historical authors, are created automatically in `external_identities`; they have no login, fake email or membership. The External users section lets an owner link or unlink an identity to an existing project member, updating displayed attribution without moving or duplicating records.
+3. **Full import** imports project statuses/priorities, then issues with mapped fields, comments, worklogs and downloaded attachments. Progress and individual errors are shown. A retry upserts external IDs and preserves local issue prefixes/numbers. Stop sends a persistent cancellation request to the server, aborts in-flight Jira requests and checks cancellation between committed entities. Completed work remains saved, and an interrupted issue can be retried. `Last issue imported` records the latest successful issue, not completion of the entire project.
+4. Use **Create in Jira / Update Jira issue** on an issue, or **Send comment to Jira** on a comment. These owner-only actions are explicit; local editing does not automatically publish. Jira workflow transitions enforce status changes. Remote comments are written using the connected Jira account and its permissions.
+
+**Automatic import** in Jira Settings can be disabled (the default) or run every 15 minutes, hour, or day. The API server checks due schedules every 30 seconds, so the browser can be closed. The first run is one interval after saving. The first scheduled import scans the project; subsequent runs query `updated >= scheduled_import_watermark - 5 minutes` in `updated ASC` order using saved mappings. The durable watermark advances to the run's start time only after all pages and issues succeed, including an empty result. Errors, conflicts, cancellation and interrupted runs preserve it for retry. The overlap accommodates short indexing delays; it is not a guarantee against arbitrary Jira indexing delays. Numeric epoch timestamps avoid Jira account time-zone differences ([JQL date fields](https://support.atlassian.com/jira-service-management-cloud/docs/jql-fields/)). Full import in Settings always scans all issues and does not change this watermark. Conflict checks preserve unsent edits. Settings shows the next run and latest result, including up to three issue errors. Stop import cancels the active run; disabling the schedule prevents future runs. Each run rechecks the enabling owner's access. Database leases prevent overlapping scheduled runs across API processes and allow recovery of interrupted runs after the lease expires. The API server must be running; missed intervals are coalesced into one run.
+
+Credentials are AES-256-GCM encrypted and never returned to the browser. The API uses `INTEGRATION_SECRET`, falling back to `BETTER_AUTH_SECRET`; keep the chosen secret stable. A connection's Jira site/project cannot be changed after saving, so external IDs cannot be accidentally rebound to another project. External entity records are scoped to the connection; nullable `externalId` columns expose the linked IDs, and issues also have `externalKey`.
+
+Sync snapshots protect edits on both sides. Import preserves unsent local edits when Jira is unchanged, and reports a conflict if both changed. Explicit conflict actions let an owner replace local values with Jira values or replace Jira values with local values. No remote deletions are propagated. If a create loses its response, blind retry is blocked: load mappings to see pending creates and link the actual Jira issue/comment ID. If nothing was created remotely, an owner can create the corresponding entity in Jira and link it. Known validation/auth/rate-limit rejections can be retried normally. Partial field/transition failures are reported and retained for retry.
+
+Initial limits: plain-text conversion of Jira rich text (unchanged rich text is not rewritten); no remote attachment upload, worklog export, parent/subtask mapping, webhooks. Unsupported custom field shapes and Jira values exceeding Spectron's limits produce visible import errors. Attachments use the configured file size limit. Imports are incremental commits, so an issue can be partially imported when a later child entity fails.
+
+Run `pnpm db:migrate` before starting the updated API. `pnpm test:jira` uses mocked Jira responses and an isolated temporary PostgreSQL database (same `TEST_DATABASE_URL` convention as the existing tests). Live Jira credentials are not needed for tests.
+
+The client is adapted from `../spectron-prototype/packages/api/src/integrations/handlers/jira/client.ts`, using Jira's [enhanced issue search](https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-issue-search/), [comments](https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-issue-comments/), and [attachment content API](https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-issue-attachments/).
+
+### Issue list and quick creation
+
+Issue rows show a key badge, a single-line title and description, the latest activity date, and the actor and update preview. Dates use local time today, “yesterday”, a weekday within the last seven days, and DD.MM.YYYY for older activity.
+
+Use **Filter issues** to select multiple shared triggers or project-specific states. Selected values are combined with OR; Flow groups states by project. Filters are saved in this browser per account and per project/Flow view, and survive reload. **Only deleted issues** switches the list to deleted records.
+
+**New task** opens an inline chat composer. Send a first message to create the issue, then continue in Chat. Its first nonempty line becomes the plain-text title (up to 140 characters); longer or formatted messages are preserved in full in the description. The composer previews typed Markdown (bold, italic, lists and inline code) without a formatting toolbar. Use Shift+Enter for new lines. In Flow, choose the destination project in the composer.
+
+The composer microphone dictates text using browser speech recognition, with English/Russian language selection, editable final transcripts, listening feedback, and stop/error handling. It starts only on a microphone-button click and stops when leaving the composer. Speech recognition support and processing depend on the browser; unsupported browsers display a fallback message.
+
+Add files to a new issue with the circular plus button or drag them onto the composer. Pending files can be removed before sending. Send uploads them using the configured file-size limit, then creates the issue and its attachments atomically (up to 20 files). Successfully uploaded files are reused on retry and remain in the project file library if creation is cancelled. A files-only message uses the first filename as its title.
+
+## Yandex Tracker
+
+Project settings → Integrations includes both Jira and Yandex Tracker. Both use the shared project fields and issue editor. Yandex supports encrypted OAuth credentials, status/priority/user/field mappings, manual import and outbound issue/comment sync. See [Yandex Tracker setup and sync behavior](docs/yandex-tracker.md).

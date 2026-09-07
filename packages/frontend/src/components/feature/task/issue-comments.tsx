@@ -1,3 +1,8 @@
+import { UserInfo } from "../../ui/avatar";
+import { MessageComposer, MessageComposerActions } from "./message-composer";
+import { MessageMarkdown } from "../../ui/message-markdown";
+import { Icon } from "../../ui/icon";
+import { useDictation } from "./use-dictation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   commentDraftText,
@@ -16,6 +21,12 @@ import {
 import { Button } from "../../ui/button";
 import { FilePicker, type IssueFileActions } from "./issue-files";
 export type CommentActions = {
+  canPublish?: (projectId: string) => boolean;
+  pushJira?: (
+    projectId: string,
+    id: string,
+    overwriteRemote?: boolean,
+  ) => Promise<{ sent: boolean }>;
   list: (
     input: CommentScope & { parentId: string | null; cursor?: CommentCursor },
   ) => Promise<CommentPage>;
@@ -186,12 +197,15 @@ export function CommentItem({
   row,
   depth,
   flat = false,
+  hideAuthor = false,
 }: {
   flat?: boolean;
+  hideAuthor?: boolean;
   context: CommentContext;
   row: CommentSummary;
   depth: number;
 }) {
+  const [jiraFeedback, setJiraFeedback] = useState("");
   const [expanded, setExpanded] = useState(false),
     [mode, setMode] = useState<"edit" | "reply" | null>(null),
     [busy, setBusy] = useState(false),
@@ -202,7 +216,7 @@ export function CommentItem({
       aria-label={`Comment by ${row.authorName}`}
     >
       <header>
-        <strong>{row.authorName}</strong>{" "}
+        {!hideAuthor && <UserInfo name={row.authorName} />}{" "}
         <time dateTime={row.createdAt}>
           {new Date(row.createdAt).toLocaleString()}
         </time>
@@ -224,28 +238,70 @@ export function CommentItem({
         />
       ) : (
         <>
-          <p className="comment-body">
-            {row.body.map((n, i) =>
-              n.type === "text" ? (
-                <span key={i}>{n.text}</span>
-              ) : (
-                <span
-                  key={i}
-                  className="comment-mention"
-                  title={
-                    context.members.find((m) => m.id === n.userId)?.email ??
-                    "Former project member"
-                  }
-                >
-                  @{n.label}
-                </span>
-              ),
+          <div className="comment-body">
+            {row.body.every((n) => n.type === "text") ? (
+              <MessageMarkdown
+                text={row.body
+                  .map((n) => (n.type === "text" ? n.text : ""))
+                  .join("")}
+              />
+            ) : (
+              row.body.map((n, i) =>
+                n.type === "text" ? (
+                  <span key={i}>{n.text}</span>
+                ) : (
+                  <span
+                    key={i}
+                    className="comment-mention"
+                    title={
+                      context.members.find((m) => m.id === n.userId)?.email ??
+                      "Former project member"
+                    }
+                  >
+                    @{n.label}
+                  </span>
+                ),
+              )
             )}
-          </p>
+          </div>
           <CommentMedia files={row.attachments} />
         </>
       )}
+      {jiraFeedback && <p role="status">{jiraFeedback}</p>}
       <div className="comment-actions">
+        {!row.deletedAt &&
+          !context.deleted &&
+          context.actions.pushJira &&
+          context.actions.canPublish?.(context.scope.projectId) && (
+            <Button
+              variant="ghost"
+              disabled={busy}
+              onClick={async () => {
+                setBusy(true);
+                setError("");
+                try {
+                  const result = await context.actions.pushJira!(
+                    context.scope.projectId,
+                    row.id,
+                  );
+                  context.changed();
+                  setJiraFeedback(
+                    result.sent
+                      ? "Comment saved to Jira."
+                      : "Comment is already up to date.",
+                  );
+                } catch (e) {
+                  setError(
+                    e instanceof Error ? e.message : "Could not send comment.",
+                  );
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            >
+              Send comment to Jira
+            </Button>
+          )}
         {!context.deleted && (
           <Button
             variant="ghost"
@@ -301,6 +357,35 @@ export function CommentItem({
       {error && (
         <p role="alert" className="project-error">
           {error}
+          {error.includes("This Jira comment changed") &&
+            context.actions.pushJira && (
+              <Button
+                variant="ghost"
+                disabled={busy}
+                onClick={async () => {
+                  setBusy(true);
+                  try {
+                    await context.actions.pushJira!(
+                      context.scope.projectId,
+                      row.id,
+                      true,
+                    );
+                    setError("");
+                    setJiraFeedback("Replaced Jira comment with local text.");
+                  } catch (e) {
+                    setError(
+                      e instanceof Error
+                        ? e.message
+                        : "Could not send comment.",
+                    );
+                  } finally {
+                    setBusy(false);
+                  }
+                }}
+              >
+                Replace Jira comment with local text
+              </Button>
+            )}
         </p>
       )}
       {mode === "reply" && (
@@ -394,6 +479,24 @@ export function CommentEditor({
     [picker, setPicker] = useState(false),
     [caret, setCaret] = useState(0),
     [dismissed, setDismissed] = useState(false);
+  const [preview, setPreview] = useState(false);
+  const [language, setLanguage] = useState(() =>
+    navigator.language.startsWith("ru") ? "ru-RU" : "en-US",
+  );
+  const [dragging, setDragging] = useState(false);
+  const voice = useDictation((text) =>
+    setDraft((previous) => {
+      const next = `${previous.text}${previous.text ? " " : ""}${text}`.slice(
+        0,
+        100000,
+      );
+      return {
+        text: next,
+        mentions: moveMentionRanges(previous.text, next, previous.mentions),
+      };
+    }),
+  );
+  const Composer = chat ? MessageComposer : "form";
   const area = useRef<HTMLTextAreaElement>(null),
     upload = useRef<HTMLInputElement>(null),
     active = useRef(true);
@@ -443,12 +546,59 @@ export function CommentEditor({
       area.current?.setSelectionRange(end, end);
     });
   }
+  async function uploadFiles(selected: File[]) {
+    if (!selected.length || busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      if (files.length + selected.length > 20)
+        throw new Error("Attach up to 20 files per comment.");
+      const limits = await context.files.limits();
+      for (const f of selected) {
+        if (!active.current) break;
+        if (!f.size || f.size > limits.maxBytes)
+          throw new Error(
+            `${f.name}: choose a non-empty file up to ${Math.round(limits.maxBytes / 1024 / 1024)} MB.`,
+          );
+        setStatus(`Uploading ${f.name}…`);
+        const result = await context.files.upload(context.scope.projectId, f);
+        if (active.current) setFiles((previous) => [...previous, result]);
+      }
+    } catch (cause) {
+      if (active.current)
+        setError(cause instanceof Error ? cause.message : "Upload failed.");
+    } finally {
+      if (active.current) {
+        setBusy(false);
+        setStatus("");
+      }
+    }
+  }
   return (
     <div className="comment-editor">
-      <form
+      <Composer
+        className={dragging ? "is-dragging" : ""}
+        onDragOver={(event) => {
+          if (chat && event.dataTransfer.types.includes("Files")) {
+            event.preventDefault();
+            if (!busy) setDragging(true);
+          }
+        }}
+        onDragLeave={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget as Node | null))
+            setDragging(false);
+        }}
+        onDrop={(event) => {
+          if (chat && event.dataTransfer.types.includes("Files")) {
+            event.preventDefault();
+            setDragging(false);
+            void uploadFiles(Array.from(event.dataTransfer.files));
+          }
+        }}
         onSubmit={async (event) => {
           event.preventDefault();
-          if (busy) return;
+          if (busy || voice.listening || (!draft.text.trim() && !files.length))
+            return;
           setBusy(true);
           setError("");
           const input = {
@@ -483,21 +633,33 @@ export function CommentEditor({
           }
         }}
       >
-        <label>
-          {existing
-            ? "Edit comment"
-            : parentId
-              ? "Your reply"
-              : chat
-                ? "Your message"
-                : "Your comment"}
+        {dragging && (
+          <div className="new-issue-drop-hint">Drop files to attach</div>
+        )}
+        {preview && (
+          <div className="message-preview">
+            <MessageMarkdown
+              text={draft.text || "Your message preview appears here."}
+            />
+          </div>
+        )}
+        <label hidden={preview}>
+          {!chat &&
+            (existing
+              ? "Edit comment"
+              : parentId
+                ? "Your reply"
+                : chat
+                  ? "Your message"
+                  : "Your comment")}
           <textarea
             ref={area}
-            className="input comment-textarea"
+            className={chat ? "" : "input comment-textarea"}
+            aria-label={chat ? "Your message" : "Comment"}
             autoFocus
             rows={4}
             maxLength={100000}
-            disabled={busy}
+            disabled={busy || voice.listening}
             value={draft.text}
             placeholder="Write a comment… Type @ to mention someone."
             onChange={(event) => {
@@ -515,6 +677,16 @@ export function CommentEditor({
             }}
             onSelect={(event) => setCaret(event.currentTarget.selectionStart)}
             onKeyDown={(event) => {
+              if (
+                chat &&
+                event.key === "Enter" &&
+                !event.shiftKey &&
+                !event.nativeEvent.isComposing &&
+                !match
+              ) {
+                event.preventDefault();
+                event.currentTarget.form?.requestSubmit();
+              }
               if (event.key === "Escape") setDismissed(true);
               if (event.key === "ArrowDown" && people.length) {
                 event.preventDefault();
@@ -569,39 +741,86 @@ export function CommentEditor({
             </li>
           ))}
         </ul>
-        <div className="comment-actions">
-          <Button
-            variant="ghost"
-            disabled={busy || files.length >= 20}
-            onClick={() => upload.current?.click()}
-          >
-            Upload comment files
-          </Button>
-          <Button
-            variant="ghost"
-            disabled={busy || files.length >= 20}
-            onClick={() => setPicker(true)}
-          >
-            Reuse comment file
-          </Button>
-          <Button variant="ghost" disabled={busy} onClick={onClose}>
-            Cancel
-          </Button>
-          <Button
-            type="submit"
-            disabled={busy || (!draft.text.trim() && !files.length)}
-          >
-            {busy
-              ? "Saving…"
-              : existing
-                ? "Save comment"
-                : parentId
-                  ? "Post reply"
-                  : chat
-                    ? "Send message"
-                    : "Post comment"}
-          </Button>
-        </div>
+        {chat ? (
+          <div className="new-issue-toolbar">
+            <button
+              type="button"
+              className="new-issue-attach"
+              aria-label="Add attachments"
+              title="Add attachments or drop files here"
+              disabled={busy || files.length >= 20}
+              onClick={() => upload.current?.click()}
+            >
+              <Icon name="plus" size={18} />
+            </button>
+            <button
+              type="button"
+              className="message-preview-toggle"
+              disabled={busy || files.length >= 20}
+              onClick={() => setPicker(true)}
+            >
+              Reuse file
+            </button>
+            <MessageComposerActions
+              preview={preview}
+              setPreview={setPreview}
+              language={language}
+              setLanguage={setLanguage}
+              voice={voice}
+              busy={busy}
+              canSend={!!draft.text.trim() || !!files.length}
+            />
+          </div>
+        ) : (
+          <div className="comment-actions">
+            <Button
+              variant="ghost"
+              disabled={busy || files.length >= 20}
+              onClick={() => upload.current?.click()}
+            >
+              Upload comment files
+            </Button>
+            <Button
+              variant="ghost"
+              disabled={busy || files.length >= 20}
+              onClick={() => setPicker(true)}
+            >
+              Reuse comment file
+            </Button>
+            <Button variant="ghost" disabled={busy} onClick={onClose}>
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              disabled={busy || (!draft.text.trim() && !files.length)}
+            >
+              {busy
+                ? "Saving…"
+                : existing
+                  ? "Save comment"
+                  : parentId
+                    ? "Post reply"
+                    : chat
+                      ? "Send message"
+                      : "Post comment"}
+            </Button>
+          </div>
+        )}
+        {voice.listening && (
+          <p role="status" className="dictation-status">
+            {voice.interim || "Listening…"}
+          </p>
+        )}
+        {voice.error && (
+          <p role="alert" className="project-error">
+            {voice.error}
+          </p>
+        )}
+        {chat && (
+          <p className="new-issue-hint">
+            Shift+Enter for a new line. Type @ to mention someone.
+          </p>
+        )}
         {status && <p role="status">{status}</p>}
         {error && (
           <p role="alert" className="project-error">
@@ -617,41 +836,10 @@ export function CommentEditor({
           onChange={async (event) => {
             const selected = Array.from(event.target.files ?? []);
             event.target.value = "";
-            if (!selected.length || busy) return;
-            setBusy(true);
-            setError("");
-            try {
-              if (files.length + selected.length > 20)
-                throw new Error("Attach up to 20 files per comment.");
-              const limits = await context.files.limits();
-              for (const f of selected) {
-                if (!active.current) break;
-                if (!f.size || f.size > limits.maxBytes)
-                  throw new Error(
-                    `${f.name}: choose a non-empty file up to ${Math.round(limits.maxBytes / 1024 / 1024)} MB.`,
-                  );
-                setStatus(`Uploading ${f.name}…`);
-                const result = await context.files.upload(
-                  context.scope.projectId,
-                  f,
-                );
-                if (active.current)
-                  setFiles((previous) => [...previous, result]);
-              }
-            } catch (cause) {
-              if (active.current)
-                setError(
-                  cause instanceof Error ? cause.message : "Upload failed.",
-                );
-            } finally {
-              if (active.current) {
-                setBusy(false);
-                setStatus("");
-              }
-            }
+            await uploadFiles(selected);
           }}
         />
-      </form>
+      </Composer>
       {picker && (
         <FilePicker
           projectId={context.scope.projectId}

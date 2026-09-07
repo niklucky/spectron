@@ -1,4 +1,4 @@
-import { and, desc, eq, isNull, lt, or } from "drizzle-orm";
+import { sql, and, desc, eq, isNull, lt, or } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { schema, type Database } from "@spectron/db";
 import type {
@@ -7,6 +7,7 @@ import type {
   WorklogPage,
   WorklogScope,
 } from "@spectron/shared";
+import { findExternalIdentity } from "./external-identities";
 import { ProjectAccessError } from "./projects";
 import { IssueConflictError, IssueInputError } from "./issues";
 const {
@@ -73,7 +74,7 @@ async function find(tx: Tx, scope: WorklogScope, id: string, version: string) {
   return row;
 }
 const fields = (row: typeof worklog.$inferSelect): WorklogFields => ({
-  workerUserId: row.workerUserId,
+  workerUserId: row.workerUserId ?? row.externalWorkerId!,
   startedAt: row.startedAt.toISOString(),
   durationSeconds: row.durationSeconds,
   description: row.description,
@@ -92,11 +93,21 @@ export function createWorklogService(db: Database) {
         const rows = await tx
           .select({
             row: worklog,
-            workerName: worker.name,
+            workerName: sql<string>`coalesce(${worker.name},${schema.externalIdentity.displayName},'Imported user')`,
             recorderName: recorder.name,
           })
           .from(worklog)
-          .innerJoin(worker, eq(worker.id, worklog.workerUserId))
+          .leftJoin(
+            schema.externalIdentity,
+            eq(schema.externalIdentity.id, worklog.externalWorkerId),
+          )
+          .leftJoin(
+            worker,
+            eq(
+              worker.id,
+              sql`coalesce(${worklog.workerUserId},${schema.externalIdentity.localUserId})`,
+            ),
+          )
           .innerJoin(recorder, eq(recorder.id, worklog.recordedBy))
           .where(
             and(
@@ -171,7 +182,14 @@ export function createWorklogService(db: Database) {
               ),
             )
             .for("share");
-          if (!m)
+          if (
+            !m &&
+            !(await findExternalIdentity(
+              tx,
+              input.projectId,
+              input.workerUserId,
+            ))
+          )
             throw new IssueInputError("Choose a project member as the worker.");
         }
         const next: WorklogFields = {
@@ -189,7 +207,18 @@ export function createWorklogService(db: Database) {
         const now = new Date(
           Math.max(Date.now(), (old?.updatedAt.getTime() ?? 0) + 1),
         );
-        const values = { ...next, startedAt, updatedAt: now };
+        const identity = await findExternalIdentity(
+          tx,
+          input.projectId,
+          input.workerUserId,
+        );
+        const values = {
+          ...next,
+          workerUserId: identity ? null : next.workerUserId,
+          externalWorkerId: identity?.id ?? null,
+          startedAt,
+          updatedAt: now,
+        };
         const [row] = old
           ? await tx
               .update(worklog)
@@ -207,16 +236,14 @@ export function createWorklogService(db: Database) {
               })
               .returning();
         if (!old) changes.recordedBy = { before: null, after: actor };
-        await tx
-          .insert(issueHistory)
-          .values({
-            issueId: input.issueId,
-            entityType: "worklog",
-            entityId: row!.id,
-            actorUserId: actor,
-            action: old ? "updated" : "created",
-            changes,
-          });
+        await tx.insert(issueHistory).values({
+          issueId: input.issueId,
+          entityType: "worklog",
+          entityId: row!.id,
+          actorUserId: actor,
+          action: old ? "updated" : "created",
+          changes,
+        });
         return { id: row!.id };
       });
     },
@@ -238,21 +265,19 @@ export function createWorklogService(db: Database) {
           .update(worklog)
           .set({ deletedAt, updatedAt: now })
           .where(eq(worklog.id, row.id));
-        await tx
-          .insert(issueHistory)
-          .values({
-            issueId: input.issueId,
-            entityType: "worklog",
-            entityId: row.id,
-            actorUserId: actor,
-            action: input.deleted ? "deleted" : "restored",
-            changes: {
-              deletedAt: {
-                before: row.deletedAt?.toISOString() ?? null,
-                after: deletedAt?.toISOString() ?? null,
-              },
+        await tx.insert(issueHistory).values({
+          issueId: input.issueId,
+          entityType: "worklog",
+          entityId: row.id,
+          actorUserId: actor,
+          action: input.deleted ? "deleted" : "restored",
+          changes: {
+            deletedAt: {
+              before: row.deletedAt?.toISOString() ?? null,
+              after: deletedAt?.toISOString() ?? null,
             },
-          });
+          },
+        });
       });
     },
   };

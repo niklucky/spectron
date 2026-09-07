@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { trpc } from "./lib/trpc";
 type Config = NonNullable<Awaited<ReturnType<typeof trpc.tracker.get.query>>>;
 type Metadata = Awaited<ReturnType<typeof trpc.tracker.metadata.mutate>>;
-type Field = Awaited<ReturnType<typeof trpc.projectFields.list.query>>[number];
 const emptyMappings: Config["mappings"] = {
   statuses: {},
   priorities: {},
@@ -42,16 +41,15 @@ export function ProjectIntegrationSettings({
       trpc.tracker.get.query({ projectId }),
       trpc.issues.settings.query({ projectId }),
       trpc.projects.members.query({ id: projectId }),
-      trpc.projectFields.list.query({ projectId }),
     ])
-      .then(([saved, settings, users, fields]) => {
+      .then(([saved, settings, users]) => {
         if (!active) return;
         if (saved) setConfig(saved);
         setOptions({
           statuses: settings.states.filter((s) => !s.deletedAt),
           priorities: settings.priorities.filter((s) => !s.deletedAt),
           users,
-          fields,
+          fields: settings.fields ?? [],
         });
       })
       .catch((e) => {
@@ -339,97 +337,6 @@ export function ProjectIntegrationSettings({
           role="alert"
           style={{ whiteSpace: "pre-wrap" }}
         >
-          {error}
-        </p>
-      )}
-    </div>
-  );
-}
-export function ProjectFieldsSettings({
-  projectId,
-  owner,
-}: {
-  projectId: string;
-  owner: boolean;
-}) {
-  const [fields, setFields] = useState<Field[]>([]),
-    [name, setName] = useState("");
-  const [type, setType] = useState<Field["type"]>("text"),
-    [error, setError] = useState(""),
-    [busy, setBusy] = useState(false);
-  useEffect(() => {
-    let active = true;
-    trpc.projectFields.list
-      .query({ projectId })
-      .then((v) => {
-        if (active) setFields(v);
-      })
-      .catch((e) => {
-        if (active) setError(e.message);
-      });
-    return () => {
-      active = false;
-    };
-  }, [projectId]);
-  return (
-    <div className="tracker-settings">
-      <h3>Issue fields</h3>
-      <p className="muted">
-        Fields belong to this project and can be filled in on any of its issues.
-        Field types are fixed after creation.
-      </p>
-      <ul>
-        {fields.map((f) => (
-          <li key={f.id}>
-            {f.name} · {f.type}
-          </li>
-        ))}
-      </ul>
-      {owner && (
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            setBusy(true);
-            setError("");
-            void trpc.projectFields.create
-              .mutate({ projectId, name, type })
-              .then(async () => {
-                setFields(await trpc.projectFields.list.query({ projectId }));
-                setName("");
-              })
-              .catch((e) => setError(e.message))
-              .finally(() => setBusy(false));
-          }}
-        >
-          <fieldset disabled={busy}>
-            <label>
-              Field name
-              <input
-                value={name}
-                required
-                maxLength={80}
-                onChange={(e) => setName(e.target.value)}
-              />
-            </label>
-            <label>
-              Type
-              <select
-                value={type}
-                onChange={(e) => setType(e.target.value as Field["type"])}
-              >
-                {(["text", "date", "number", "user"] as const).map((t) => (
-                  <option key={t} value={t}>
-                    {t.charAt(0).toUpperCase() + t.slice(1)}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <button type="submit">Create field</button>
-          </fieldset>
-        </form>
-      )}
-      {error && (
-        <p role="alert" className="project-error">
           {error}
         </p>
       )}

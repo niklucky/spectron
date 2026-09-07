@@ -39,7 +39,7 @@ const fileSummary = (row: typeof file.$inferSelect): StoredFile => ({
   filename: row.filename,
   contentType: row.contentType,
   sizeBytes: row.sizeBytes,
-  uploadedBy: row.uploadedBy,
+  uploadedBy: row.uploadedBy ?? row.externalUploaderId!,
   createdAt: row.createdAt.toISOString(),
 });
 async function member(
@@ -192,17 +192,15 @@ export function createFileService(db: Database, config?: FileStorageConfig) {
             .insert(projectFile)
             .values({ projectId, fileId: id })
             .returning();
-          await tx
-            .insert(projectHistory)
-            .values({
-              projectId,
-              actorUserId: userId,
-              entityType: "project_file",
-              entityId: association!.id,
-              changes: {
-                file: { before: null, after: { fileId: id, filename } },
-              },
-            });
+          await tx.insert(projectHistory).values({
+            projectId,
+            actorUserId: userId,
+            entityType: "project_file",
+            entityId: association!.id,
+            changes: {
+              file: { before: null, after: { fileId: id, filename } },
+            },
+          });
           return {
             ...fileSummary(ready!),
             projectFileId: association!.id,
@@ -357,23 +355,21 @@ export function createFileService(db: Database, config?: FileStorageConfig) {
               set: { deletedAt: null },
             })
             .returning();
-          await tx
-            .insert(projectHistory)
-            .values({
-              projectId: input.projectId,
-              actorUserId: userId,
-              entityType: "project_file",
-              entityId: target!.id,
-              changes: {
-                file: {
-                  before: before ? { deletedAt: before } : null,
-                  after: {
-                    fileId: source.file.id,
-                    filename: source.file.filename,
-                  },
+          await tx.insert(projectHistory).values({
+            projectId: input.projectId,
+            actorUserId: userId,
+            entityType: "project_file",
+            entityId: target!.id,
+            changes: {
+              file: {
+                before: before ? { deletedAt: before } : null,
+                after: {
+                  fileId: source.file.id,
+                  filename: source.file.filename,
                 },
               },
-            });
+            },
+          });
         }
         const [existing] = await tx
           .select()
@@ -404,25 +400,23 @@ export function createFileService(db: Database, config?: FileStorageConfig) {
             set: { deletedAt: null },
           })
           .returning();
-        await tx
-          .insert(issueHistory)
-          .values({
-            issueId: input.issueId,
-            entityType: "attachment",
-            entityId: attachment!.id,
-            actorUserId: userId,
-            action: existing ? "restored" : "created",
-            changes: {
-              attachment: {
-                before: null,
-                after: {
-                  filename: source.file.filename,
-                  fileId: source.file.id,
-                  projectFileId: target!.id,
-                },
+        await tx.insert(issueHistory).values({
+          issueId: input.issueId,
+          entityType: "attachment",
+          entityId: attachment!.id,
+          actorUserId: userId,
+          action: existing ? "restored" : "created",
+          changes: {
+            attachment: {
+              before: null,
+              after: {
+                filename: source.file.filename,
+                fileId: source.file.id,
+                projectFileId: target!.id,
               },
             },
-          });
+          },
+        });
         return { id: attachment!.id };
       });
     },
@@ -454,25 +448,23 @@ export function createFileService(db: Database, config?: FileStorageConfig) {
           .update(issueAttachment)
           .set({ deletedAt: new Date() })
           .where(eq(issueAttachment.id, input.attachmentId));
-        await tx
-          .insert(issueHistory)
-          .values({
-            issueId: input.issueId,
-            entityType: "attachment",
-            entityId: input.attachmentId,
-            actorUserId: userId,
-            action: "deleted",
-            changes: {
-              attachment: {
-                before: {
-                  filename: row.file.filename,
-                  fileId: row.file.id,
-                  projectFileId: row.attachment.projectFileId,
-                },
-                after: null,
+        await tx.insert(issueHistory).values({
+          issueId: input.issueId,
+          entityType: "attachment",
+          entityId: input.attachmentId,
+          actorUserId: userId,
+          action: "deleted",
+          changes: {
+            attachment: {
+              before: {
+                filename: row.file.filename,
+                fileId: row.file.id,
+                projectFileId: row.attachment.projectFileId,
               },
+              after: null,
             },
-          });
+          },
+        });
       });
     },
     async download(userId: string, projectId: string, projectFileId: string) {

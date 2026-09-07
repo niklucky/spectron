@@ -1,4 +1,8 @@
 const paths = {
+  chat: "M4 4h16v12H9l-5 4z",
+  history: "M3 11a9 9 0 1 1 2 7 M3 4v7h7 M12 7v5l3 2",
+  edit: "M4 16L16 4l4 4L8 20H4z M14 6l4 4",
+
   chats:
     "M4 3h12a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 1-2z M18 8h2a2 2 0 0 1 2 2v11l-4-3h-6a2 2 0 0 1-2-2",
   overview: "M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z",

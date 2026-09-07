@@ -1,6 +1,9 @@
+import type { IssueSettings } from "@spectron/shared";
+import { ProjectMark } from "../project";
+import { TaskFiltersSelect, type TaskFilters } from "./task-filters";
 import { Icon } from "../../ui/icon";
 import { IconButton } from "../../ui/button";
-import { Input, Select } from "../../ui/input";
+import { Input } from "../../ui/input";
 import { TaskItem } from "./task-item";
 import type { Project, TaskListItem } from "./types";
 type TaskListProps = {
@@ -14,11 +17,12 @@ type TaskListProps = {
   selectedId: string;
   query: string;
   searchOpen: boolean;
-  filter: string;
+  filter: TaskFilters;
+  settings: Record<string, IssueSettings>;
   onSearchToggle: () => void;
   onSearchClear: () => void;
   onQueryChange: (query: string) => void;
-  onFilterChange: (filter: string) => void;
+  onFilterChange: (filter: TaskFilters) => void;
   onClearFilters: () => void;
   onSelectTask: (id: string, project: string) => void;
   onNewTask: () => void;
@@ -35,6 +39,7 @@ export function TaskList({
   query,
   searchOpen,
   filter,
+  settings,
   onSearchToggle,
   onSearchClear,
   onQueryChange,
@@ -51,7 +56,12 @@ export function TaskList({
       aria-label={isFlow ? "Flow tasks" : `${projectName} tasks`}
     >
       <header className="task-panel-header">
-        <h1>{isFlow ? "Flow" : projectName}</h1>
+        <h1>
+          {!isFlow && projects.find((p) => p.id === project) && (
+            <ProjectMark project={projects.find((p) => p.id === project)!} />
+          )}
+          {isFlow ? "Flow" : projectName}
+        </h1>
         <div>
           <IconButton
             icon="search"
@@ -81,16 +91,14 @@ export function TaskList({
         </div>
       )}
       <div className="task-list-heading">
-        <Select
-          variant="plain"
-          aria-label="Filter tasks"
+        <TaskFiltersSelect
           value={filter}
-          onChange={(event) => onFilterChange(event.target.value)}
-        >
-          <option value="all">All tasks</option>
-          <option value="open">Open tasks</option>
-          <option value="deleted">Deleted tasks</option>
-        </Select>
+          onChange={onFilterChange}
+          projects={
+            isFlow ? projects : projects.filter((p) => p.id === project)
+          }
+          settings={settings}
+        />
         <span>{tasks.length}</span>
       </div>
       <div className="task-list">
@@ -116,7 +124,7 @@ export function TaskList({
         ))}
         {!loading && !error && !tasks.length && (
           <div className="list-empty">
-            {query || filter !== "all" ? (
+            {query || filter.values.length > 0 || filter.deleted ? (
               <>
                 No tasks found.
                 <button onClick={onClearFilters}>Clear filters</button>

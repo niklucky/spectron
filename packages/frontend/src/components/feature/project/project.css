@@ -252,3 +252,63 @@
     flex-wrap: wrap;
   }
 }
+
+.integration-settings {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+.integration-settings form,
+.integration-settings fieldset {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+.integration-settings fieldset {
+  border: 0;
+  padding: 0;
+  margin: 0;
+}
+.integration-settings label {
+  display: grid;
+  gap: 6px;
+}
+.integration-settings h3,
+.integration-settings p {
+  margin: 0;
+}
+.integration-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--color-menu);
+  padding: 8px 0;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.integration-settings details {
+  border-top: 1px solid var(--color-line);
+  padding-top: 12px;
+}
+.integration-settings summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.integration-mapping {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+  max-height: 340px;
+  overflow: auto;
+}
+.integration-mapping label {
+  grid-template-columns: minmax(0, 1fr) minmax(120px, 1fr);
+  align-items: center;
+}
+.integration-mapping small {
+  display: block;
+  font-weight: 400;
+  opacity: 0.6;
+  overflow-wrap: anywhere;
+}

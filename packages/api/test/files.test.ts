@@ -222,6 +222,51 @@ test("File uploads, reusable attachments and authorized delivery", async (t) => 
     },
   );
   await t.test(
+    "new issues attach uploaded files atomically and reject foreign files",
+    async () => {
+      const created = await data<IssueSummary>(
+        await call(
+          "issues.create",
+          owner,
+          {
+            projectId: p.id,
+            title: "With attachments",
+            description: "**Details**",
+            projectFileIds: [uploaded.projectFileId, uploaded.projectFileId],
+          },
+          true,
+        ),
+      );
+      const linked = await attachments(created);
+      assert.equal(linked.length, 1);
+      assert.equal(linked[0]!.id, uploaded.id);
+      assert.equal(created.description, "**Details**");
+      const before = await data<IssueSummary[]>(
+        await call("issues.list", owner, { projectId: q.id }),
+      );
+      const rejected = await call(
+        "issues.create",
+        owner,
+        {
+          projectId: q.id,
+          title: "Must not be created",
+          projectFileIds: [uploaded.projectFileId],
+        },
+        true,
+      );
+      assert.equal(rejected.status, 400);
+      const after = await data<IssueSummary[]>(
+        await call("issues.list", owner, { projectId: q.id }),
+      );
+      assert.equal(after.length, before.length);
+      const history = await pool.query(
+        "SELECT * FROM issue_history WHERE issue_id = $1 AND entity_type = 'attachment'",
+        [created.id],
+      );
+      assert.equal(history.rows.length, 1);
+    },
+  );
+  await t.test(
     "downloads, ranges and private cache revalidation require membership",
     async () => {
       const r = await get(uploaded, member);

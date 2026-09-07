@@ -3,7 +3,7 @@ import { and, eq, isNull, sql } from "drizzle-orm";
 import { schema, type Database } from "@spectron/db";
 import { type CommentBody } from "@spectron/shared";
 import { issueAccess, IssueInputError, IssueConflictError } from "../issues";
-import { validateCustomFields } from "../project-fields";
+import { validateFieldValues } from "../fields";
 import {
   YandexTrackerClient,
   type YTIssue,
@@ -185,7 +185,12 @@ export function createTrackerService(
         await tx
           .select()
           .from(projectField)
-          .where(eq(projectField.projectId, projectId))
+          .where(
+            and(
+              eq(projectField.projectId, projectId),
+              isNull(projectField.deletedAt),
+            ),
+          )
       ).map((r) => r.id),
     };
     for (const kind of ["statuses", "priorities", "users", "fields"] as const) {
@@ -263,28 +268,30 @@ export function createTrackerService(
         throw new IssueInputError(
           `Map status ${remote.status?.display ?? remote.status?.key ?? "unknown"} before importing ${remote.key}.`,
         );
-      const customFields = { ...current?.customFields };
+      const fieldValues = { ...current?.fieldValues };
       const fields = await tx
         .select()
         .from(projectField)
-        .where(eq(projectField.projectId, p.id));
+        .where(
+          and(eq(projectField.projectId, p.id), isNull(projectField.deletedAt)),
+        );
       for (const [key, id] of Object.entries(c.mappings.fields)) {
         if (!id) continue;
         const field = fields.find((f) => f.id === id)!;
         const value = remote[key];
         if (field.type === "user")
-          customFields[id] = value
+          fieldValues[id] = value
             ? (c.mappings.users[String((value as { id: string }).id)] ?? null)
             : null;
-        else if (value === undefined || value === null) customFields[id] = null;
+        else if (value === undefined || value === null) fieldValues[id] = null;
         else if (typeof value === "string" || typeof value === "number")
-          customFields[id] = value;
+          fieldValues[id] = value;
         else
           throw new IssueInputError(
             `Tracker field ${key} cannot be imported into ${field.name}.`,
           );
       }
-      await validateCustomFields(tx, p.id, customFields);
+      await validateFieldValues(tx, p.id, fieldValues);
       const assigneeId = remote.assignee
         ? (c.mappings.users[String(remote.assignee.id)] ?? null)
         : null;
@@ -297,7 +304,7 @@ export function createTrackerService(
           c.mappings.priorities[remote.priority?.key ?? ""] ??
           null,
         assigneeId,
-        customFields,
+        fieldValues,
         externalId: String(remote.id),
         externalKey: remote.key,
       };
@@ -748,10 +755,15 @@ export function createTrackerService(
                   const fields = await db
                     .select()
                     .from(projectField)
-                    .where(eq(projectField.projectId, projectId));
+                    .where(
+                      and(
+                        eq(projectField.projectId, projectId),
+                        isNull(projectField.deletedAt),
+                      ),
+                    );
                   for (const [key, id] of Object.entries(c.mappings.fields))
                     if (id) {
-                      const value = row.customFields[id] ?? null;
+                      const value = row.fieldValues[id] ?? null;
                       if (
                         fields.find((f) => f.id === id)?.type === "user" &&
                         value !== null

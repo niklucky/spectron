@@ -1,8 +1,4 @@
-import {
-  ProjectIntegrationSettings,
-  ProjectFieldsSettings,
-} from "./project-integration-settings";
-import { IssueCustomFields } from "./issue-custom-fields";
+import { ProjectIntegrationSettings } from "./project-integration-settings";
 import type {
   WorklogFields,
   WorklogPage,
@@ -17,6 +13,8 @@ import { useEffect, useMemo, useState } from "react";
 import { AccountMenu } from "@spectron/frontend/components/feature/account";
 import {
   TaskList,
+  NewIssueChat,
+  defaultTaskFilters,
   IssuePanel,
 } from "@spectron/frontend/components/feature/task";
 import {
@@ -81,7 +79,7 @@ function Workspace({
         })),
     [projectState.projects],
   );
-  const workspace = useWorkspace(user.name, projects);
+  const workspace = useWorkspace(user.name, projects, user.id);
   const [integrationBusy, setIntegrationBusy] = useState(false);
   const [settingsId, setSettingsId] = useState<string | null>(null);
   const settingsProject = projectState.projects.find(
@@ -89,6 +87,78 @@ function Workspace({
   );
   const settingsActions = useMemo(
     () => ({
+      fields: {
+        load: () => trpc.issues.settings.query({ projectId: settingsId! }),
+        save: async (input: {
+          id?: string;
+          name: string;
+          type: "text" | "date" | "number" | "user";
+        }) => {
+          await trpc.fields.save.mutate({ projectId: settingsId!, ...input });
+          await workspace.refresh();
+        },
+      },
+      jira: {
+        get: () => trpc.jira.get.query({ projectId: settingsId! }),
+        save: async (config: import("@spectron/shared").JiraConfigInput) => {
+          const result = await trpc.jira.save.mutate({
+            projectId: settingsId!,
+            config,
+          });
+          await workspace.refresh();
+          return result;
+        },
+        discover: (config?: import("@spectron/shared").JiraConfigInput) =>
+          trpc.jira.discover.mutate({
+            projectId: settingsId!,
+            ...(config ? { config } : {}),
+          }),
+        mappings: async (mappings: import("@spectron/shared").JiraMappings) => {
+          await trpc.jira.mappings.mutate({ projectId: settingsId!, mappings });
+          await workspace.refresh();
+        },
+        schedule: (minutes: 15 | 60 | 1440 | null) =>
+          trpc.jira.schedule.mutate({ projectId: settingsId!, minutes }),
+        startImport: () =>
+          trpc.jira.startImport.mutate({ projectId: settingsId! }),
+        stopImport: (runId: string) =>
+          trpc.jira.stopImport.mutate({ projectId: settingsId!, runId }),
+        finishImport: (runId: string) =>
+          trpc.jira.finishImport.mutate({ projectId: settingsId!, runId }),
+        prepare: (runId?: string) =>
+          trpc.jira.prepare.mutate({
+            projectId: settingsId!,
+            ...(runId ? { runId } : {}),
+          }),
+        search: (nextPageToken?: string, runId?: string) =>
+          trpc.jira.search.mutate({
+            projectId: settingsId!,
+            ...(nextPageToken ? { nextPageToken } : {}),
+            ...(runId ? { runId } : {}),
+          }),
+        import: (externalId: string, overwriteLocal = false, runId?: string) =>
+          trpc.jira.import.mutate({
+            projectId: settingsId!,
+            externalId,
+            overwriteLocal,
+            ...(runId ? { runId } : {}),
+          }),
+        settings: () => trpc.issues.settings.query({ projectId: settingsId! }),
+        members: () => trpc.projects.members.query({ id: settingsId! }),
+        refresh: workspace.refresh,
+        pending: () => trpc.jira.pending.query({ projectId: settingsId! }),
+        reconcile: (
+          kind: "issue" | "comment",
+          id: string,
+          externalId: string,
+        ) =>
+          trpc.jira.reconcile.mutate({
+            projectId: settingsId!,
+            kind,
+            id,
+            externalId,
+          }),
+      },
       issueSettings: {
         load: () => trpc.issues.settings.query({ projectId: settingsId! }),
         save: async (input: import("@spectron/shared").IssueOptionInput) => {
@@ -123,6 +193,22 @@ function Workspace({
   const task = workspace.task;
   const issueActions = useMemo(
     () => ({
+      canPublish: (projectId: string) =>
+        projects.some((p) => p.id === projectId && p.role === "owner") &&
+        !!workspace.settings[projectId]?.jiraConnected,
+      pushJira: async (
+        projectId: string,
+        id: string,
+        overwriteRemote = false,
+      ) => {
+        const result = await trpc.jira.pushIssue.mutate({
+          projectId,
+          id,
+          overwriteRemote,
+        });
+        await workspace.refresh();
+        return result;
+      },
       activity: (input: {
         projectId: string;
         issueId: string;
@@ -153,6 +239,11 @@ function Workspace({
         },
       },
       comments: {
+        canPublish: (projectId: string) =>
+          projects.some((p) => p.id === projectId && p.role === "owner") &&
+          !!workspace.settings[projectId]?.jiraConnected,
+        pushJira: (projectId: string, id: string, overwriteRemote = false) =>
+          trpc.jira.pushComment.mutate({ projectId, id, overwriteRemote }),
         list: (
           input: CommentScope & {
             parentId: string | null;
@@ -235,11 +326,18 @@ function Workspace({
       save: workspace.saveIssue,
       setDeleted: workspace.setDeleted,
     }),
-    [workspace.saveIssue, workspace.setDeleted, user.id],
+    [
+      workspace.saveIssue,
+      workspace.setDeleted,
+      workspace.refresh,
+      projects,
+      workspace.settings,
+      user.id,
+    ],
   );
   const clearFilters = () => {
     workspace.setQuery("");
-    workspace.setFilter("all");
+    workspace.setFilter(defaultTaskFilters);
   };
   return (
     <WorkspaceLayout
@@ -322,6 +420,7 @@ function Workspace({
             query={workspace.query}
             searchOpen={workspace.searchOpen}
             filter={workspace.filter}
+            settings={workspace.settings}
             onSearchToggle={() => {
               workspace.setSearchOpen((value) => !value);
               workspace.setQuery("");
@@ -334,15 +433,22 @@ function Workspace({
             onFilterChange={workspace.setFilter}
             onClearFilters={clearFilters}
             onSelectTask={workspace.selectTask}
-            onNewTask={() => workspace.openModal("new-task")}
+            onNewTask={workspace.startNewIssue}
           />
-          {task && project ? (
+          {workspace.creatingIssue ? (
+            <NewIssueChat
+              key={`${workspace.isFlow}:${workspace.project}`}
+              project={workspace.project}
+              projects={projects}
+              isFlow={workspace.isFlow}
+              onCreate={workspace.createTask}
+              fileActions={issueActions.files}
+              onBack={() => workspace.setMobileChat(false)}
+            />
+          ) : task && project ? (
             <IssuePanel
               key={task.id}
               issue={task}
-              customFields={
-                <IssueCustomFields issue={task} save={issueActions.save} />
-              }
               settings={
                 workspace.settings[task.projectId] ?? {
                   states: [],
@@ -351,6 +457,7 @@ function Workspace({
               }
               issues={workspace.allIssues}
               actions={issueActions}
+              onActivityChange={() => void workspace.refresh()}
               onBack={() => workspace.setMobileChat(false)}
               onCopy={workspace.copyTaskLink}
               onSelect={workspace.selectTask}
@@ -389,27 +496,22 @@ function Workspace({
       {settingsProject && (
         <ProjectSettingsDialog
           key={settingsProject.id}
-          externalBusy={integrationBusy}
           project={settingsProject}
-          extraSections={{
-            fields: (
-              <ProjectFieldsSettings
-                projectId={settingsProject.id}
-                owner={settingsProject.role === "owner"}
-              />
-            ),
-            integrations:
-              settingsProject.role === "owner" ? (
-                <ProjectIntegrationSettings
-                  onBusyChange={setIntegrationBusy}
-                  projectId={settingsProject.id}
-                  onChanged={workspace.refresh}
-                />
-              ) : (
-                <p>Only project owners can configure integrations.</p>
-              ),
-          }}
           actions={settingsActions}
+          externalBusy={integrationBusy}
+          yandexSettings={
+            settingsProject.role === "owner" ? (
+              <ProjectIntegrationSettings
+                projectId={settingsProject.id}
+                onChanged={workspace.refresh}
+                onBusyChange={setIntegrationBusy}
+              />
+            ) : (
+              <p className="muted">
+                Only the project owner can manage Yandex Tracker.
+              </p>
+            )
+          }
           onClose={() => setSettingsId(null)}
         />
       )}

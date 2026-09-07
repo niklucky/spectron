@@ -1,3 +1,4 @@
+import { MessageMarkdown } from "../../ui/message-markdown";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type {
   IssueActivityEvent,
@@ -6,8 +7,8 @@ import type {
   IssueSummary,
   ProjectMemberSummary,
 } from "@spectron/shared";
-import { Avatar } from "../../ui/avatar";
-import { Button } from "../../ui/button";
+import { UserInfo } from "../../ui/avatar";
+import { Button, IconButton } from "../../ui/button";
 import {
   CommentEditor,
   CommentItem,
@@ -24,6 +25,9 @@ export function IssueChat({
   members,
   actions,
   active,
+  showHistory,
+  tool,
+  setTool,
   revision,
   onChange,
   onSelect,
@@ -35,6 +39,9 @@ export function IssueChat({
   members: ProjectMemberSummary[];
   actions: IssuePanelActions;
   active: boolean;
+  showHistory: boolean;
+  tool: "files" | "worklog" | null;
+  setTool: (tool: "files" | "worklog" | null) => void;
   revision: number;
   onChange: () => void;
   onSelect: (id: string, projectId: string) => void;
@@ -46,8 +53,10 @@ export function IssueChat({
     [error, setError] = useState(""),
     [reload, setReload] = useState(0),
     [composing, setComposing] = useState(true),
-    [composerKey, setComposerKey] = useState(0),
-    [tool, setTool] = useState<"files" | "worklog" | null>(null);
+    [composerKey, setComposerKey] = useState(0);
+  const [expandedHistory, setExpandedHistory] = useState<Set<string>>(
+    new Set(),
+  );
   const stream = useRef<HTMLDivElement>(null),
     generation = useRef(0),
     pages = useRef(1),
@@ -130,9 +139,6 @@ export function IssueChat({
     revision,
     changed,
   };
-  const state = settings.states.find((s) => s.id === issue.stateId),
-    parent = issues.find((i) => i.id === issue.parentId),
-    children = issues.filter((i) => i.parentId === issue.id && !i.deletedAt);
   const names: Record<string, string> = {
     key: "Issue",
     title: "Title",
@@ -144,9 +150,6 @@ export function IssueChat({
     workerUserId: "Worker",
     recordedBy: "Recorded by",
     durationSeconds: "Duration",
-    customFields: "Project fields",
-    externalId: "Tracker ID",
-    externalKey: "Tracker key",
     startedAt: "Started at",
     deletedAt: "Deleted at",
     parentId: "Parent",
@@ -160,97 +163,28 @@ export function IssueChat({
       hidden={!active}
       aria-label={`${issue.key} chat`}
     >
-      <div className="issue-chat-toolbar">
-        <span>Activity and conversation</span>
-        <div>
-          <Button
-            variant="ghost"
-            disabled={loading}
-            onClick={() => setReload((n) => n + 1)}
-          >
-            Refresh chat
-          </Button>
-          {!issue.deletedAt && (
-            <>
-              <Button
-                variant="ghost"
-                onClick={() => setTool(tool === "files" ? null : "files")}
-              >
-                Files
-              </Button>
-              <Button
-                variant="ghost"
-                onClick={() => setTool(tool === "worklog" ? null : "worklog")}
-              >
-                Log work
-              </Button>
-            </>
-          )}
-        </div>
-      </div>
       <div className="issue-chat-stream" ref={stream}>
-        <article className="chat-summary-message">
-          <h3>Issue summary · {issue.key}</h3>
-          <strong>{issue.title}</strong>
-          <p>{issue.description || "No description yet."}</p>
-          <dl>
-            <div>
-              <dt>State</dt>
-              <dd>{state?.name ?? "Unknown"}</dd>
+        {issue.description.trim() && (
+          <article
+            className={`chat-message-row ${issue.authorId === actions.worklogs.currentUserId ? "chat-own-message" : ""}`}
+          >
+            <div className="chat-conversation-message initial-description">
+              {issue.authorId !== actions.worklogs.currentUserId && (
+                <UserInfo
+                  name={
+                    issue.author?.name ?? valueLabel("authorId", issue.authorId)
+                  }
+                  image={issue.author?.image}
+                  label="Author"
+                />
+              )}
+              <MessageMarkdown text={issue.description} />
+              <time dateTime={issue.createdAt}>
+                {new Date(issue.createdAt).toLocaleString()}
+              </time>
             </div>
-            <div>
-              <dt>Priority</dt>
-              <dd>{valueLabel("priorityId", issue.priorityId)}</dd>
-            </div>
-            <div>
-              <dt>Assignee</dt>
-              <dd>{valueLabel("assigneeId", issue.assigneeId)}</dd>
-            </div>
-            <div>
-              <dt>Author</dt>
-              <dd>{valueLabel("authorId", issue.authorId)}</dd>
-            </div>
-            <div>
-              <dt>Created</dt>
-              <dd>{new Date(issue.createdAt).toLocaleString()}</dd>
-            </div>
-            <div>
-              <dt>Updated</dt>
-              <dd>{new Date(issue.updatedAt).toLocaleString()}</dd>
-            </div>
-          </dl>
-          {parent && (
-            <p>
-              Parent:{" "}
-              <button
-                className="issue-text-link"
-                onClick={() => onSelect(parent.id, parent.projectId)}
-              >
-                {parent.key} · {parent.title}
-              </button>
-            </p>
-          )}
-          {!!children.length && (
-            <div>
-              Child issues:{" "}
-              {children.map((child) => (
-                <button
-                  key={child.id}
-                  className="issue-text-link"
-                  onClick={() => onSelect(child.id, child.projectId)}
-                >
-                  {child.key} · {child.title}
-                </button>
-              ))}
-            </div>
-          )}
-          {issue.deletedAt && (
-            <p className="issue-deleted">
-              Issue deleted {new Date(issue.deletedAt).toLocaleString()}.
-              Activity is retained.
-            </p>
-          )}
-        </article>
+          </article>
+        )}
         {cursor && (
           <Button
             variant="ghost"
@@ -299,31 +233,6 @@ export function IssueChat({
                 key={e.id}
                 className={`chat-message-row ${event.comment.authorId === actions.worklogs.currentUserId ? "chat-own-message" : ""}`}
               >
-                <span
-                  className="chat-message-avatar"
-                  role="img"
-                  aria-label={`${event.comment.authorName} avatar`}
-                >
-                  <Avatar
-                    initials={
-                      event.comment.authorName
-                        .trim()
-                        .split(/\s+/)
-                        .slice(0, 2)
-                        .map((name) => Array.from(name)[0] ?? "")
-                        .join("")
-                        .toUpperCase() || "?"
-                    }
-                    color={
-                      ["sage", "sand", "lavender"][
-                        Array.from(event.comment.authorId).reduce(
-                          (sum, char) => sum + char.charCodeAt(0),
-                          0,
-                        ) % 3
-                      ] ?? "sage"
-                    }
-                  />
-                </span>
                 <div className="chat-conversation-message">
                   {event.replyTo && (
                     <blockquote className="chat-reply-label">
@@ -336,10 +245,15 @@ export function IssueChat({
                     row={event.comment}
                     depth={0}
                     flat
+                    hideAuthor={
+                      event.comment.authorId === actions.worklogs.currentUserId
+                    }
                   />
                 </div>
               </div>
             );
+          if (!showHistory) return null;
+          const expanded = expandedHistory.has(e.id);
           const entity =
             e.entityType === "issue"
               ? "the issue"
@@ -351,40 +265,67 @@ export function IssueChat({
           return (
             <article key={e.id} className="chat-activity-message">
               <header>
-                <strong>{e.actorName}</strong> {e.action} {entity}
+                {e.actorUserId !== actions.worklogs.currentUserId && (
+                  <UserInfo name={e.actorName} />
+                )}
+                <span>
+                  {e.entityType === "worklog" &&
+                  typeof e.changes.durationSeconds?.after === "number"
+                    ? `logged ${valueLabel("durationSeconds", e.changes.durationSeconds.after)}`
+                    : `${e.action} ${entity}`}
+                </span>
                 <time>{new Date(e.createdAt).toLocaleString()}</time>
+                <IconButton
+                  icon="history"
+                  label={
+                    expanded ? "Hide history details" : "Show history details"
+                  }
+                  aria-expanded={expanded}
+                  onClick={() =>
+                    setExpandedHistory((previous) => {
+                      const next = new Set(previous);
+                      if (next.has(e.id)) next.delete(e.id);
+                      else next.add(e.id);
+                      return next;
+                    })
+                  }
+                />
               </header>
-              <dl>
-                {Object.entries(e.changes)
-                  .filter(
-                    ([field, change]) =>
-                      ![
-                        "id",
-                        "projectId",
-                        "number",
-                        "createdAt",
-                        "updatedAt",
-                      ].includes(field) &&
-                      !(e.entityType === "comment" && field === "parentId") &&
-                      JSON.stringify(change.before) !==
-                        JSON.stringify(change.after),
-                  )
-                  .map(([field, change]) => (
-                    <div key={field}>
-                      <dt>{names[field] ?? field}</dt>
-                      <dd>
-                        {e.action !== "created" && (
-                          <>
-                            <span>{valueLabel(field, change.before)}</span>
-                            <span aria-label="changed to"> → </span>
-                          </>
-                        )}
-                        <span>{valueLabel(field, change.after)}</span>
-                      </dd>
-                    </div>
-                  ))}
-              </dl>
-              {!!event.files.length && <CommentMedia files={event.files} />}
+              {expanded && (
+                <dl>
+                  {Object.entries(e.changes)
+                    .filter(
+                      ([field, change]) =>
+                        ![
+                          "id",
+                          "projectId",
+                          "number",
+                          "createdAt",
+                          "updatedAt",
+                        ].includes(field) &&
+                        !(e.entityType === "comment" && field === "parentId") &&
+                        JSON.stringify(change.before) !==
+                          JSON.stringify(change.after),
+                    )
+                    .map(([field, change]) => (
+                      <div key={field}>
+                        <dt>{names[field] ?? field}</dt>
+                        <dd>
+                          {e.action !== "created" && (
+                            <>
+                              <span>{valueLabel(field, change.before)}</span>
+                              <span aria-label="changed to"> → </span>
+                            </>
+                          )}
+                          <span>{valueLabel(field, change.after)}</span>
+                        </dd>
+                      </div>
+                    ))}
+                </dl>
+              )}
+              {expanded && !!event.files.length && (
+                <CommentMedia files={event.files} />
+              )}
             </article>
           );
         })}
@@ -444,7 +385,10 @@ export function IssueChat({
               }}
               parentId={null}
               chat
-              onClose={() => setComposing(false)}
+              onClose={() => {
+                setComposing(true);
+                setComposerKey((n) => n + 1);
+              }}
             />
           ) : (
             <Button onClick={() => setComposing(true)}>Write a message</Button>

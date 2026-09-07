@@ -11,6 +11,7 @@ import {
   type HistoryChanges,
   type ProjectFileSummary,
 } from "@spectron/shared";
+import { identityAuthor } from "./external-identities";
 import { ProjectAccessError } from "./projects";
 import { IssueInputError, IssueConflictError } from "./issues";
 const {
@@ -122,7 +123,7 @@ function summaryFile(
     filename: row.file.filename,
     contentType: row.file.contentType,
     sizeBytes: row.file.sizeBytes,
-    uploadedBy: row.file.uploadedBy,
+    uploadedBy: row.file.uploadedBy ?? row.file.externalUploaderId!,
     createdAt: row.file.createdAt.toISOString(),
   };
 }
@@ -196,20 +197,18 @@ async function resolveFiles(
           set: { deletedAt: null },
         })
         .returning();
-      await tx
-        .insert(projectHistory)
-        .values({
-          projectId: scope.projectId,
-          actorUserId: actor,
-          entityType: "project_file",
-          entityId: target!.id,
-          changes: {
-            file: {
-              before: null,
-              after: { fileId: source.file.id, filename: source.file.filename },
-            },
+      await tx.insert(projectHistory).values({
+        projectId: scope.projectId,
+        actorUserId: actor,
+        entityType: "project_file",
+        entityId: target!.id,
+        changes: {
+          file: {
+            before: null,
+            after: { fileId: source.file.id, filename: source.file.filename },
           },
-        });
+        },
+      });
     }
     if (!resolved.some((f) => f.id === target!.id))
       resolved.push({
@@ -288,11 +287,22 @@ export function createCommentService(db: Database) {
         const rows = await tx
           .select({
             comment,
-            authorName: user.name,
+            authorName: sql<string>`coalesce(${user.name}, ${schema.externalIdentity.displayName}, 'Imported user')`,
+            resolvedAuthorId: sql<string>`coalesce(${user.id}, ${schema.externalIdentity.id})`,
             replyCount: sql<number>`(select count(*)::int from issue_comments replies where replies.issue_id = ${comment.issueId} and replies.parent_id = ${comment.id})`,
           })
           .from(comment)
-          .innerJoin(user, eq(user.id, comment.authorId))
+          .leftJoin(
+            schema.externalIdentity,
+            eq(schema.externalIdentity.id, comment.externalAuthorId),
+          )
+          .leftJoin(
+            user,
+            eq(
+              user.id,
+              sql`coalesce(${comment.authorId}, ${schema.externalIdentity.localUserId})`,
+            ),
+          )
           .where(
             and(
               eq(comment.issueId, scope.issueId),
@@ -319,27 +329,33 @@ export function createCommentService(db: Database) {
           );
         const last = page.at(-1)?.comment;
         return {
-          comments: page.map(({ comment: r, authorName, replyCount }) => ({
-            id: r.id,
-            issueId: r.issueId,
-            parentId: r.parentId,
-            authorId: r.authorId,
-            authorName,
-            replyCount,
-            body: r.deletedAt ? [] : r.body,
-            attachments: r.deletedAt
-              ? []
-              : links.filter((l) => l.link.commentId === r.id).map(summaryFile),
-            createdAt: r.createdAt.toISOString(),
-            updatedAt: r.updatedAt.toISOString(),
-            deletedAt: r.deletedAt?.toISOString() ?? null,
-            canEdit:
-              permissions.writable && !r.deletedAt && r.authorId === actor,
-            canDelete:
-              permissions.writable &&
-              !r.deletedAt &&
-              (r.authorId === actor || permissions.role === "owner"),
-          })),
+          comments: page.map(
+            ({ comment: r, authorName, resolvedAuthorId, replyCount }) => ({
+              id: r.id,
+              issueId: r.issueId,
+              parentId: r.parentId,
+              authorId: resolvedAuthorId,
+              authorName,
+              replyCount,
+              body: r.deletedAt ? [] : r.body,
+              attachments: r.deletedAt
+                ? []
+                : links
+                    .filter((l) => l.link.commentId === r.id)
+                    .map(summaryFile),
+              createdAt: r.createdAt.toISOString(),
+              updatedAt: r.updatedAt.toISOString(),
+              deletedAt: r.deletedAt?.toISOString() ?? null,
+              canEdit:
+                permissions.writable &&
+                !r.deletedAt &&
+                resolvedAuthorId === actor,
+              canDelete:
+                permissions.writable &&
+                !r.deletedAt &&
+                (resolvedAuthorId === actor || permissions.role === "owner"),
+            }),
+          ),
           nextCursor:
             rows.length > 20 && last
               ? { createdAt: last.createdAt.toISOString(), id: last.id }
@@ -365,7 +381,12 @@ export function createCommentService(db: Database) {
           input.files.map((f) => f.projectId),
         );
         const old = input.id ? await find(tx, input, input.id) : undefined;
-        if (old && (old.authorId !== actor || old.deletedAt))
+        if (
+          old &&
+          ((await identityAuthor(tx, old.authorId, old.externalAuthorId)) !==
+            actor ||
+            old.deletedAt)
+        )
           throw new ProjectAccessError("Comment cannot be edited.");
         if (old && old.updatedAt.toISOString() !== input.expectedUpdatedAt)
           throw new IssueConflictError(
@@ -423,16 +444,14 @@ export function createCommentService(db: Database) {
               .returning();
         await syncRelations(tx, row!, body, files, now);
         if (!old) changes.parentId = { before: null, after: row!.parentId };
-        await tx
-          .insert(issueHistory)
-          .values({
-            issueId: input.issueId,
-            entityType: "comment",
-            entityId: row!.id,
-            actorUserId: actor,
-            action: old ? "updated" : "created",
-            changes,
-          });
+        await tx.insert(issueHistory).values({
+          issueId: input.issueId,
+          entityType: "comment",
+          entityId: row!.id,
+          actorUserId: actor,
+          action: old ? "updated" : "created",
+          changes,
+        });
         return { id: row!.id };
       });
     },
@@ -443,7 +462,11 @@ export function createCommentService(db: Database) {
       return db.transaction(async (tx) => {
         const permissions = await access(tx, actor, input, true),
           row = await find(tx, input, input.id);
-        if (row.authorId !== actor && permissions.role !== "owner")
+        if (
+          (await identityAuthor(tx, row.authorId, row.externalAuthorId)) !==
+            actor &&
+          permissions.role !== "owner"
+        )
           throw new ProjectAccessError("Comment cannot be deleted.");
         if (row.updatedAt.toISOString() !== input.expectedUpdatedAt)
           throw new IssueConflictError(
@@ -466,27 +489,25 @@ export function createCommentService(db: Database) {
           .where(
             and(eq(attachment.commentId, row.id), isNull(attachment.deletedAt)),
           );
-        await tx
-          .insert(issueHistory)
-          .values({
-            issueId: input.issueId,
-            entityType: "comment",
-            entityId: row.id,
-            actorUserId: actor,
-            action: "deleted",
-            changes: {
-              body: { before: row.body, after: null },
-              files: {
-                before: files.map((f) => ({
-                  id: f.association.id,
-                  filename: f.file.filename,
-                  fileId: f.file.id,
-                })),
-                after: [],
-              },
-              deletedAt: { before: null, after: now.toISOString() },
+        await tx.insert(issueHistory).values({
+          issueId: input.issueId,
+          entityType: "comment",
+          entityId: row.id,
+          actorUserId: actor,
+          action: "deleted",
+          changes: {
+            body: { before: row.body, after: null },
+            files: {
+              before: files.map((f) => ({
+                id: f.association.id,
+                filename: f.file.filename,
+                fileId: f.file.id,
+              })),
+              after: [],
             },
-          });
+            deletedAt: { before: null, after: now.toISOString() },
+          },
+        });
       });
     },
   };

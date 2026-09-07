@@ -1,3 +1,8 @@
+import { firstMessageFields } from "@spectron/shared";
+import {
+  defaultTaskFilters,
+  type TaskFilters,
+} from "@spectron/frontend/components/feature/task";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   IssueFields,
@@ -25,9 +30,15 @@ const taskHash = (project: string, id: string, flow: boolean) =>
       : "#flow"
     : `#project/${project}${id ? `/${id}` : ""}`;
 
-export function useWorkspace(initialName: string, projects: Project[]) {
+export function useWorkspace(
+  initialName: string,
+  projects: Project[],
+  userId: string,
+) {
   const [collapsed, setCollapsed] = useState(false);
-  const [mobileChat, setMobileChat] = useState(() => !!window.location.hash.split("/")[2]);
+  const [mobileChat, setMobileChat] = useState(
+    () => !!window.location.hash.split("/")[2],
+  );
   const [route, setRoute] = useState(() => readRoute(projects));
   const [issues, setIssues] = useState<IssueSummary[]>([]);
   const [settings, setSettings] = useState<Record<string, IssueSettings>>({});
@@ -35,7 +46,39 @@ export function useWorkspace(initialName: string, projects: Project[]) {
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
-  const [filter, setFilter] = useState("all");
+  const storageKey = `spectron:issue-filters:v1:${userId}`;
+  const [filters, setFilters] = useState<Record<string, TaskFilters>>(() => {
+    try {
+      const parsed: unknown = JSON.parse(
+        localStorage.getItem(storageKey) || "{}",
+      );
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+        return {};
+      return Object.fromEntries(
+        Object.entries(parsed).filter(
+          ([, v]) =>
+            v &&
+            (v.field === "state" || v.field === "trigger") &&
+            Array.isArray(v.values) &&
+            v.values.every((id: unknown) => typeof id === "string") &&
+            typeof v.deleted === "boolean",
+        ),
+      );
+    } catch {
+      return {};
+    }
+  });
+  const filterScope = route.isFlow ? "flow" : route.project;
+  const filter = filters[filterScope] ?? defaultTaskFilters;
+  const setFilter = (value: TaskFilters) =>
+    setFilters((previous) => ({ ...previous, [filterScope]: value }));
+  useEffect(() => {
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(filters));
+    } catch {
+      /* Storage may be disabled. */
+    }
+  }, [filters, storageKey]);
   const { theme, setTheme } = useTheme();
   const [modal, setModal] = useState<WorkspaceDialogName>(null);
   const [image] = useState("");
@@ -139,15 +182,25 @@ export function useWorkspace(initialName: string, projects: Project[]) {
     .filter(
       (i) =>
         (route.isFlow || i.projectId === route.project) &&
-        (filter === "deleted" ? !!i.deletedAt : !i.deletedAt) &&
-        (filter !== "open" ||
-          !["finished", "cancelled"].includes(i.statusTrigger)) &&
+        (filter.deleted ? !!i.deletedAt : !i.deletedAt) &&
+        (!filter.values.length ||
+          filter.values.includes(
+            filter.field === "trigger" ? i.statusTrigger : i.stateId,
+          )) &&
         `${i.key} ${i.title} ${i.description}`
           .toLowerCase()
           .includes(query.toLowerCase()),
     )
     .sort(
-      (a, b) => b.updatedAt.localeCompare(a.updatedAt) || b.number - a.number,
+      (a, b) =>
+        (b.lastActivity?.createdAt && b.lastActivity.createdAt > b.updatedAt
+          ? b.lastActivity.createdAt
+          : b.updatedAt
+        ).localeCompare(
+          a.lastActivity?.createdAt && a.lastActivity.createdAt > a.updatedAt
+            ? a.lastActivity.createdAt
+            : a.updatedAt,
+        ) || b.number - a.number,
     )
     .map((i) => ({ ...i, project: i.projectId }));
   const apply = useCallback((row: IssueSummary) => {
@@ -165,8 +218,9 @@ export function useWorkspace(initialName: string, projects: Project[]) {
         expectedUpdatedAt: row.updatedAt,
       });
       apply(updated);
+      await refresh();
     },
-    [apply],
+    [apply, refresh],
   );
   const setDeleted = useCallback(
     async (row: IssueSummary, deleted: boolean) => {
@@ -177,16 +231,27 @@ export function useWorkspace(initialName: string, projects: Project[]) {
         deleted,
       });
       apply(updated);
+      await refresh();
     },
-    [apply],
+    [apply, refresh],
   );
-  const createTask = async (title: string, projectId: string) => {
-    const row = await trpc.issues.create.mutate({ projectId, title });
+  const createTask = async (
+    title: string,
+    projectId: string,
+    projectFileIds: string[] = [],
+  ) => {
+    const row = await trpc.issues.create.mutate({
+      projectId,
+      ...firstMessageFields(title),
+      projectFileIds,
+    });
     apply(row);
+    try {
+      sessionStorage.setItem("issue-view", "chat");
+    } catch {}
     await refresh();
     navigate(projectId, row.id, route.isFlow);
     setQuery("");
-    setFilter("all");
     setMobileChat(true);
     setModal(null);
   };
@@ -199,6 +264,11 @@ export function useWorkspace(initialName: string, projects: Project[]) {
     isFlow: route.isFlow,
     selectedId: task?.id ?? route.id,
     task,
+    creatingIssue: route.id === "new",
+    startNewIssue: () => {
+      navigate(route.project, "new", route.isFlow);
+      setMobileChat(true);
+    },
     tasks,
     allIssues: issues,
     settings,
@@ -236,7 +306,6 @@ export function useWorkspace(initialName: string, projects: Project[]) {
     selectProject: (id: string) => {
       navigate(id, "", false);
       setQuery("");
-      setFilter("all");
       setMobileChat(false);
     },
     copyTaskLink: () => {

@@ -1,7 +1,8 @@
 import type {
   Auth,
   TrackerService,
-  ProjectFieldService,
+  FieldService,
+  JiraService,
   ActivityService,
   WorklogService,
   CommentService,
@@ -14,7 +15,8 @@ import type {
 export type Context = {
   userId: string | null;
   tracker?: TrackerService;
-  projectFields?: ProjectFieldService;
+  fields: FieldService;
+  jira: JiraService;
   projects: ProjectService;
   invitations: InvitationService;
   issues: IssueService;
@@ -33,14 +35,14 @@ export async function createContext(
   comments: CommentService,
   worklogs: WorklogService,
   activity: ActivityService,
+  fields: FieldService,
+  jira: JiraService,
   tracker?: TrackerService,
-  projectFields?: ProjectFieldService,
 ): Promise<Context> {
   const session = await auth.api.getSession({ headers: request.headers });
   return {
     userId: session?.user.id || null,
     ...(tracker ? { tracker } : {}),
-    ...(projectFields ? { projectFields } : {}),
     projects,
     invitations,
     issues,
@@ -48,5 +50,7 @@ export async function createContext(
     comments,
     worklogs,
     activity,
+    fields,
+    jira,
   };
 }

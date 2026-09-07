@@ -24,6 +24,7 @@
     "test:comments": "pnpm --filter @spectron/api test:comments",
     "test:worklogs": "pnpm --filter @spectron/api test:worklogs",
     "test:activity": "pnpm --filter @spectron/api test:activity",
+    "test:jira": "pnpm --filter @spectron/api test:jira",
     "test:integrations": "pnpm --filter @spectron/api test:integrations"
   },
   "devDependencies": {

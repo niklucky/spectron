@@ -1,5 +1,5 @@
 {
-  "id": "87beb3d3-f6b6-489a-8a04-f2a2bc146b44",
+  "id": "9c8ba85b-d815-447e-a774-6bf5ce554c46",
   "prevId": "2ce5e217-a6c5-4301-be3c-5d3401487675",
   "version": "7",
   "dialect": "postgresql",
@@ -364,18 +364,24 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.integration_entities": {
-      "name": "integration_entities",
+    "public.integration_records": {
+      "name": "integration_records",
       "schema": "",
       "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
         "integration_id": {
           "name": "integration_id",
           "type": "text",
           "primaryKey": false,
           "notNull": true
         },
-        "entity_type": {
-          "name": "entity_type",
+        "kind": {
+          "name": "kind",
           "type": "text",
           "primaryKey": false,
           "notNull": true
@@ -390,30 +396,45 @@
           "name": "external_id",
           "type": "text",
           "primaryKey": false,
-          "notNull": true
+          "notNull": false
         },
-        "external_key": {
-          "name": "external_key",
+        "local_hash": {
+          "name": "local_hash",
           "type": "text",
           "primaryKey": false,
           "notNull": false
         },
-        "local_updated_at": {
-          "name": "local_updated_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "remote_updated_at": {
-          "name": "remote_updated_at",
+        "remote_hash": {
+          "name": "remote_hash",
           "type": "text",
           "primaryKey": false,
-          "notNull": true
+          "notNull": false
+        },
+        "pending_create": {
+          "name": "pending_create",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
         }
       },
       "indexes": {
-        "integration_entities_external_unique": {
-          "name": "integration_entities_external_unique",
+        "integration_records_local_unique": {
+          "name": "integration_records_local_unique",
           "columns": [
             {
               "expression": "integration_id",
@@ -422,7 +443,34 @@
               "nulls": "last"
             },
             {
-              "expression": "entity_type",
+              "expression": "kind",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "local_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "integration_records_external_unique": {
+          "name": "integration_records_external_unique",
+          "columns": [
+            {
+              "expression": "integration_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "kind",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -441,10 +489,10 @@
         }
       },
       "foreignKeys": {
-        "integration_entities_integration_id_project_integrations_id_fk": {
-          "name": "integration_entities_integration_id_project_integrations_id_fk",
-          "tableFrom": "integration_entities",
-          "tableTo": "project_integrations",
+        "integration_records_integration_id_jira_integrations_id_fk": {
+          "name": "integration_records_integration_id_jira_integrations_id_fk",
+          "tableFrom": "integration_records",
+          "tableTo": "jira_integrations",
           "columnsFrom": [
             "integration_id"
           ],
@@ -455,16 +503,7 @@
           "onUpdate": "no action"
         }
       },
-      "compositePrimaryKeys": {
-        "integration_entities_integration_id_entity_type_local_id_pk": {
-          "name": "integration_entities_integration_id_entity_type_local_id_pk",
-          "columns": [
-            "integration_id",
-            "entity_type",
-            "local_id"
-          ]
-        }
-      },
+      "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
@@ -479,19 +518,6 @@
           "type": "text",
           "primaryKey": false,
           "notNull": false
-        },
-        "external_key": {
-          "name": "external_key",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "custom_fields": {
-          "name": "custom_fields",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'{}'::jsonb"
         },
         "id": {
           "name": "id",
@@ -510,6 +536,19 @@
           "type": "text",
           "primaryKey": false,
           "notNull": false
+        },
+        "external_key": {
+          "name": "external_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "field_values": {
+          "name": "field_values",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
         },
         "number": {
           "name": "number",
@@ -739,6 +778,12 @@
       "name": "issue_attachments",
       "schema": "",
       "columns": {
+        "external_id": {
+          "name": "external_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "id": {
           "name": "id",
           "type": "text",
@@ -1412,6 +1457,12 @@
       "name": "issue_worklogs",
       "schema": "",
       "columns": {
+        "external_id": {
+          "name": "external_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "id": {
           "name": "id",
           "type": "text",
@@ -1565,6 +1616,122 @@
       },
       "isRLSEnabled": false
     },
+    "public.jira_integrations": {
+      "name": "jira_integrations",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "project_id": {
+          "name": "project_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "base_url": {
+          "name": "base_url",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "project_key": {
+          "name": "project_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "email": {
+          "name": "email",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "encrypted_token": {
+          "name": "encrypted_token",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "issue_type_id": {
+          "name": "issue_type_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "mappings": {
+          "name": "mappings",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{\"statuses\":{},\"priorities\":{},\"fields\":{},\"users\":{}}'::jsonb"
+        },
+        "lease": {
+          "name": "lease",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "lease_until": {
+          "name": "lease_until",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "last_imported_at": {
+          "name": "last_imported_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "jira_integrations_project_id_projects_id_fk": {
+          "name": "jira_integrations_project_id_projects_id_fk",
+          "tableFrom": "jira_integrations",
+          "tableTo": "projects",
+          "columnsFrom": [
+            "project_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "jira_integrations_project_id_unique": {
+          "name": "jira_integrations_project_id_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "project_id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
     "public.projects": {
       "name": "projects",
       "schema": "",
@@ -1698,31 +1865,15 @@
           "primaryKey": false,
           "notNull": true,
           "default": "now()"
+        },
+        "deleted_at": {
+          "name": "deleted_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
         }
       },
-      "indexes": {
-        "project_fields_name_unique": {
-          "name": "project_fields_name_unique",
-          "columns": [
-            {
-              "expression": "project_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "name",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
+      "indexes": {},
       "foreignKeys": {
         "project_fields_project_id_projects_id_fk": {
           "name": "project_fields_project_id_projects_id_fk",
@@ -1744,7 +1895,7 @@
       "checkConstraints": {
         "project_fields_type": {
           "name": "project_fields_type",
-          "value": "\"project_fields\".\"type\" in ('text', 'date', 'number', 'user')"
+          "value": "\"project_fields\".\"type\" in ('text','date','number','user')"
         }
       },
       "isRLSEnabled": false
@@ -1753,6 +1904,12 @@
       "name": "project_files",
       "schema": "",
       "columns": {
+        "external_id": {
+          "name": "external_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "id": {
           "name": "id",
           "type": "text",
@@ -1971,98 +2128,6 @@
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.project_integrations": {
-      "name": "project_integrations",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "project_id": {
-          "name": "project_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "token": {
-          "name": "token",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "organization_id": {
-          "name": "organization_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "organization_type": {
-          "name": "organization_type",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "queue": {
-          "name": "queue",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "mappings": {
-          "name": "mappings",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'{\"statuses\":{},\"priorities\":{},\"users\":{},\"fields\":{}}'::jsonb"
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "project_integrations_project_id_projects_id_fk": {
-          "name": "project_integrations_project_id_projects_id_fk",
-          "tableFrom": "project_integrations",
-          "tableTo": "projects",
-          "columnsFrom": [
-            "project_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "restrict",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "project_integrations_project_id_unique": {
-          "name": "project_integrations_project_id_unique",
-          "nullsNotDistinct": false,
-          "columns": [
-            "project_id"
-          ]
-        }
-      },
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false
@@ -2466,6 +2531,12 @@
       "name": "files",
       "schema": "",
       "columns": {
+        "external_id": {
+          "name": "external_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "id": {
           "name": "id",
           "type": "text",

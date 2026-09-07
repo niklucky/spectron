@@ -21,6 +21,8 @@ import {
   check,
 } from "drizzle-orm/pg-core";
 
+const external = () => ({ externalId: text("external_id") });
+
 const dates = () => ({
   createdAt: timestamp("created_at", { withTimezone: true })
     .defaultNow()
@@ -32,7 +34,7 @@ const dates = () => ({
 });
 
 export const user = pgTable("users", {
-  externalId: text("external_id"),
+  ...external(),
   id: text("id").primaryKey(),
   name: text("name").notNull(),
   email: text("email").notNull().unique(),
@@ -130,7 +132,7 @@ export const invitationStatus = pgEnum("invitation_status", [
 ]);
 
 export const project = pgTable("projects", {
-  externalId: text("external_id"),
+  ...external(),
   id: text("id").$defaultFn(createId).primaryKey(),
   name: text("name").notNull(),
   key: text("key").notNull(),
@@ -191,7 +193,7 @@ export const projectInvitation = pgTable(
 
 export const issueTrigger = pgEnum("issue_trigger", issueTriggers);
 const optionFields = () => ({
-  externalId: text("external_id"),
+  ...external(),
   id: text("id").$defaultFn(createId).primaryKey(),
   projectId: text("project_id")
     .notNull()
@@ -227,29 +229,66 @@ export const issuePriority = pgTable(
     uniqueIndex("issue_priorities_project_id_unique").on(t.projectId, t.id),
   ],
 );
+export const externalIdentity = pgTable(
+  "external_identities",
+  {
+    id: text("id").$defaultFn(createId).primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => project.id, { onDelete: "restrict" }),
+    integrationId: text("integration_id")
+      .notNull()
+      .references(() => jiraIntegration.id, { onDelete: "restrict" }),
+    externalId: text("external_id").notNull(),
+    displayName: text("display_name").notNull(),
+    avatarUrl: text("avatar_url"),
+    localUserId: text("local_user_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    ...dates(),
+  },
+  (t) => [
+    uniqueIndex("external_identities_source_unique").on(
+      t.integrationId,
+      t.externalId,
+    ),
+  ],
+);
+
 export const issue = pgTable(
   "issues",
   {
-    externalId: text("external_id"),
-    externalKey: text("external_key"),
-    customFields: jsonb("custom_fields")
-      .$type<Record<string, string | number | null>>()
-      .default({})
-      .notNull(),
+    ...external(),
     id: text("id").$defaultFn(createId).primaryKey(),
     projectId: text("project_id")
       .notNull()
       .references(() => project.id, { onDelete: "restrict" }),
     parentId: text("parent_id"),
+    externalKey: text("external_key"),
+    estimateTime: integer("estimate_time"),
+    startAt: timestamp("start_at", { withTimezone: true, mode: "string" }),
+    finishAt: timestamp("finish_at", { withTimezone: true, mode: "string" }),
+    fieldValues: jsonb("field_values")
+      .$type<Record<string, string | number | null>>()
+      .default({})
+      .notNull(),
     number: integer("number").notNull(),
     title: text("title").notNull(),
     description: text("description").default("").notNull(),
-    authorId: text("author_id")
-      .notNull()
-      .references(() => user.id, { onDelete: "restrict" }),
+    authorId: text("author_id").references(() => user.id, {
+      onDelete: "restrict",
+    }),
+    externalAuthorId: text("external_author_id").references(
+      () => externalIdentity.id,
+      { onDelete: "restrict" },
+    ),
     assigneeId: text("assignee_id").references(() => user.id, {
       onDelete: "restrict",
     }),
+    externalAssigneeId: text("external_assignee_id").references(
+      () => externalIdentity.id,
+      { onDelete: "restrict" },
+    ),
     stateId: text("state_id").notNull(),
     priorityId: text("priority_id"),
     ...dates(),
@@ -259,6 +298,14 @@ export const issue = pgTable(
     uniqueIndex("issues_project_number_unique").on(t.projectId, t.number),
     uniqueIndex("issues_project_id_unique").on(t.projectId, t.id),
     index("issues_parent_idx").on(t.parentId),
+    check(
+      "issues_estimate_nonnegative",
+      sql`${t.estimateTime} IS NULL OR ${t.estimateTime} >= 0`,
+    ),
+    check(
+      "issues_date_order",
+      sql`${t.startAt} IS NULL OR ${t.finishAt} IS NULL OR ${t.finishAt} >= ${t.startAt}`,
+    ),
     check("issues_number_positive", sql`${t.number} > 0`),
     check(
       "issues_parent_not_self",
@@ -328,10 +375,15 @@ export const projectHistory = pgTable(
 
 export const fileStatus = pgEnum("file_status", ["pending", "ready", "failed"]);
 export const storedFile = pgTable("files", {
+  ...external(),
   id: text("id").$defaultFn(createId).primaryKey(),
-  uploadedBy: text("uploaded_by")
-    .notNull()
-    .references(() => user.id, { onDelete: "restrict" }),
+  uploadedBy: text("uploaded_by").references(() => user.id, {
+    onDelete: "restrict",
+  }),
+  externalUploaderId: text("external_uploader_id").references(
+    () => externalIdentity.id,
+    { onDelete: "restrict" },
+  ),
   storageKey: text("storage_key").notNull().unique(),
   filename: text("filename").notNull(),
   contentType: text("content_type")
@@ -345,6 +397,7 @@ export const storedFile = pgTable("files", {
 export const projectFile = pgTable(
   "project_files",
   {
+    ...external(),
     id: text("id").$defaultFn(createId).primaryKey(),
     projectId: text("project_id")
       .notNull()
@@ -363,6 +416,7 @@ export const projectFile = pgTable(
 export const issueAttachment = pgTable(
   "issue_attachments",
   {
+    ...external(),
     id: text("id").$defaultFn(createId).primaryKey(),
     projectId: text("project_id").notNull(),
     issueId: text("issue_id").notNull(),
@@ -392,14 +446,18 @@ export const issueAttachment = pgTable(
 export const issueComment = pgTable(
   "issue_comments",
   {
-    externalId: text("external_id"),
+    ...external(),
     id: text("id").$defaultFn(createId).primaryKey(),
     projectId: text("project_id").notNull(),
     issueId: text("issue_id").notNull(),
     parentId: text("parent_id"),
-    authorId: text("author_id")
-      .notNull()
-      .references(() => user.id, { onDelete: "restrict" }),
+    authorId: text("author_id").references(() => user.id, {
+      onDelete: "restrict",
+    }),
+    externalAuthorId: text("external_author_id").references(
+      () => externalIdentity.id,
+      { onDelete: "restrict" },
+    ),
     body: jsonb("body").$type<CommentBody>().notNull(),
     ...dates(),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
@@ -473,12 +531,17 @@ export const commentAttachment = pgTable(
 export const issueWorklog = pgTable(
   "issue_worklogs",
   {
+    ...external(),
     id: text("id").$defaultFn(createId).primaryKey(),
     projectId: text("project_id").notNull(),
     issueId: text("issue_id").notNull(),
-    workerUserId: text("worker_user_id")
-      .notNull()
-      .references(() => user.id, { onDelete: "restrict" }),
+    workerUserId: text("worker_user_id").references(() => user.id, {
+      onDelete: "restrict",
+    }),
+    externalWorkerId: text("external_worker_id").references(
+      () => externalIdentity.id,
+      { onDelete: "restrict" },
+    ),
     recordedBy: text("recorded_by")
       .notNull()
       .references(() => user.id, { onDelete: "restrict" }),
@@ -506,16 +569,80 @@ export const projectField = pgTable(
     projectId: text("project_id")
       .notNull()
       .references(() => project.id, { onDelete: "restrict" }),
-    externalId: text("external_id"),
+    ...external(),
     name: text("name").notNull(),
     type: text("type").$type<"text" | "date" | "number" | "user">().notNull(),
     ...dates(),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
   },
   (t) => [
-    uniqueIndex("project_fields_name_unique").on(t.projectId, t.name),
     check(
       "project_fields_type",
-      sql`${t.type} in ('text', 'date', 'number', 'user')`,
+      sql`${t.type} in ('text','date','number','user')`,
+    ),
+  ],
+);
+
+export const jiraIntegration = pgTable("jira_integrations", {
+  id: text("id").$defaultFn(createId).primaryKey(),
+  projectId: text("project_id")
+    .notNull()
+    .unique()
+    .references(() => project.id, { onDelete: "restrict" }),
+  baseUrl: text("base_url").notNull(),
+  projectKey: text("project_key").notNull(),
+  email: text("email").notNull(),
+  encryptedToken: text("encrypted_token").notNull(),
+  issueTypeId: text("issue_type_id").notNull(),
+  mappings: jsonb("mappings")
+    .$type<import("@spectron/shared").JiraMappings>()
+    .default({ statuses: {}, priorities: {}, fields: {}, users: {} })
+    .notNull(),
+  scheduleMinutes: integer("schedule_minutes"),
+  scheduleUserId: text("schedule_user_id").references(() => user.id, {
+    onDelete: "set null",
+  }),
+  nextImportAt: timestamp("next_import_at", { withTimezone: true }),
+  scheduledImportWatermark: timestamp("scheduled_import_watermark", {
+    withTimezone: true,
+  }),
+  lastScheduledAt: timestamp("last_scheduled_at", { withTimezone: true }),
+  lastScheduleResult: text("last_schedule_result"),
+  scheduleLeaseUntil: timestamp("schedule_lease_until", { withTimezone: true }),
+  importRunId: text("import_run_id"),
+  importCancelled: boolean("import_cancelled").default(false).notNull(),
+  lease: text("lease"),
+  leaseUntil: timestamp("lease_until", { withTimezone: true }),
+  lastImportedAt: timestamp("last_imported_at", { withTimezone: true }),
+  ...dates(),
+});
+export const integrationRecord = pgTable(
+  "integration_records",
+  {
+    id: text("id").$defaultFn(createId).primaryKey(),
+    integrationId: text("integration_id")
+      .notNull()
+      .references(() => jiraIntegration.id, { onDelete: "restrict" }),
+    kind: text("kind")
+      .$type<"issue" | "comment" | "worklog" | "attachment">()
+      .notNull(),
+    localId: text("local_id").notNull(),
+    externalId: text("external_id"),
+    localHash: text("local_hash"),
+    remoteHash: text("remote_hash"),
+    pendingCreate: boolean("pending_create").default(false).notNull(),
+    ...dates(),
+  },
+  (t) => [
+    uniqueIndex("integration_records_local_unique").on(
+      t.integrationId,
+      t.kind,
+      t.localId,
+    ),
+    uniqueIndex("integration_records_external_unique").on(
+      t.integrationId,
+      t.kind,
+      t.externalId,
     ),
   ],
 );

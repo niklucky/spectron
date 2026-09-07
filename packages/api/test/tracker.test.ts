@@ -5,7 +5,7 @@ import { createDatabase, migrateDatabase, schema } from "@spectron/db";
 import {
   createProjectService,
   createIssueService,
-  createProjectFieldService,
+  createFieldService,
 } from "@spectron/backend";
 import {
   createTrackerService,
@@ -91,7 +91,22 @@ test("database import/push, mappings, typed fields, permissions, repeat sync and
     key: "YT",
   });
   const issues = createIssueService(db),
-    fields = createProjectFieldService(db);
+    fieldService = createFieldService(db),
+    fields = {
+      create: async (
+        actor: string,
+        input: {
+          projectId: string;
+          name: string;
+          type: "text" | "date" | "number" | "user";
+        },
+      ) => {
+        await fieldService.save(actor, input);
+        return (await issues.settings(actor, input.projectId)).fields!.find(
+          (f) => f.name === input.name,
+        )!;
+      },
+    };
   const state = (await issues.settings("owner", p.id)).states.find(
     (s) => s.isDefault,
   )!;
@@ -122,7 +137,7 @@ test("database import/push, mappings, typed fields, permissions, repeat sync and
       issues.create("owner", {
         projectId: p.id,
         title: "Bad",
-        customFields: values,
+        fieldValues: values,
       }),
     );
   let version = 1,
@@ -308,8 +323,8 @@ test("database import/push, mappings, typed fields, permissions, repeat sync and
   );
   let local = (await issues.list("owner", p.id))[0]!;
   assert.equal(local.externalId, "remote1");
-  assert.equal(local.customFields?.[number.id], 3);
-  assert.equal(local.customFields?.[person.id], "owner");
+  assert.equal(local.fieldValues?.[number.id], 3);
+  assert.equal(local.fieldValues?.[person.id], "owner");
   assert.equal((await db.select().from(schema.issueComment)).length, 1);
   remote.summary = "Remote edited";
   remote.updatedAt = "v2";
@@ -321,7 +336,7 @@ test("database import/push, mappings, typed fields, permissions, repeat sync and
     id: local.id,
     expectedUpdatedAt: local.updatedAt,
     title: "Local edited",
-    customFields: { ...local.customFields, [number.id]: 8 },
+    fieldValues: { ...local.fieldValues, [number.id]: 8 },
   });
   assert.deepEqual(await tracker.run("owner", p.id, "push"), {
     processed: 1,

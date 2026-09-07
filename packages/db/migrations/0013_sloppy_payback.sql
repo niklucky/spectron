@@ -1,0 +1,1 @@
+ALTER TABLE "jira_integrations" ADD COLUMN "scheduled_import_watermark" timestamp with time zone;

@@ -14,7 +14,11 @@ import {
 } from "./issue-settings";
 import { ProjectForm } from "./project-form";
 
+import { JiraSettings, type JiraActions } from "./jira-settings";
+import { ProjectFields, type FieldActions } from "./project-fields";
 export type ProjectSettingsActions = {
+  jira: JiraActions;
+  fields: FieldActions;
   issueSettings: IssueSettingsActions;
   update: (input: CreateProjectInput) => Promise<void>;
   members: () => Promise<ProjectMemberSummary[]>;
@@ -27,15 +31,16 @@ export function ProjectSettingsDialog({
   project,
   actions,
   onClose,
-  extraSections,
+  yandexSettings,
   externalBusy = false,
 }: {
+  yandexSettings?: ReactNode;
   externalBusy?: boolean;
-  extraSections?: { fields: ReactNode; integrations: ReactNode };
   project: ProjectSummary;
   actions: ProjectSettingsActions;
   onClose: () => void;
 }) {
+  const [provider, setProvider] = useState("jira");
   const [tab, setTab] = useState("general");
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -58,7 +63,8 @@ export function ProjectSettingsDialog({
               "members",
               "states",
               "priorities",
-              ...(extraSections ? ["fields", "integrations"] : []),
+              "fields",
+              "integrations",
             ] as const
           ).map((item) => (
             <button
@@ -75,11 +81,7 @@ export function ProjectSettingsDialog({
           className="project-settings-content"
           aria-label={`${tab} settings`}
         >
-          {tab === "fields" ? (
-            extraSections?.fields
-          ) : tab === "integrations" ? (
-            extraSections?.integrations
-          ) : tab === "general" ? (
+          {tab === "general" ? (
             <>
               {project.role !== "owner" && (
                 <p className="muted">
@@ -103,6 +105,38 @@ export function ProjectSettingsDialog({
                 <p className="project-feedback" role="status">
                   Changes saved.
                 </p>
+              )}
+            </>
+          ) : tab === "fields" ? (
+            <ProjectFields
+              actions={actions.fields}
+              owner={project.role === "owner"}
+              onBusyChange={setBusy}
+            />
+          ) : tab === "integrations" ? (
+            <>
+              <label>
+                Integration
+                <select
+                  aria-label="Integration provider"
+                  value={provider}
+                  disabled={busy || externalBusy}
+                  onChange={(event) => setProvider(event.target.value)}
+                >
+                  <option value="jira">Jira</option>
+                  {yandexSettings && (
+                    <option value="yandex">Yandex Tracker</option>
+                  )}
+                </select>
+              </label>
+              {provider === "jira" ? (
+                <JiraSettings
+                  actions={actions.jira}
+                  owner={project.role === "owner"}
+                  onBusyChange={setBusy}
+                />
+              ) : (
+                yandexSettings
               )}
             </>
           ) : tab === "states" || tab === "priorities" ? (

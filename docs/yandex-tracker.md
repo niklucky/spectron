@@ -2,7 +2,7 @@
 
 ## Implementation plan and scope
 
-The integration builds on the Yandex Tracker v3 client from `spectron-prototype`, adapted to this repository's project permissions, issue model, migrations, and tRPC API. This checkout did not contain a Jira backend. Outbound operations target Yandex Tracker, as confirmed for this task.
+The integration builds on the Yandex Tracker v3 client from `spectron-prototype`, adapted to this repository's project permissions, issue model, migrations, and tRPC API. Jira and Yandex Tracker coexist in project settings and use the same project fields. Outbound operations target Yandex Tracker, as confirmed for this task.
 
 1. Store one Tracker queue connection per project, with encrypted credentials and owner-only configuration.
 2. Add project issue fields (Text, Date, Number, User), validated on every issue write.
@@ -19,11 +19,11 @@ OAuth tokens use AES-256-GCM with a random nonce. API responses never return sto
 
 ## Project setup
 
-Open **Project settings → Fields** to create optional issue fields. Each field belongs to its project. Its type is fixed after creation. Fill in values in the issue's **Issue** view. Text allows up to 10,000 characters, Number accepts finite decimals, Date requires a valid calendar date, and User must be a project member. Changes are included in issue history.
+Open **Project settings → Fields** to create optional issue fields. Each field belongs to its project. Its type is fixed after creation. Fill in values in the issue's **Issue** view. Text allows up to 100,000 characters, Number accepts finite decimals, Date requires a valid calendar date, and User must be a project member or a linked external identity. Changes are included in issue history.
 
 Open **Project settings → Integrations**:
 
-1. Choose Yandex Cloud / Identity Hub or Yandex 360, enter the organization ID, queue key and OAuth token.
+1. Select Yandex Tracker, then choose Yandex Cloud / Identity Hub or Yandex 360, enter the organization ID, queue key and OAuth token.
 2. Save and test the connection to load Tracker statuses, priorities, global/local fields and users.
 3. Map statuses to project states; every imported status needs a mapping. Map priorities and users as needed. Map additional Tracker fields to the project fields you created, or leave them ignored. Outbound mappings must be one-to-one.
 4. Save the mappings. A blank token keeps the existing encrypted token. The organization and queue can be corrected before any records have synced. After sync, they are fixed to protect existing identities; use another project for another queue.
