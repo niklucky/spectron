@@ -1,3 +1,4 @@
+import { ProjectIntegrationSettings } from "./project-integration-settings";
 import type {
   WorklogFields,
   WorklogPage,
@@ -79,6 +80,7 @@ function Workspace({
     [projectState.projects],
   );
   const workspace = useWorkspace(user.name, projects, user.id);
+  const [integrationBusy, setIntegrationBusy] = useState(false);
   const [settingsId, setSettingsId] = useState<string | null>(null);
   const settingsProject = projectState.projects.find(
     (item) => item.id === settingsId && item.state === "active",
@@ -496,6 +498,20 @@ function Workspace({
           key={settingsProject.id}
           project={settingsProject}
           actions={settingsActions}
+          externalBusy={integrationBusy}
+          yandexSettings={
+            settingsProject.role === "owner" ? (
+              <ProjectIntegrationSettings
+                projectId={settingsProject.id}
+                onChanged={workspace.refresh}
+                onBusyChange={setIntegrationBusy}
+              />
+            ) : (
+              <p className="muted">
+                Only the project owner can manage Yandex Tracker.
+              </p>
+            )
+          }
           onClose={() => setSettingsId(null)}
         />
       )}

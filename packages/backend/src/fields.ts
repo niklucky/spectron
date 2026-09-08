@@ -70,6 +70,7 @@ export function createFieldService(db: Database) {
           throw new IssueInputError(
             "Enter a field name of up to 80 characters.",
           );
+        let savedId = input.id;
         if (input.id) {
           const [field] = await tx
             .select()
@@ -89,20 +90,24 @@ export function createFieldService(db: Database) {
             .update(schema.projectField)
             .set({ name })
             .where(eq(schema.projectField.id, field.id));
-        } else
-          await tx
+        } else {
+          const [created] = await tx
             .insert(schema.projectField)
-            .values({ projectId: input.projectId, name, type: input.type });
+            .values({ projectId: input.projectId, name, type: input.type })
+            .returning({ id: schema.projectField.id });
+          savedId = created!.id;
+        }
         await tx.insert(schema.projectHistory).values({
           projectId: input.projectId,
           actorUserId: userId,
-          entityId: input.id ?? input.projectId,
+          entityId: savedId!,
           entityType: "field",
           changes: {
             name: { before: null, after: name },
             type: { before: null, after: input.type },
           },
         });
+        return { id: savedId!, name, type: input.type };
       });
     },
   };

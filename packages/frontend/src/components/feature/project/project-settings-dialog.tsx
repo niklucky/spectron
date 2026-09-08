@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import type {
   CreateProjectInput,
   ProjectSummary,
@@ -31,11 +31,16 @@ export function ProjectSettingsDialog({
   project,
   actions,
   onClose,
+  yandexSettings,
+  externalBusy = false,
 }: {
+  yandexSettings?: ReactNode;
+  externalBusy?: boolean;
   project: ProjectSummary;
   actions: ProjectSettingsActions;
   onClose: () => void;
 }) {
+  const [provider, setProvider] = useState("jira");
   const [tab, setTab] = useState("general");
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -44,7 +49,7 @@ export function ProjectSettingsDialog({
       title={`${project.name} settings`}
       className="project-settings-dialog"
       onClose={() => {
-        if (!busy) onClose();
+        if (!busy && !externalBusy) onClose();
       }}
     >
       <div className="project-settings-layout">
@@ -65,7 +70,7 @@ export function ProjectSettingsDialog({
             <button
               key={item}
               aria-current={tab === item ? "page" : undefined}
-              disabled={busy}
+              disabled={busy || externalBusy}
               onClick={() => setTab(item)}
             >
               {item.charAt(0).toUpperCase() + item.slice(1)}
@@ -109,11 +114,31 @@ export function ProjectSettingsDialog({
               onBusyChange={setBusy}
             />
           ) : tab === "integrations" ? (
-            <JiraSettings
-              actions={actions.jira}
-              owner={project.role === "owner"}
-              onBusyChange={setBusy}
-            />
+            <>
+              <label>
+                Integration
+                <select
+                  aria-label="Integration provider"
+                  value={provider}
+                  disabled={busy || externalBusy}
+                  onChange={(event) => setProvider(event.target.value)}
+                >
+                  <option value="jira">Jira</option>
+                  {yandexSettings && (
+                    <option value="yandex">Yandex Tracker</option>
+                  )}
+                </select>
+              </label>
+              {provider === "jira" ? (
+                <JiraSettings
+                  actions={actions.jira}
+                  owner={project.role === "owner"}
+                  onBusyChange={setBusy}
+                />
+              ) : (
+                yandexSettings
+              )}
+            </>
           ) : tab === "states" || tab === "priorities" ? (
             <ProjectIssueSettings
               key={tab}

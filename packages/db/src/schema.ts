@@ -646,3 +646,53 @@ export const integrationRecord = pgTable(
     ),
   ],
 );
+
+export type TrackerMappings = {
+  statuses: Record<string, string | null>;
+  priorities: Record<string, string | null>;
+  users: Record<string, string | null>;
+  fields: Record<string, string | null>;
+};
+export const projectIntegration = pgTable("project_integrations", {
+  id: text("id").$defaultFn(createId).primaryKey(),
+  projectId: text("project_id")
+    .notNull()
+    .unique()
+    .references(() => project.id, { onDelete: "restrict" }),
+  token: text("token").notNull(),
+  organizationId: text("organization_id").notNull(),
+  organizationType: text("organization_type")
+    .$type<"cloud" | "360">()
+    .notNull(),
+  queue: text("queue").notNull(),
+  mappings: jsonb("mappings")
+    .$type<TrackerMappings>()
+    .default({ statuses: {}, priorities: {}, users: {}, fields: {} })
+    .notNull(),
+  ...dates(),
+});
+// Namespaced identity and checkpoints prevent collisions and detect edits on both sides.
+export const integrationEntity = pgTable(
+  "integration_entities",
+  {
+    integrationId: text("integration_id")
+      .notNull()
+      .references(() => projectIntegration.id, { onDelete: "restrict" }),
+    entityType: text("entity_type").$type<"issue" | "comment">().notNull(),
+    localId: text("local_id").notNull(),
+    externalId: text("external_id").notNull(),
+    externalKey: text("external_key"),
+    localUpdatedAt: timestamp("local_updated_at", {
+      withTimezone: true,
+    }).notNull(),
+    remoteUpdatedAt: text("remote_updated_at").notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.integrationId, t.entityType, t.localId] }),
+    uniqueIndex("integration_entities_external_unique").on(
+      t.integrationId,
+      t.entityType,
+      t.externalId,
+    ),
+  ],
+);

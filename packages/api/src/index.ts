@@ -4,6 +4,7 @@ import { getConnInfo } from "@hono/node-server/conninfo";
 import type { HttpBindings } from "@hono/node-server";
 import {
   createProjectService,
+  createTrackerService,
   createFieldService,
   createJiraService,
   createFileService,
@@ -42,6 +43,7 @@ export function createAPI(
     sendInvitationEmail?: InvitationConfig["sendInvitationEmail"];
   },
 ) {
+  const tracker = createTrackerService(db);
   const activity = createActivityService(db);
   const worklogs = createWorklogService(db);
   const comments = createCommentService(db);
@@ -104,6 +106,7 @@ export function createAPI(
           activity,
           fields,
           jira,
+          tracker,
         ),
     });
   });

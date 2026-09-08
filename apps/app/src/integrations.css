@@ -1,0 +1,84 @@
+.tracker-settings {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+.tracker-settings h3,
+.tracker-settings h4,
+.tracker-settings p {
+  margin: 0 0 8px;
+}
+.tracker-settings fieldset {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+.tracker-settings label {
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+}
+.tracker-settings input,
+.tracker-settings select {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid var(--color-line);
+  border-radius: 6px;
+  background: var(--color-surface);
+}
+.tracker-settings input:focus-visible {
+  outline: 2px solid var(--color-accent);
+}
+.tracker-settings button {
+  padding: 8px 12px;
+  border: 1px solid var(--color-line);
+  border-radius: 6px;
+  margin: 4px 6px 4px 0;
+  background: var(--color-surface);
+  text-align: left;
+}
+.tracker-settings button:hover:not(:disabled) {
+  color: var(--color-accent);
+}
+.tracker-settings button:disabled {
+  opacity: 0.5;
+}
+.tracker-settings section {
+  display: grid;
+  gap: 8px;
+}
+.tracker-settings .tracker-mapping-row {
+  grid-template-columns: minmax(0, 1fr) minmax(120px, 1fr);
+  align-items: center;
+}
+.tracker-mapping-row small {
+  display: block;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 600px) {
+  .tracker-settings .tracker-mapping-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+.tracker-settings .tracker-checkbox {
+  grid-template-columns: auto 1fr;
+  align-items: start;
+}
+.tracker-settings .tracker-checkbox input {
+  width: auto;
+  margin-top: 3px;
+}
+.tracker-create-field {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--color-line);
+  border-radius: 6px;
+}

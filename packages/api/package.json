@@ -18,7 +18,8 @@
     "test:comments": "tsx --test test/comments.test.ts",
     "test:worklogs": "tsx --test test/worklogs.test.ts",
     "test:activity": "tsx --test test/activity.test.ts",
-    "test:jira": "tsx --test test/jira.test.ts"
+    "test:jira": "tsx --test test/jira.test.ts",
+    "test:integrations": "node --import tsx --test test/tracker.test.ts test/jira.test.ts"
   },
   "dependencies": {
     "@spectron/backend": "workspace:*",

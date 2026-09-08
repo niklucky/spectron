@@ -2,6 +2,7 @@ import { initTRPC, TRPCError } from "@trpc/server";
 import { z } from "zod";
 import {
   ProjectAccessError,
+  TrackerRequestError,
   JiraApiError,
   IssueInputError,
   FileInputError,
@@ -45,7 +46,8 @@ const authenticated = t.procedure.use(async ({ ctx, next }) => {
     });
   if (
     !result.ok &&
-    (result.error.cause instanceof JiraApiError ||
+    (result.error.cause instanceof TrackerRequestError ||
+      result.error.cause instanceof JiraApiError ||
       result.error.cause instanceof FileInputError ||
       result.error.cause instanceof IssueInputError ||
       result.error.cause instanceof LogoError ||
@@ -179,7 +181,66 @@ const mapping = z.record(
   z.string().min(1).max(255),
   z.string().min(1).max(128),
 );
+const trackerMapping = z.record(
+  z.string().min(1).max(255),
+  applicationId.nullable(),
+);
 export const appRouter = t.router({
+  tracker: t.router({
+    get: authenticated
+      .input(issueScope)
+      .query(({ ctx, input }) => ctx.tracker.get(ctx.userId, input.projectId)),
+    save: authenticated
+      .input(
+        issueScope.extend({
+          token: z.string().trim().min(1).max(4096).optional(),
+          organizationId: z
+            .string()
+            .trim()
+            .regex(/^[a-zA-Z0-9_-]+$/)
+            .max(128),
+          organizationType: z.enum(["cloud", "360"]),
+          queue: z
+            .string()
+            .trim()
+            .regex(/^[A-Z][A-Z0-9_]*$/)
+            .max(80),
+          mappings: z
+            .object({
+              statuses: trackerMapping,
+              priorities: trackerMapping,
+              fields: trackerMapping,
+              users: z.record(
+                z.string().min(1).max(255),
+                z.string().min(1).max(128).nullable(),
+              ),
+            })
+            .strict(),
+        }),
+      )
+      .mutation(({ ctx, input }) => ctx.tracker.save(ctx.userId, input)),
+    metadata: authenticated
+      .input(issueScope)
+      .mutation(({ ctx, input }) =>
+        ctx.tracker.metadata(ctx.userId, input.projectId),
+      ),
+    run: authenticated
+      .input(
+        issueScope.extend({
+          direction: z.enum(["import", "push"]),
+          overwriteConflicts: z.boolean().default(false),
+        }),
+      )
+      .mutation(({ ctx, input }) =>
+        ctx.tracker.run(
+          ctx.userId,
+          input.projectId,
+          input.direction,
+          input.overwriteConflicts,
+        ),
+      ),
+  }),
+
   fields: t.router({
     save: authenticated
       .input(
@@ -452,13 +513,11 @@ export const appRouter = t.router({
       ),
     create: authenticated
       .input(
-        issueFields
-          .partial()
-          .extend({
-            projectId: applicationId,
-            title: issueFields.shape.title,
-            projectFileIds: z.array(applicationId).max(20).optional(),
-          }),
+        issueFields.partial().extend({
+          projectId: applicationId,
+          title: issueFields.shape.title,
+          projectFileIds: z.array(applicationId).max(20).optional(),
+        }),
       )
       .mutation(({ ctx, input }) => ctx.issues.create(ctx.userId, input)),
     update: authenticated
@@ -488,7 +547,7 @@ export const appRouter = t.router({
         optionRef.omit({ id: true }).extend({
           id: applicationId.optional(),
           name: z.string().trim().min(1).max(80),
-          position: z.number().int().min(0).max(10000),
+          position: z.number().int().min(0).max(2147483647),
           color: z
             .string()
             .regex(/^#[0-9a-fA-F]{6}$/)

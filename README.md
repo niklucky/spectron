@@ -283,3 +283,7 @@ Use **Filter issues** to select multiple shared triggers or project-specific sta
 The composer microphone dictates text using browser speech recognition, with English/Russian language selection, editable final transcripts, listening feedback, and stop/error handling. It starts only on a microphone-button click and stops when leaving the composer. Speech recognition support and processing depend on the browser; unsupported browsers display a fallback message.
 
 Add files to a new issue with the circular plus button or drag them onto the composer. Pending files can be removed before sending. Send uploads them using the configured file-size limit, then creates the issue and its attachments atomically (up to 20 files). Successfully uploaded files are reused on retry and remain in the project file library if creation is cancelled. A files-only message uses the first filename as its title.
+
+## Yandex Tracker
+
+Project settings → Integrations includes both Jira and Yandex Tracker. Both use the shared project fields and issue editor. Yandex supports encrypted OAuth credentials, status/priority/user/field mappings, manual import and outbound issue/comment sync. See [Yandex Tracker setup and sync behavior](docs/yandex-tracker.md).
