@@ -199,7 +199,13 @@ export function createTrackerService(
         if (
           !remote ||
           remote.length > 255 ||
-          ["__proto__", "constructor", "prototype"].includes(remote)
+          [
+            "__proto__",
+            "constructor",
+            "prototype",
+            "undefined",
+            "null",
+          ].includes(remote)
         )
           throw new IssueInputError("Invalid remote mapping key.");
         if (
@@ -284,6 +290,13 @@ export function createTrackerService(
             ? (c.mappings.users[String((value as { id: string }).id)] ?? null)
             : null;
         else if (value === undefined || value === null) fieldValues[id] = null;
+        else if (
+          field.type === "text" &&
+          typeof value === "object" &&
+          !Array.isArray(value) &&
+          typeof (value as { display?: unknown }).display === "string"
+        )
+          fieldValues[id] = (value as { display: string }).display;
         else if (typeof value === "string" || typeof value === "number")
           fieldValues[id] = value;
         else
@@ -314,7 +327,7 @@ export function createTrackerService(
         values.description.length > 100000
       )
         throw new IssueInputError(
-          `${remote.key} exceeds local title or description limits.`,
+          `Title must contain 1–140 characters (received ${values.title?.length ?? 0}); description limit is 100,000 characters (received ${values.description.length}).`,
         );
       const now = new Date(
         Math.max(Date.now(), (current?.updatedAt.getTime() ?? 0) + 1),
@@ -675,7 +688,7 @@ export function createTrackerService(
                   errors.push(
                     error instanceof IssueInputError ||
                       error instanceof IssueConflictError
-                      ? error.message
+                      ? `${remote.key}: ${error.message}`
                       : `${remote.key}: import failed. Retry after checking Tracker access.`,
                   );
                 }
@@ -777,6 +790,22 @@ export function createTrackerService(
                             `${row.title}: map the user in field ${key}.`,
                           );
                         payload[key] = { id: remoteUser };
+                      } else if (
+                        remote &&
+                        typeof remote[key] === "object" &&
+                        remote[key] !== null &&
+                        !Array.isArray(remote[key]) &&
+                        typeof (remote[key] as { display?: unknown })
+                          .display === "string"
+                      ) {
+                        if (
+                          value !== null &&
+                          value !== (remote[key] as { display: string }).display
+                        )
+                          throw new IssueInputError(
+                            `${remote.key}: change reference field ${key} in Tracker, then import it.`,
+                          );
+                        // Retain the remote reference when another local field changes.
                       } else payload[key] = value;
                     }
                   if (remote)

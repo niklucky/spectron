@@ -25,7 +25,7 @@ Open **Project settings → Integrations**:
 
 1. Select Yandex Tracker, then choose Yandex Cloud / Identity Hub or Yandex 360, enter the organization ID, queue key and OAuth token.
 2. Save and test the connection to load Tracker statuses, priorities, global/local fields and users.
-3. Map statuses to project states; every imported status needs a mapping. Map priorities and users as needed. Map additional Tracker fields to the project fields you created, or leave them ignored. Outbound mappings must be one-to-one.
+3. Map statuses to project states; every imported status needs a mapping. Map priorities and users as needed. Map additional Tracker fields to existing project fields, choose **Create and map…** to create a field inline with an editable name and type, or leave them ignored. Creating a field keeps your other selections; use **Save mappings** when finished. Loading metadata suggests unique, type-compatible matches using names, stable keys and common Russian/English aliases. Explicit mappings and ignores are preserved; ambiguous matches remain unselected. Outbound mappings must be one-to-one.
 4. Save the mappings. A blank token keeps the existing encrypted token. The organization and queue can be corrected before any records have synced. After sync, they are fixed to protect existing identities; use another project for another queue.
 5. Use **Import issues and comments** or **Push local changes**. Both actions operate on the configured project and report per-issue failures. Successfully processed entities remain committed if a later entity fails.
 

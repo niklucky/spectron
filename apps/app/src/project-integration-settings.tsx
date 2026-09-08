@@ -1,3 +1,9 @@
+import {
+  issueTriggers,
+  type IssueTrigger,
+  matchTrackerMappings,
+  trackerFieldType,
+} from "@spectron/shared";
 import { useEffect, useState } from "react";
 import { trpc } from "./lib/trpc";
 type Config = NonNullable<Awaited<ReturnType<typeof trpc.tracker.get.query>>>;
@@ -24,10 +30,20 @@ export function ProjectIntegrationSettings({
     mappings: emptyMappings,
     hasToken: false,
   });
+  const [creating, setCreating] = useState<{
+    kind: "statuses" | "priorities" | "fields";
+    trigger: IssueTrigger;
+    remoteId: string;
+    name: string;
+    type: "text" | "date" | "number" | "user";
+  } | null>(null);
   const [token, setToken] = useState("");
   const [metadata, setMetadata] = useState<Metadata | null>(null);
   const [options, setOptions] = useState<
-    Record<keyof Config["mappings"], Array<{ id: string; name: string }>>
+    Record<
+      keyof Config["mappings"],
+      Array<{ id: string; name: string; type?: string; position?: number }>
+    >
   >({ statuses: [], priorities: [], users: [], fields: [] });
   const [loading, setLoading] = useState(true),
     [busy, setBusy] = useState(false),
@@ -77,15 +93,24 @@ export function ProjectIntegrationSettings({
     }
   }
   async function save() {
+    const mappings = {
+      ...config.mappings,
+      users: Object.fromEntries(
+        Object.entries(config.mappings.users).filter(
+          ([id]) => id !== "undefined" && id !== "null" && id !== "",
+        ),
+      ),
+    };
+
     await trpc.tracker.save.mutate({
       projectId,
       organizationId: config.organizationId,
       organizationType: config.organizationType,
       queue: config.queue,
-      mappings: config.mappings,
+      mappings,
       ...(token ? { token } : {}),
     });
-    setConfig((c) => ({ ...c, hasToken: true }));
+    setConfig((c) => ({ ...c, mappings, hasToken: true }));
     setToken("");
     setDirty(false);
   }
@@ -186,7 +211,41 @@ export function ProjectIntegrationSettings({
             onClick={() =>
               void run(async () => {
                 if (!config.hasToken || token || dirty) await save();
-                setMetadata(await trpc.tracker.metadata.mutate({ projectId }));
+                const discovered = await trpc.tracker.metadata.mutate({
+                  projectId,
+                });
+                setMetadata(discovered);
+                setConfig((c) => ({
+                  ...c,
+                  mappings: {
+                    ...c.mappings,
+                    users: Object.fromEntries(
+                      Object.entries(c.mappings.users).filter(
+                        ([id]) =>
+                          id !== "undefined" && id !== "null" && id !== "",
+                      ),
+                    ),
+                    statuses: matchTrackerMappings(
+                      "statuses",
+                      discovered.statuses,
+                      options.statuses,
+                      c.mappings.statuses,
+                    ),
+                    priorities: matchTrackerMappings(
+                      "priorities",
+                      discovered.priorities,
+                      options.priorities,
+                      c.mappings.priorities,
+                    ),
+                    fields: matchTrackerMappings(
+                      "fields",
+                      discovered.fields,
+                      options.fields,
+                      c.mappings.fields,
+                    ),
+                  },
+                }));
+                setDirty(true);
                 setFeedback("Connected. Review the mappings below.");
               })
             }
@@ -205,7 +264,7 @@ export function ProjectIntegrationSettings({
                   {kind === "statuses"
                     ? "Every imported status needs a local state."
                     : kind === "fields"
-                      ? "Choose a project field, or ignore this Tracker field. Create project fields in the Fields tab."
+                      ? "Choose a project field, create and map one here, or ignore this Tracker field."
                       : "Map to a project value. Unmapped users import as unassigned or the importing owner."}
                 </p>
                 {metadata[kind]
@@ -225,7 +284,7 @@ export function ProjectIntegrationSettings({
                       ].includes(String(remote.id)),
                   )
                   .map((remote) => (
-                    <label
+                    <div
                       key={String(remote.id)}
                       className="tracker-mapping-row"
                     >
@@ -238,8 +297,25 @@ export function ProjectIntegrationSettings({
                         <small className="muted">{String(remote.id)}</small>
                       </span>
                       <select
+                        aria-label={`Map ${remote.display || ("name" in remote ? remote.name : remote.id)}`}
                         value={config.mappings[kind][String(remote.id)] ?? ""}
                         onChange={(e) => {
+                          if (
+                            e.target.value === "__create__" &&
+                            kind !== "users"
+                          ) {
+                            setCreating({
+                              kind,
+                              trigger: "opened",
+                              remoteId: String(remote.id),
+                              name: String(
+                                remote.display ||
+                                  ("name" in remote ? remote.name : remote.id),
+                              ).slice(0, 80),
+                              type: trackerFieldType(remote) ?? "text",
+                            });
+                            return;
+                          }
                           setDirty(true);
                           setConfig((c) => ({
                             ...c,
@@ -258,13 +334,165 @@ export function ProjectIntegrationSettings({
                             ? "Choose a state"
                             : "Ignore / leave unmapped"}
                         </option>
+                        {kind !== "users" && (
+                          <option value="__create__">Create and map…</option>
+                        )}
                         {options[kind].map((local) => (
                           <option key={local.id} value={local.id}>
                             {local.name}
                           </option>
                         ))}
                       </select>
-                    </label>
+                      {creating?.kind === kind &&
+                        creating?.remoteId === String(remote.id) && (
+                          <div className="tracker-create-field">
+                            <label>
+                              {kind === "fields"
+                                ? "Field name"
+                                : kind === "statuses"
+                                  ? "Status name"
+                                  : "Priority name"}
+                              <input
+                                value={creating.name}
+                                maxLength={80}
+                                onChange={(e) =>
+                                  setCreating({
+                                    ...creating,
+                                    name: e.target.value,
+                                  })
+                                }
+                              />
+                            </label>
+                            {kind === "fields" && (
+                              <label>
+                                Field type
+                                <select
+                                  value={creating.type}
+                                  onChange={(e) =>
+                                    setCreating({
+                                      ...creating,
+                                      type: e.target
+                                        .value as typeof creating.type,
+                                    })
+                                  }
+                                >
+                                  <option value="text">Text</option>
+                                  <option value="date">Date</option>
+                                  <option value="number">Number</option>
+                                  <option value="user">User</option>
+                                </select>
+                              </label>
+                            )}
+                            {kind === "statuses" && (
+                              <label>
+                                Status category
+                                <select
+                                  value={creating.trigger}
+                                  onChange={(e) =>
+                                    setCreating({
+                                      ...creating,
+                                      trigger: e.target.value as IssueTrigger,
+                                    })
+                                  }
+                                >
+                                  {issueTriggers.map((trigger) => (
+                                    <option key={trigger} value={trigger}>
+                                      {
+                                        {
+                                          opened: "Opened",
+                                          in_progress: "In progress",
+                                          blocked: "Blocked",
+                                          cancelled: "Cancelled",
+                                          finished: "Finished",
+                                        }[trigger]
+                                      }
+                                    </option>
+                                  ))}
+                                </select>
+                              </label>
+                            )}
+                            <div>
+                              <button
+                                type="button"
+                                disabled={!creating.name.trim()}
+                                onClick={() =>
+                                  void run(async () => {
+                                    const name = creating.name.trim();
+                                    const targetKind = creating.kind;
+                                    const created =
+                                      targetKind === "fields"
+                                        ? await trpc.fields.save.mutate({
+                                            projectId,
+                                            name,
+                                            type: creating.type,
+                                          })
+                                        : await trpc.issues.saveOption.mutate({
+                                            projectId,
+                                            kind:
+                                              targetKind === "statuses"
+                                                ? "state"
+                                                : "priority",
+                                            name,
+                                            position: Math.min(
+                                              10000,
+                                              Math.max(
+                                                -1,
+                                                ...options[targetKind].map(
+                                                  (o) => o.position ?? 0,
+                                                ),
+                                              ) + 1,
+                                            ),
+                                            color: null,
+                                            ...(targetKind === "statuses"
+                                              ? {
+                                                  trigger: creating.trigger,
+                                                  isDefault: false,
+                                                }
+                                              : {}),
+                                          });
+                                    setOptions((o) => ({
+                                      ...o,
+                                      [targetKind]: [
+                                        ...o[targetKind],
+                                        {
+                                          ...created,
+                                          name,
+                                          ...(targetKind === "fields"
+                                            ? { type: creating.type }
+                                            : {}),
+                                        },
+                                      ],
+                                    }));
+                                    setConfig((c) => ({
+                                      ...c,
+                                      mappings: {
+                                        ...c.mappings,
+                                        [targetKind]: {
+                                          ...c.mappings[targetKind],
+                                          [creating.remoteId]: created.id,
+                                        },
+                                      },
+                                    }));
+                                    setDirty(true);
+                                    setCreating(null);
+                                    setFeedback(
+                                      "Created and selected. Save mappings when you are ready.",
+                                    );
+                                  })
+                                }
+                              >
+                                Create and map
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setCreating(null)}
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                    </div>
                   ))}
               </section>
             ),

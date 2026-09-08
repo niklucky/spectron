@@ -166,13 +166,21 @@ export class YandexTrackerClient {
       }
     }
 
-    const res = await fetch(url.toString(), {
-      method,
-      signal: AbortSignal.timeout(30000),
-      headers: this.headers(),
-      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-    });
-
+    let res: Response;
+    try {
+      res = await fetch(url.toString(), {
+        method,
+        signal: AbortSignal.timeout(30000),
+        headers: this.headers(),
+        ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+      });
+    } catch {
+      throw new YTApiError(
+        503,
+        "Tracker could not be reached or the request timed out. Retry the import; completed issues will be reused.",
+        path,
+      );
+    }
     if (!res.ok) {
       await res.body?.cancel();
       throw new YTApiError(
@@ -331,13 +339,16 @@ export class YandexTrackerClient {
   async getUsers(): Promise<Array<{ id: string; display: string }>> {
     const result: Array<{ id: string; display: string }> = [];
     for (let page = 1; ; page++) {
-      const users = await this.request<Array<{ id: string; display: string }>>(
-        "GET",
-        "/users",
-        undefined,
-        { page: String(page), perPage: "100" },
-      );
-      result.push(...users);
+      const users = await this.request<
+        Array<{ uid?: string | number; id?: string; display: string }>
+      >("GET", "/users", undefined, { page: String(page), perPage: "100" });
+      for (const user of users) {
+        const id = String(user.uid ?? user.id ?? "");
+        if (!id || id === "undefined" || id === "null")
+          throw new Error("Tracker returned a user without an identifier.");
+        if (!result.some((existing) => existing.id === id))
+          result.push({ id, display: user.display });
+      }
       if (users.length < 100) return result;
     }
   }

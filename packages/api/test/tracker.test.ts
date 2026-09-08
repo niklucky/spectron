@@ -120,6 +120,11 @@ test("database import/push, mappings, typed fields, permissions, repeat sync and
     name: "Due",
     type: "date",
   });
+  const reference = await fields.create("owner", {
+    projectId: p.id,
+    name: "Type",
+    type: "text",
+  });
   const person = await fields.create("owner", {
     projectId: p.id,
     name: "Reviewer",
@@ -154,6 +159,7 @@ test("database import/push, mappings, typed fields, permissions, repeat sync and
     estimate: 3,
     due: "2026-09-07",
     reviewer: { id: "remoteUser" },
+    type: { id: "task", key: "task", display: "Задача" },
   };
   const remoteIssues = [remote];
   const comments: YTComment[] = [
@@ -289,6 +295,7 @@ test("database import/push, mappings, typed fields, permissions, repeat sync and
       priorities: {},
       users: { remoteUser: "owner" },
       fields: {
+        type: reference.id,
         estimate: number.id,
         due: date.id,
         reviewer: person.id,
@@ -323,6 +330,7 @@ test("database import/push, mappings, typed fields, permissions, repeat sync and
   );
   let local = (await issues.list("owner", p.id))[0]!;
   assert.equal(local.externalId, "remote1");
+  assert.equal(local.fieldValues?.[reference.id], "Задача");
   assert.equal(local.fieldValues?.[number.id], 3);
   assert.equal(local.fieldValues?.[person.id], "owner");
   assert.equal((await db.select().from(schema.issueComment)).length, 1);
@@ -455,5 +463,142 @@ test("database import/push, mappings, typed fields, permissions, repeat sync and
   assert.equal(
     remoteIssues.find((r) => r.key === pushedIssue.externalKey)!.status!.id,
     "progress",
+  );
+});
+
+test("Tracker suggestions match Russian names and keys without overwriting choices or ambiguous pairs", async () => {
+  const { matchTrackerMappings, trackerFieldType } =
+    await import("@spectron/shared");
+  assert.deepEqual(
+    matchTrackerMappings(
+      "statuses",
+      [
+        { id: "1", display: "В работе" },
+        { id: "2", display: "Открыт" },
+      ],
+      [
+        { id: "progress", name: "In progress" },
+        { id: "open", name: "Open" },
+      ],
+      { "2": null },
+    ),
+    { "1": "progress", "2": null },
+  );
+  assert.deepEqual(
+    matchTrackerMappings(
+      "priorities",
+      [{ id: "1", display: "Высокий" }],
+      [{ id: "high", name: "High" }],
+      {},
+    ),
+    { "1": "high" },
+  );
+  assert.deepEqual(
+    matchTrackerMappings(
+      "statuses",
+      [
+        { id: "1", display: "В работе" },
+        { id: "2", display: "In progress" },
+      ],
+      [{ id: "progress", name: "In progress" }],
+      {},
+    ),
+    {},
+  );
+  assert.deepEqual(
+    matchTrackerMappings(
+      "statuses",
+      [{ id: "1", display: "Открыт" }],
+      [
+        { id: "a", name: "Open" },
+        { id: "b", name: "Open" },
+      ],
+      {},
+    ),
+    {},
+  );
+  assert.deepEqual(
+    matchTrackerMappings(
+      "fields",
+      [
+        {
+          id: "remote",
+          display: "Дата начала",
+          key: "startDate",
+          schema: { type: "date" },
+        },
+      ],
+      [{ id: "local", name: "Start date", type: "date" }],
+      {},
+    ),
+    { remote: "local" },
+  );
+  assert.deepEqual(
+    matchTrackerMappings(
+      "fields",
+      [{ id: "remote", display: "Оценка", schema: { type: "number" } }],
+      [{ id: "local", name: "Estimate", type: "text" }],
+      {},
+    ),
+    {},
+  );
+  assert.deepEqual(
+    matchTrackerMappings(
+      "fields",
+      [{ id: "r", display: "Мой показатель", schema: { type: "number" } }],
+      [{ id: "l", name: "  МОЙ показатель ", type: "number" }],
+      { other: "l" },
+    ),
+    { other: "l" },
+  );
+  assert.equal(
+    trackerFieldType({ id: "r", schema: { type: "array" } }),
+    undefined,
+  );
+});
+
+test("Tracker user metadata uses distinct uid values as mapping IDs", async (t) => {
+  t.mock.method(globalThis, "fetch", async () =>
+    Response.json([
+      { uid: 101, display: "First" },
+      { uid: "202", display: "Second" },
+      { id: "legacy", display: "Legacy" },
+    ]),
+  );
+  const users = await new YandexTrackerClient(
+    "test",
+    undefined,
+    "org",
+  ).getUsers();
+  assert.deepEqual(
+    users.map((u) => u.id),
+    ["101", "202", "legacy"],
+  );
+  const mappings = { [users[0]!.id]: "local-user" };
+  assert.equal(mappings[users[1]!.id], undefined);
+  t.mock.method(globalThis, "fetch", async () =>
+    Response.json([{ display: "Missing ID" }]),
+  );
+  await assert.rejects(
+    new YandexTrackerClient("test", undefined, "org").getUsers(),
+    /without an identifier/,
+  );
+});
+
+test("Tracker network failures report a retryable, credential-free error", async (t) => {
+  t.mock.method(globalThis, "fetch", async () => {
+    throw new Error("network failure with secret");
+  });
+  await assert.rejects(
+    new YandexTrackerClient(
+      "private-token",
+      undefined,
+      "org",
+    ).getIssuesPaginated({ queue: "TEAM" }),
+    (e) =>
+      e instanceof Error &&
+      e.message.includes("timed out") &&
+      !e.message.includes("secret") &&
+      !e.message.includes("private-token"),
   );
 });
