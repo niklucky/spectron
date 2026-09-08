@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { test } from "node:test";
 import { createDatabase, migrateDatabase, schema } from "@spectron/db";
 import {
+  ProjectAccessError,
   createProjectService,
   createIssueService,
   createFieldService,
@@ -342,6 +343,24 @@ test("database import/push, mappings, typed fields, permissions, repeat sync and
   );
   await assert.rejects(tracker.get("outsider", p.id));
   await assert.rejects(tracker.run("outsider", p.id, "import"));
+  const slotHolder = await pool.connect();
+  try {
+    await slotHolder.query(
+      "select pg_advisory_lock(hashtext('tracker:sync-slot:0')), pg_advisory_lock(hashtext('tracker:sync-slot:1'))",
+    );
+    await assert.rejects(
+      tracker.run("outsider", p.id, "import"),
+      (error) => error instanceof ProjectAccessError,
+    );
+    await assert.rejects(
+      tracker.run("owner", p.id, "import"),
+      /Two Tracker sync/,
+    );
+  } finally {
+    await slotHolder.query("select pg_advisory_unlock_all()");
+    slotHolder.release();
+  }
+
   await tracker.save("owner", { ...input, queue: "OTHER", token: undefined });
   assert.equal((await tracker.get("owner", p.id))!.queue, "OTHER");
   await tracker.save("owner", input);
@@ -692,5 +711,30 @@ test("Tracker network failures report a retryable, credential-free error", async
       e.message.includes("timed out") &&
       !e.message.includes("secret") &&
       !e.message.includes("private-token"),
+  );
+});
+
+test("Tracker mapping refresh drops deleted local targets and preserves explicit ignores", async () => {
+  const { matchTrackerMappings } = await import("@spectron/shared");
+  assert.deepEqual(
+    matchTrackerMappings(
+      "statuses",
+      [
+        { id: "open", name: "Open" },
+        { id: "ignored", name: "Other" },
+      ],
+      [{ id: "replacement", name: "Open" }],
+      { open: "deleted", ignored: null },
+    ),
+    { open: "replacement", ignored: null },
+  );
+  assert.deepEqual(
+    matchTrackerMappings(
+      "fields",
+      [{ id: "field", name: "Gone", schema: { type: "string" } }],
+      [],
+      { field: "deleted" },
+    ),
+    {},
   );
 });

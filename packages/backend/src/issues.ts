@@ -699,8 +699,7 @@ export function createIssueService(db: Database) {
           if (!input.trigger)
             throw new IssueInputError("Choose a canonical state.");
           const stateBefore = before as
-            | typeof issueState.$inferSelect
-            | undefined;
+            typeof issueState.$inferSelect | undefined;
           const isDefault = input.isDefault ?? stateBefore?.isDefault ?? false;
           if (isDefault && input.trigger !== "opened")
             throw new IssueInputError("The default state must map to Opened.");
@@ -766,7 +765,7 @@ export function createIssueService(db: Database) {
           entityId: result!.id,
           changes: changes(before ?? {}, result!),
         });
-        return { id: result!.id };
+        return { id: result!.id, position: result!.position };
       });
     },
     async deleteOption(

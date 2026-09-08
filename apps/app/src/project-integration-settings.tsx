@@ -226,32 +226,48 @@ export function ProjectIntegrationSettings({
                 const discovered = await trpc.tracker.metadata.mutate({
                   projectId,
                 });
+                const [settings, users] = await Promise.all([
+                  trpc.issues.settings.query({ projectId }),
+                  trpc.projects.members.query({ id: projectId }),
+                ]);
+                const freshOptions = {
+                  statuses: settings.states.filter((s) => !s.deletedAt),
+                  priorities: settings.priorities.filter((s) => !s.deletedAt),
+                  fields: settings.fields ?? [],
+                  users,
+                };
+                setOptions(freshOptions);
                 setMetadata(discovered);
                 setConfig((c) => ({
                   ...c,
                   mappings: {
                     ...c.mappings,
                     users: Object.fromEntries(
-                      Object.entries(c.mappings.users).filter(([id]) =>
-                        discovered.users.some((user) => user.id === id),
+                      Object.entries(c.mappings.users).filter(
+                        ([id]) =>
+                          discovered.users.some((user) => user.id === id) &&
+                          (c.mappings.users[id] === null ||
+                            freshOptions.users.some(
+                              (user) => user.id === c.mappings.users[id],
+                            )),
                       ),
                     ),
                     statuses: matchTrackerMappings(
                       "statuses",
                       discovered.statuses,
-                      options.statuses,
+                      freshOptions.statuses,
                       c.mappings.statuses,
                     ),
                     priorities: matchTrackerMappings(
                       "priorities",
                       discovered.priorities,
-                      options.priorities,
+                      freshOptions.priorities,
                       c.mappings.priorities,
                     ),
                     fields: matchTrackerMappings(
                       "fields",
                       discovered.fields,
-                      options.fields,
+                      freshOptions.fields,
                       c.mappings.fields,
                     ),
                   },
@@ -466,18 +482,6 @@ export function ProjectIntegrationSettings({
                                         {
                                           ...created,
                                           name,
-                                          ...(targetKind !== "fields"
-                                            ? {
-                                                position:
-                                                  Math.max(
-                                                    -1,
-                                                    ...o[targetKind].map(
-                                                      (item) =>
-                                                        item.position ?? 0,
-                                                    ),
-                                                  ) + 1,
-                                              }
-                                            : {}),
                                           ...(targetKind === "fields"
                                             ? { type: creating.type }
                                             : {}),

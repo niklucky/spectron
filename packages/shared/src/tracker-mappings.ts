@@ -82,12 +82,16 @@ export function matchTrackerMappings(
     }),
   }));
   const remoteIds = new Set(remotes.map((r) => r.id));
+  const localIds = new Set(local.map((l) => l.id));
   const result = Object.fromEntries(
-    Object.entries(existing).filter(([id]) => remoteIds.has(id)),
+    Object.entries(existing).filter(
+      ([id, value]) =>
+        remoteIds.has(id) && (value === null || localIds.has(value)),
+    ),
   );
   const used = new Set(Object.values(result));
   for (const pair of candidates) {
-    if (Object.hasOwn(existing, pair.remote.id) || pair.local.length !== 1)
+    if (Object.hasOwn(result, pair.remote.id) || pair.local.length !== 1)
       continue;
     const id = pair.local[0]!.id;
     if (

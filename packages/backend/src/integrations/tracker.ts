@@ -646,6 +646,12 @@ export function createTrackerService(
       direction: "import" | "push",
       overwriteConflicts = false,
     ) {
+      // Reject unauthorized callers before occupying a sync slot.
+      await db.transaction(async (tx) => {
+        const saved = await config(tx, actor, projectId);
+        await validateMappings(tx, projectId, saved.mappings);
+      });
+      // Re-read under the lock below in case access or mappings changed during acquisition.
       // Session advisory locks do not hold an idle transaction during HTTP requests.
       // Two database-wide slots bound Tracker concurrency across API replicas.
       const guard = await db.$client.connect();
