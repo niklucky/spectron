@@ -15,6 +15,8 @@ The integration builds on the Yandex Tracker v3 client from `spectron-prototype`
 
 Apply migrations with `pnpm db:migrate`. Set `INTEGRATION_ENCRYPTION_KEY` in the API environment to a base64-encoded 32-byte key, generated with `openssl rand -base64 32`. The Compose API service forwards this variable. Keep the key stable and back it up alongside the database; changing it makes saved tokens unreadable.
 
+Tracker uses a separate key because its AES encryption requires exactly 32 decoded bytes; Jira’s INTEGRATION_SECRET is a passphrase with a different format and derivation. Do not substitute one for the other.
+
 OAuth tokens use AES-256-GCM with a random nonce. API responses never return stored tokens. Requests use the fixed `api.tracker.yandex.net` host, a 30-second timeout, and sanitized errors without remote response bodies or credentials.
 
 ## Project setup
@@ -35,11 +37,11 @@ Unmapped authors import as the owner running the import. Unmapped assignees impo
 
 Sync is manual in this version; there are no webhooks, schedules or automatic remote writes when saving locally. Import fetches all queue issues in pages and each issue's comments using Tracker's comment cursor. Push processes local issues and comments that changed since their checkpoint, including unlinked local issues. Deleted issues/comments are skipped; deletion, attachment transfer, worklog transfer, parent relationships and historical event migration are outside this version.
 
-Issue and comment identities are namespaced by integration. Comments also include the remote issue ID because comment IDs can repeat across issues. `externalId` is present on projects, users, states, priorities, fields, issues and comments; issues also have `externalKey`. User mappings are authoritative per integration; the optional user-level external ID is informational.
+Issue and comment identities are namespaced by integration. Comments also include the remote issue ID because comment IDs can repeat across issues. `externalId` is present on projects, users, states, priorities, fields, issues and comments; issues also have `externalKey`. Tracker status, priority and field links are stored only in its mappings, preserving Jira’s option external IDs. User mappings are authoritative per integration; the optional user-level external ID is informational.
 
 An import does not overwrite unsynced local edits. A push does not overwrite remote edits that happened after the checkpoint, and issue PATCH requests include Tracker's current version. Conflicts are reported. After reviewing them, the explicit **Resolve conflicts** checkbox lets the owner select the source of truth: import replaces local values with Tracker values, and push replaces Tracker values with local values. This choice applies to the run and resets afterwards.
 
-A stable Tracker `unique` value identifies outbound issue creation, allowing a retry to recover a created issue through Tracker’s `_findByUnique` endpoint when its response was lost. Outbound comments contain a `<!-- spectron-comment:... -->` marker for the same recovery purpose; retain it when editing in Tracker. This is application-level recovery, not a distributed transaction. Checkpoints are saved before status transitions so unavailable transitions can be retried without creating another issue. A project has one active sync at a time across API processes; each service instance allows at most three syncs to reserve database connections for checkpoint writes.
+A stable Tracker `unique` value identifies outbound issue creation, allowing a retry to recover a created issue through Tracker’s `_findByUnique` endpoint when its response was lost. Outbound comments contain a `<!-- spectron-comment:... -->` marker for the same recovery purpose; retain it when editing in Tracker. This is application-level recovery, not a distributed transaction. Checkpoints are saved before status transitions so unavailable transitions can be retried without creating another issue. A project has one active sync at a time across API processes; two database-wide session advisory-lock slots bound Tracker sync across API replicas. A sync holds one pooled lock connection without an open transaction; per-entity writes use short transactions, so at most four pooled connections are used by the two active Tracker runs.
 
 Run sync with the settings dialog open. Large queues may exceed a deployment's HTTP request timeout; raise the proxy timeout if needed. After an interrupted request, retry once the active run has finished. Already committed identities are reused.
 

@@ -27,6 +27,8 @@ test("authenticated credential encryption and unambiguous reverse mappings", () 
     openToken(sealed, Buffer.alloc(32, 8).toString("base64")),
   );
   assert.throws(() => sealToken("token", ""));
+  assert.throws(() => openToken(sealed, ""), /INTEGRATION_ENCRYPTION_KEY/);
+  assert.throws(() => openToken("malformed", key), /Could not decrypt/);
   assert.throws(() => reverseMapping({ a: "one", b: "one" }, "one"));
   assert.equal(reverseMapping({ a: "one", b: null }, "one"), "a");
 });
@@ -158,7 +160,7 @@ test("database import/push, mappings, typed fields, permissions, repeat sync and
     updatedAt: "v1",
     estimate: 3,
     due: "2026-09-07",
-    reviewer: { id: "remoteUser" },
+    reviewer: { id: "different-reference", uid: 101 },
     type: { id: "task", key: "task", display: "Задача" },
   };
   const remoteIssues = [remote];
@@ -166,7 +168,7 @@ test("database import/push, mappings, typed fields, permissions, repeat sync and
     {
       id: "1",
       text: "Remote comment",
-      createdBy: { id: "remoteUser", display: "Owner" },
+      createdBy: { id: "different-reference", uid: 101, display: "Owner" },
       createdAt: "2026-01-01",
       updatedAt: "c1",
     },
@@ -192,7 +194,7 @@ test("database import/push, mappings, typed fields, permissions, repeat sync and
       return [];
     }
     override async getUsers() {
-      return [{ id: "remoteUser", display: "Owner" }];
+      return [{ id: "101", display: "Owner" }];
     }
     override async getIssuesPaginated() {
       return {
@@ -293,7 +295,7 @@ test("database import/push, mappings, typed fields, permissions, repeat sync and
     mappings: {
       statuses: { open: state.id },
       priorities: {},
-      users: { remoteUser: "owner" },
+      users: { 101: "owner" },
       fields: {
         type: reference.id,
         estimate: number.id,
@@ -303,7 +305,31 @@ test("database import/push, mappings, typed fields, permissions, repeat sync and
       },
     },
   };
+  await pool.query(
+    "update issue_states set external_id='jira-state' where id=$1",
+    [state.id],
+  );
+  await pool.query(
+    "update project_fields set external_id='jira-field' where id=$1",
+    [number.id],
+  );
   await tracker.save("owner", input);
+  assert.equal(
+    (
+      await pool.query("select external_id from issue_states where id=$1", [
+        state.id,
+      ])
+    ).rows[0].external_id,
+    "jira-state",
+  );
+  assert.equal(
+    (
+      await pool.query("select external_id from project_fields where id=$1", [
+        number.id,
+      ])
+    ).rows[0].external_id,
+    "jira-field",
+  );
   assert.equal((await tracker.metadata("owner", p.id)).statuses[0]!.id, "open");
   assert.equal(
     (await db.select().from(schema.project))[0]!.externalId,
@@ -334,6 +360,13 @@ test("database import/push, mappings, typed fields, permissions, repeat sync and
   assert.equal(local.fieldValues?.[number.id], 3);
   assert.equal(local.fieldValues?.[person.id], "owner");
   assert.equal((await db.select().from(schema.issueComment)).length, 1);
+  comments[0]!.text = "Comment-only update";
+  comments[0]!.updatedAt = "comment-only-v2";
+  await tracker.run("owner", p.id, "import");
+  assert.match(
+    JSON.stringify((await db.select().from(schema.issueComment))[0]!.body),
+    /Comment-only update/,
+  );
   remote.summary = "Remote edited";
   remote.updatedAt = "v2";
   await tracker.run("owner", p.id, "import");
@@ -464,6 +497,65 @@ test("database import/push, mappings, typed fields, permissions, repeat sync and
     remoteIssues.find((r) => r.key === pushedIssue.externalKey)!.status!.id,
     "progress",
   );
+  let release!: () => void;
+  let entered!: () => void;
+  const waiting = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const started = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  class Paused extends Fake {
+    override async getIssuesPaginated() {
+      entered();
+      await waiting;
+      return super.getIssuesPaginated();
+    }
+  }
+  const paused = createTrackerService(
+    db,
+    Buffer.alloc(32).toString("base64"),
+    () => new Paused("unused"),
+  );
+  const running = paused.run("owner", p.id, "import");
+  await started;
+  try {
+    await assert.rejects(tracker.run("owner", p.id, "import"), /busy/);
+    const idle = await pool.query(
+      "select count(*)::int as count from pg_stat_activity where datname=current_database() and state='idle in transaction'",
+    );
+    assert.equal(idle.rows[0].count, 0);
+  } finally {
+    release();
+    await running;
+  }
+  assert.deepEqual((await tracker.run("owner", p.id, "import")).errors, []);
+
+  remote.updatedAt = "deleted-field-race";
+  class DeletedField extends Fake {
+    override async getIssuesPaginated() {
+      await pool.query(
+        "update project_fields set deleted_at=now() where id=$1",
+        [number.id],
+      );
+      return super.getIssuesPaginated();
+    }
+  }
+  const racing = createTrackerService(
+    db,
+    Buffer.alloc(32).toString("base64"),
+    () => new DeletedField("unused"),
+  );
+  try {
+    const failed = await racing.run("owner", p.id, "import");
+    assert.ok(
+      failed.errors.some((e) => e.includes(number.id) && e.includes("deleted")),
+    );
+  } finally {
+    await pool.query("update project_fields set deleted_at=null where id=$1", [
+      number.id,
+    ]);
+  }
 });
 
 test("Tracker suggestions match Russian names and keys without overwriting choices or ambiguous pairs", async () => {
@@ -549,7 +641,7 @@ test("Tracker suggestions match Russian names and keys without overwriting choic
       [{ id: "l", name: "  МОЙ показатель ", type: "number" }],
       { other: "l" },
     ),
-    { other: "l" },
+    { r: "l" },
   );
   assert.equal(
     trackerFieldType({ id: "r", schema: { type: "array" } }),

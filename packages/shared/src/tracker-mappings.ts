@@ -81,8 +81,11 @@ export function matchTrackerMappings(
       return [...names(r)].some((n) => n && targets.has(n));
     }),
   }));
-  const result = { ...existing };
-  const used = new Set(Object.values(existing));
+  const remoteIds = new Set(remotes.map((r) => r.id));
+  const result = Object.fromEntries(
+    Object.entries(existing).filter(([id]) => remoteIds.has(id)),
+  );
+  const used = new Set(Object.values(result));
   for (const pair of candidates) {
     if (Object.hasOwn(existing, pair.remote.id) || pair.local.length !== 1)
       continue;

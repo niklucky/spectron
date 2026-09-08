@@ -189,7 +189,7 @@ export const appRouter = t.router({
   tracker: t.router({
     get: authenticated
       .input(issueScope)
-      .query(({ ctx, input }) => ctx.tracker!.get(ctx.userId, input.projectId)),
+      .query(({ ctx, input }) => ctx.tracker.get(ctx.userId, input.projectId)),
     save: authenticated
       .input(
         issueScope.extend({
@@ -218,11 +218,11 @@ export const appRouter = t.router({
             .strict(),
         }),
       )
-      .mutation(({ ctx, input }) => ctx.tracker!.save(ctx.userId, input)),
+      .mutation(({ ctx, input }) => ctx.tracker.save(ctx.userId, input)),
     metadata: authenticated
       .input(issueScope)
       .mutation(({ ctx, input }) =>
-        ctx.tracker!.metadata(ctx.userId, input.projectId),
+        ctx.tracker.metadata(ctx.userId, input.projectId),
       ),
     run: authenticated
       .input(
@@ -232,7 +232,7 @@ export const appRouter = t.router({
         }),
       )
       .mutation(({ ctx, input }) =>
-        ctx.tracker!.run(
+        ctx.tracker.run(
           ctx.userId,
           input.projectId,
           input.direction,
@@ -547,7 +547,7 @@ export const appRouter = t.router({
         optionRef.omit({ id: true }).extend({
           id: applicationId.optional(),
           name: z.string().trim().min(1).max(80),
-          position: z.number().int().min(0).max(10000),
+          position: z.number().int().min(0).max(2147483647),
           color: z
             .string()
             .regex(/^#[0-9a-fA-F]{6}$/)

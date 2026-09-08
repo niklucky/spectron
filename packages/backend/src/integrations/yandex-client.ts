@@ -1,3 +1,10 @@
+export function trackerUserId(user?: {
+  uid?: string | number;
+  id?: string;
+}): string {
+  const id = String(user?.uid ?? user?.id ?? "");
+  return id === "undefined" || id === "null" ? "" : id;
+}
 /**
  * Yandex Tracker API v3 client
  * Docs: https://yandex.ru/support/tracker/ru/api-ref/access
@@ -218,7 +225,7 @@ export class YandexTrackerClient {
       },
       { page: String(page), perPage: String(perPage) },
     );
-    return { issues, total: issues.length, hasMore: issues.length === perPage };
+    return { issues, hasMore: issues.length === perPage };
   }
 
   async getIssue(key: string): Promise<YTIssue> {
@@ -343,7 +350,7 @@ export class YandexTrackerClient {
         Array<{ uid?: string | number; id?: string; display: string }>
       >("GET", "/users", undefined, { page: String(page), perPage: "100" });
       for (const user of users) {
-        const id = String(user.uid ?? user.id ?? "");
+        const id = trackerUserId(user);
         if (!id || id === "undefined" || id === "null")
           throw new Error("Tracker returned a user without an identifier.");
         if (!result.some((existing) => existing.id === id))
@@ -428,15 +435,6 @@ export class YandexTrackerClient {
       return { success: false, message: String(err) };
     }
   }
-
-  async getIssueCount(queue: string, updatedAfter?: Date): Promise<number> {
-    const { total } = await this.getIssuesPaginated({
-      queue,
-      updatedAfter,
-      perPage: 1,
-    });
-    return total;
-  }
 }
 
 export class YTApiError extends Error {
@@ -457,19 +455,4 @@ export function minutesToIsoDuration(minutes: number): string {
   if (h > 0 && m > 0) return `PT${h}H${m}M`;
   if (h > 0) return `PT${h}H`;
   return `PT${m}M`;
-}
-
-// Parse ISO 8601 duration from YT to minutes (approximate — 1 week=5d, 1d=8h)
-export function isoDurationToMinutes(duration: string): number {
-  const weekMatch = duration.match(/(\d+)W/);
-  const dayMatch = duration.match(/(\d+)D/);
-  const hourMatch = duration.match(/(\d+)H/);
-  const minMatch = duration.match(/(\d+)M(?!S)/); // M not followed by S
-
-  const weeks = weekMatch ? parseInt(weekMatch[1]!) : 0;
-  const days = dayMatch ? parseInt(dayMatch[1]!) : 0;
-  const hours = hourMatch ? parseInt(hourMatch[1]!) : 0;
-  const mins = minMatch ? parseInt(minMatch[1]!) : 0;
-
-  return weeks * 5 * 8 * 60 + days * 8 * 60 + hours * 60 + mins;
 }

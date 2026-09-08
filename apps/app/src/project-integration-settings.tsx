@@ -8,6 +8,8 @@ import { useEffect, useState } from "react";
 import { trpc } from "./lib/trpc";
 type Config = NonNullable<Awaited<ReturnType<typeof trpc.tracker.get.query>>>;
 type Metadata = Awaited<ReturnType<typeof trpc.tracker.metadata.mutate>>;
+const identity = (c: Config) =>
+  JSON.stringify([c.organizationType, c.organizationId, c.queue]);
 const emptyMappings: Config["mappings"] = {
   statuses: {},
   priorities: {},
@@ -37,6 +39,7 @@ export function ProjectIntegrationSettings({
     name: string;
     type: "text" | "date" | "number" | "user";
   } | null>(null);
+  const [savedIdentity, setSavedIdentity] = useState("");
   const [token, setToken] = useState("");
   const [metadata, setMetadata] = useState<Metadata | null>(null);
   const [options, setOptions] = useState<
@@ -60,7 +63,10 @@ export function ProjectIntegrationSettings({
     ])
       .then(([saved, settings, users]) => {
         if (!active) return;
-        if (saved) setConfig(saved);
+        if (saved) {
+          setConfig(saved);
+          setSavedIdentity(identity(saved));
+        }
         setOptions({
           statuses: settings.states.filter((s) => !s.deletedAt),
           priorities: settings.priorities.filter((s) => !s.deletedAt),
@@ -111,6 +117,7 @@ export function ProjectIntegrationSettings({
       ...(token ? { token } : {}),
     });
     setConfig((c) => ({ ...c, mappings, hasToken: true }));
+    setSavedIdentity(identity(config));
     setToken("");
     setDirty(false);
   }
@@ -210,7 +217,12 @@ export function ProjectIntegrationSettings({
             type="button"
             onClick={() =>
               void run(async () => {
-                if (!config.hasToken || token || dirty) await save();
+                if (
+                  !config.hasToken ||
+                  token ||
+                  identity(config) !== savedIdentity
+                )
+                  await save();
                 const discovered = await trpc.tracker.metadata.mutate({
                   projectId,
                 });
@@ -220,9 +232,8 @@ export function ProjectIntegrationSettings({
                   mappings: {
                     ...c.mappings,
                     users: Object.fromEntries(
-                      Object.entries(c.mappings.users).filter(
-                        ([id]) =>
-                          id !== "undefined" && id !== "null" && id !== "",
+                      Object.entries(c.mappings.users).filter(([id]) =>
+                        discovered.users.some((user) => user.id === id),
                       ),
                     ),
                     statuses: matchTrackerMappings(
@@ -433,15 +444,13 @@ export function ProjectIntegrationSettings({
                                                 ? "state"
                                                 : "priority",
                                             name,
-                                            position: Math.min(
-                                              10000,
+                                            position:
                                               Math.max(
                                                 -1,
                                                 ...options[targetKind].map(
                                                   (o) => o.position ?? 0,
                                                 ),
                                               ) + 1,
-                                            ),
                                             color: null,
                                             ...(targetKind === "statuses"
                                               ? {
@@ -457,6 +466,18 @@ export function ProjectIntegrationSettings({
                                         {
                                           ...created,
                                           name,
+                                          ...(targetKind !== "fields"
+                                            ? {
+                                                position:
+                                                  Math.max(
+                                                    -1,
+                                                    ...o[targetKind].map(
+                                                      (item) =>
+                                                        item.position ?? 0,
+                                                    ),
+                                                  ) + 1,
+                                              }
+                                            : {}),
                                           ...(targetKind === "fields"
                                             ? { type: creating.type }
                                             : {}),

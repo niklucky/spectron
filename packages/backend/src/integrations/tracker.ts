@@ -6,6 +6,7 @@ import { issueAccess, IssueInputError, IssueConflictError } from "../issues";
 import { validateFieldValues } from "../fields";
 import {
   YandexTrackerClient,
+  trackerUserId,
   type YTIssue,
   type YTIssueUpdate,
 } from "./yandex-client";
@@ -46,16 +47,27 @@ export function sealToken(token: string, secret: string) {
     .join(".");
 }
 export function openToken(token: string, secret: string) {
-  const [iv, tag, data] = token.split(".").map((b) => Buffer.from(b, "base64"));
-  const decipher = createDecipheriv(
-    "aes-256-gcm",
-    Buffer.from(secret, "base64"),
-    iv!,
-  );
-  decipher.setAuthTag(tag!);
-  return Buffer.concat([decipher.update(data!), decipher.final()]).toString(
-    "utf8",
-  );
+  const key = Buffer.from(secret, "base64");
+  if (key.length !== 32)
+    throw new IssueInputError(
+      "Set INTEGRATION_ENCRYPTION_KEY to a base64-encoded 32-byte key on the API server.",
+    );
+  try {
+    const parts = token.split(".");
+    if (parts.length !== 3) throw new Error("Invalid token");
+    const [iv, tag, data] = parts.map((part) => Buffer.from(part, "base64"));
+    if (iv?.length !== 12 || tag?.length !== 16 || !data?.length)
+      throw new Error("Invalid token");
+    const decipher = createDecipheriv("aes-256-gcm", key, iv);
+    decipher.setAuthTag(tag);
+    return Buffer.concat([decipher.update(data), decipher.final()]).toString(
+      "utf8",
+    );
+  } catch {
+    throw new IssueInputError(
+      "Could not decrypt the Tracker token. Restore the original INTEGRATION_ENCRYPTION_KEY or save a new OAuth token.",
+    );
+  }
 }
 export function reverseMapping(
   map: Record<string, string | null>,
@@ -89,7 +101,6 @@ export function createTrackerService(
       c.organizationType === "cloud" ? c.organizationId : undefined,
     ),
 ) {
-  let activeSyncs = 0;
   async function lock(tx: Tx, projectId: string) {
     const result = await tx.execute(
       sql`select pg_try_advisory_xact_lock(hashtext(${`tracker:${projectId}`})) as locked`,
@@ -283,11 +294,17 @@ export function createTrackerService(
         );
       for (const [key, id] of Object.entries(c.mappings.fields)) {
         if (!id) continue;
-        const field = fields.find((f) => f.id === id)!;
+        const field = fields.find((f) => f.id === id);
+        if (!field)
+          throw new IssueInputError(
+            `Mapped project field ${id} for Tracker field ${key} was deleted. Update the field mapping.`,
+          );
         const value = remote[key];
         if (field.type === "user")
           fieldValues[id] = value
-            ? (c.mappings.users[String((value as { id: string }).id)] ?? null)
+            ? (c.mappings.users[
+                trackerUserId(value as { id?: string; uid?: number })
+              ] ?? null)
             : null;
         else if (value === undefined || value === null) fieldValues[id] = null;
         else if (
@@ -306,7 +323,7 @@ export function createTrackerService(
       }
       await validateFieldValues(tx, p.id, fieldValues);
       const assigneeId = remote.assignee
-        ? (c.mappings.users[String(remote.assignee.id)] ?? null)
+        ? (c.mappings.users[trackerUserId(remote.assignee)] ?? null)
         : null;
       const values = {
         title: remote.summary,
@@ -351,7 +368,8 @@ export function createTrackerService(
             projectId: p.id,
             number: p.issueCounter + 1,
             createdAt: new Date(remote.createdAt),
-            authorId: c.mappings.users[String(remote.createdBy?.id)] ?? actor,
+            authorId:
+              c.mappings.users[trackerUserId(remote.createdBy)] ?? actor,
             updatedAt: now,
           })
           .returning()) as [typeof issue.$inferSelect];
@@ -500,7 +518,7 @@ export function createTrackerService(
                 issueId,
                 createdAt: new Date(comment.createdAt),
                 authorId:
-                  c.mappings.users[String(comment.createdBy.id)] ?? actor,
+                  c.mappings.users[trackerUserId(comment.createdBy)] ?? actor,
                 body,
                 externalId: String(comment.id),
               })
@@ -585,22 +603,7 @@ export function createTrackerService(
           .insert(integration)
           .values(values)
           .onConflictDoUpdate({ target: integration.projectId, set: values });
-        for (const [kind, table] of [
-          ["statuses", issueState],
-          ["priorities", issuePriority],
-          ["fields", projectField],
-        ] as const) {
-          await tx
-            .update(table)
-            .set({ externalId: null })
-            .where(eq(table.projectId, input.projectId));
-          for (const [remote, local] of Object.entries(input.mappings[kind]))
-            if (local)
-              await tx
-                .update(table)
-                .set({ externalId: remote })
-                .where(eq(table.id, local));
-        }
+        // Tracker option links live only in its own mappings; externalId belongs to Jira.
         // User identities are integration-scoped in mappings; never overwrite another organization's identity.
         for (const [remote, local] of Object.entries(input.mappings.users))
           if (local)
@@ -643,298 +646,320 @@ export function createTrackerService(
       direction: "import" | "push",
       overwriteConflicts = false,
     ) {
-      // Reserve pool capacity for the independently committed entity transactions.
-      if (activeSyncs >= 3)
-        throw new IssueConflictError(
-          "Three sync operations are already running. Try again shortly.",
-        );
-      activeSyncs++;
+      // Session advisory locks do not hold an idle transaction during HTTP requests.
+      // Two database-wide slots bound Tracker concurrency across API replicas.
+      const guard = await db.$client.connect();
+      let slot: string | undefined;
+      let projectLocked = false;
+      let broken = false;
       try {
-        // Keep a cross-process advisory lock while committing each entity independently.
-        return await db.transaction(async (guard) => {
-          await lock(guard, projectId);
-          const c = await db.transaction(async (tx) => {
-            const saved = await config(tx, actor, projectId);
-            await validateMappings(tx, projectId, saved.mappings);
-            return saved;
-          });
-          const client = factory(c);
-          let processed = 0;
-          const errors: string[] = [];
-          if (direction === "import") {
-            for (let page = 1; ; page++) {
-              const result = await client.getIssuesPaginated({
-                queue: c.queue,
-                page,
-              });
-              for (const remote of result.issues) {
-                try {
-                  const id = await importIssue(
-                    actor,
-                    c,
-                    remote,
-                    overwriteConflicts,
-                  );
-                  await importComments(
-                    actor,
-                    c,
-                    client,
-                    remote,
-                    id,
-                    overwriteConflicts,
-                  );
-                  processed++;
-                } catch (error) {
-                  errors.push(
-                    error instanceof IssueInputError ||
-                      error instanceof IssueConflictError
-                      ? `${remote.key}: ${error.message}`
-                      : `${remote.key}: import failed. Retry after checking Tracker access.`,
-                  );
-                }
-              }
-              if (!result.hasMore) break;
-            }
-          } else {
-            const rows = await db
-              .select()
-              .from(issue)
-              .where(
-                and(eq(issue.projectId, projectId), isNull(issue.deletedAt)),
-              );
-            for (const row of rows) {
+        for (let index = 0; index < 2; index++) {
+          const key = `tracker:sync-slot:${index}`;
+          const result = await guard.query(
+            "select pg_try_advisory_lock(hashtext($1)) as locked",
+            [key],
+          );
+          if (result.rows[0]?.locked) {
+            slot = key;
+            break;
+          }
+        }
+        if (!slot)
+          throw new IssueConflictError(
+            "Two Tracker sync operations are running. Try again when one finishes.",
+          );
+        const result = await guard.query(
+          "select pg_try_advisory_lock(hashtext($1)) as locked",
+          [`tracker:${projectId}`],
+        );
+        projectLocked = !!result.rows[0]?.locked;
+        if (!projectLocked)
+          throw new IssueConflictError(
+            "Integration is busy. Try again after the current operation finishes.",
+          );
+        const c = await db.transaction(async (tx) => {
+          const saved = await config(tx, actor, projectId);
+          await validateMappings(tx, projectId, saved.mappings);
+          return saved;
+        });
+        const client = factory(c);
+        let processed = 0;
+        const errors: string[] = [];
+        if (direction === "import") {
+          for (let page = 1; ; page++) {
+            const result = await client.getIssuesPaginated({
+              queue: c.queue,
+              page,
+            });
+            for (const remote of result.issues) {
               try {
-                await db.transaction((tx) => config(tx, actor, projectId));
-                const [link] = await db
-                  .select()
-                  .from(entity)
-                  .where(identity(c, "issue", row.id));
-                let remote = link
-                  ? await client.getIssue(link.externalKey!)
-                  : undefined;
-                if (
-                  overwriteConflicts ||
-                  !link ||
-                  row.updatedAt.getTime() !== link.localUpdatedAt.getTime()
-                ) {
-                  if (
-                    !overwriteConflicts &&
-                    remote &&
-                    link &&
-                    remote.updatedAt !== link.remoteUpdatedAt
-                  )
-                    throw new IssueConflictError(
-                      `${row.externalKey}: Tracker changed. Import before pushing; resolve simultaneous edits first.`,
-                    );
-                  const status = reverseMapping(
-                    c.mappings.statuses,
-                    row.stateId,
-                  );
-                  if (!status)
-                    throw new IssueInputError(
-                      `${row.title}: map its status before pushing.`,
-                    );
-                  const payload: YTIssueUpdate = {
-                    summary: row.title,
-                    description: row.description,
-                  };
-                  if (row.priorityId) {
-                    const id = reverseMapping(
-                      c.mappings.priorities,
-                      row.priorityId,
-                    );
-                    if (!id)
-                      throw new IssueInputError(
-                        `${row.title}: map its priority.`,
-                      );
-                    payload.priority = { id };
-                  } else if (
-                    remote &&
-                    c.mappings.priorities[String(remote.priority?.id)]
-                  )
-                    payload.priority = null;
-                  if (row.assigneeId) {
-                    const id = reverseMapping(c.mappings.users, row.assigneeId);
-                    if (!id)
-                      throw new IssueInputError(
-                        `${row.title}: map its assignee.`,
-                      );
-                    payload.assignee = { id };
-                  } else if (
-                    remote?.assignee &&
-                    c.mappings.users[String(remote.assignee.id)]
-                  )
-                    payload.assignee = null;
-                  const fields = await db
-                    .select()
-                    .from(projectField)
-                    .where(
-                      and(
-                        eq(projectField.projectId, projectId),
-                        isNull(projectField.deletedAt),
-                      ),
-                    );
-                  for (const [key, id] of Object.entries(c.mappings.fields))
-                    if (id) {
-                      const value = row.fieldValues[id] ?? null;
-                      if (
-                        fields.find((f) => f.id === id)?.type === "user" &&
-                        value !== null
-                      ) {
-                        const remoteUser = reverseMapping(
-                          c.mappings.users,
-                          String(value),
-                        );
-                        if (!remoteUser)
-                          throw new IssueInputError(
-                            `${row.title}: map the user in field ${key}.`,
-                          );
-                        payload[key] = { id: remoteUser };
-                      } else if (
-                        remote &&
-                        typeof remote[key] === "object" &&
-                        remote[key] !== null &&
-                        !Array.isArray(remote[key]) &&
-                        typeof (remote[key] as { display?: unknown })
-                          .display === "string"
-                      ) {
-                        if (
-                          value !== null &&
-                          value !== (remote[key] as { display: string }).display
-                        )
-                          throw new IssueInputError(
-                            `${remote.key}: change reference field ${key} in Tracker, then import it.`,
-                          );
-                        // Retain the remote reference when another local field changes.
-                      } else payload[key] = value;
-                    }
-                  if (remote)
-                    remote = await client.updateIssue(
-                      remote.key,
-                      payload,
-                      remote.version,
-                    );
-                  else {
-                    // A stable unique value allows recovery when the create response is lost.
-                    remote = await client.findByUnique(row.id);
-                    if (!remote)
-                      remote = await client.createIssue({
-                        ...payload,
-                        queue: c.queue,
-                        summary: row.title,
-                        unique: row.id,
-                      } as Parameters<YandexTrackerClient["createIssue"]>[0]);
-                  }
-                  // Persist identity before the separate transition call, even if the transition fails.
-                  await checkpoint(c, "issue", row.id, new Date(0), remote);
-                  if (
-                    String(remote.status?.id) !== status &&
-                    remote.status?.key !== status
-                  ) {
-                    const transitions = await client.getTransitions(remote.key);
-                    const transition = transitions.find(
-                      (t) => String(t.to.id) === status || t.to.key === status,
-                    );
-                    if (!transition)
-                      throw new IssueInputError(
-                        `${remote.key}: no transition to the mapped status is available.`,
-                      );
-                    await client.executeTransition(remote.key, transition.id);
-                    remote = await client.getIssue(remote.key);
-                  }
-                  await checkpoint(c, "issue", row.id, row.updatedAt, remote);
-                }
-                if (!remote) continue;
-                const remoteComments = await client.getComments(remote.key);
-                const comments = await db
-                  .select()
-                  .from(issueComment)
-                  .where(
-                    and(
-                      eq(issueComment.issueId, row.id),
-                      isNull(issueComment.deletedAt),
-                    ),
-                  );
-                for (const comment of comments) {
-                  const [cl] = await db
-                    .select()
-                    .from(entity)
-                    .where(identity(c, "comment", comment.id));
-                  if (
-                    !overwriteConflicts &&
-                    cl &&
-                    cl.localUpdatedAt.getTime() === comment.updatedAt.getTime()
-                  )
-                    continue;
-                  let rc = cl
-                    ? remoteComments.find(
-                        (r) => String(r.id) === cl.externalKey,
-                      )
-                    : remoteComments.find((r) =>
-                        r.text.includes(marker(comment.id)),
-                      );
-                  if (
-                    cl &&
-                    (!rc ||
-                      (!overwriteConflicts &&
-                        rc.updatedAt !== cl.remoteUpdatedAt))
-                  )
-                    throw new IssueConflictError(
-                      `${remote.key}: comment changed in Tracker. Import before pushing.`,
-                    );
-                  const text = `${plain(comment.body)}\n${marker(comment.id)}`;
-                  rc = rc
-                    ? await client.updateComment(
-                        remote.key,
-                        String(rc.id),
-                        text,
-                      )
-                    : await client.createComment(remote.key, text);
-                  await db.transaction(async (tx) => {
-                    const values = {
-                      integrationId: c.id,
-                      entityType: "comment" as const,
-                      localId: comment.id,
-                      externalId: `${remote!.id}:${rc!.id}`,
-                      externalKey: String(rc!.id),
-                      localUpdatedAt: comment.updatedAt,
-                      remoteUpdatedAt: rc!.updatedAt,
-                    };
-                    await tx
-                      .insert(entity)
-                      .values(values)
-                      .onConflictDoUpdate({
-                        target: [
-                          entity.integrationId,
-                          entity.entityType,
-                          entity.localId,
-                        ],
-                        set: values,
-                      });
-                    await tx
-                      .update(issueComment)
-                      .set({
-                        externalId: String(rc!.id),
-                        updatedAt: sql`${issueComment.updatedAt}`,
-                      })
-                      .where(eq(issueComment.id, comment.id));
-                  });
-                }
+                const id = await importIssue(
+                  actor,
+                  c,
+                  remote,
+                  overwriteConflicts,
+                );
+                await importComments(
+                  actor,
+                  c,
+                  client,
+                  remote,
+                  id,
+                  overwriteConflicts,
+                );
                 processed++;
               } catch (error) {
                 errors.push(
                   error instanceof IssueInputError ||
                     error instanceof IssueConflictError
-                    ? error.message
-                    : `${row.title}: push failed. Retry after checking Tracker access.`,
+                    ? `${remote.key}: ${error.message}`
+                    : `${remote.key}: import failed. Retry after checking Tracker access.`,
                 );
               }
             }
+            if (!result.hasMore) break;
           }
-          return { processed, errors };
-        });
+        } else {
+          const rows = await db
+            .select()
+            .from(issue)
+            .where(
+              and(eq(issue.projectId, projectId), isNull(issue.deletedAt)),
+            );
+          for (const row of rows) {
+            try {
+              const [link] = await db
+                .select()
+                .from(entity)
+                .where(identity(c, "issue", row.id));
+              let remote = link
+                ? await client.getIssue(link.externalKey!)
+                : undefined;
+              if (
+                overwriteConflicts ||
+                !link ||
+                row.updatedAt.getTime() !== link.localUpdatedAt.getTime()
+              ) {
+                if (
+                  !overwriteConflicts &&
+                  remote &&
+                  link &&
+                  remote.updatedAt !== link.remoteUpdatedAt
+                )
+                  throw new IssueConflictError(
+                    `${row.externalKey}: Tracker changed. Import before pushing; resolve simultaneous edits first.`,
+                  );
+                const status = reverseMapping(c.mappings.statuses, row.stateId);
+                if (!status)
+                  throw new IssueInputError(
+                    `${row.title}: map its status before pushing.`,
+                  );
+                const payload: YTIssueUpdate = {
+                  summary: row.title,
+                  description: row.description,
+                };
+                if (row.priorityId) {
+                  const id = reverseMapping(
+                    c.mappings.priorities,
+                    row.priorityId,
+                  );
+                  if (!id)
+                    throw new IssueInputError(
+                      `${row.title}: map its priority.`,
+                    );
+                  payload.priority = { id };
+                } else if (
+                  remote &&
+                  c.mappings.priorities[String(remote.priority?.id)]
+                )
+                  payload.priority = null;
+                if (row.assigneeId) {
+                  const id = reverseMapping(c.mappings.users, row.assigneeId);
+                  if (!id)
+                    throw new IssueInputError(
+                      `${row.title}: map its assignee.`,
+                    );
+                  payload.assignee = { id };
+                } else if (
+                  remote?.assignee &&
+                  c.mappings.users[trackerUserId(remote.assignee)]
+                )
+                  payload.assignee = null;
+                const fields = await db
+                  .select()
+                  .from(projectField)
+                  .where(
+                    and(
+                      eq(projectField.projectId, projectId),
+                      isNull(projectField.deletedAt),
+                    ),
+                  );
+                for (const [key, id] of Object.entries(c.mappings.fields))
+                  if (id) {
+                    const value = row.fieldValues[id] ?? null;
+                    if (
+                      fields.find((f) => f.id === id)?.type === "user" &&
+                      value !== null
+                    ) {
+                      const remoteUser = reverseMapping(
+                        c.mappings.users,
+                        String(value),
+                      );
+                      if (!remoteUser)
+                        throw new IssueInputError(
+                          `${row.title}: map the user in field ${key}.`,
+                        );
+                      payload[key] = { id: remoteUser };
+                    } else if (
+                      remote &&
+                      typeof remote[key] === "object" &&
+                      remote[key] !== null &&
+                      !Array.isArray(remote[key]) &&
+                      typeof (remote[key] as { display?: unknown }).display ===
+                        "string"
+                    ) {
+                      if (
+                        value !== null &&
+                        value !== (remote[key] as { display: string }).display
+                      )
+                        throw new IssueInputError(
+                          `${remote.key}: change reference field ${key} in Tracker, then import it.`,
+                        );
+                      // Retain the remote reference when another local field changes.
+                    } else payload[key] = value;
+                  }
+                if (remote)
+                  remote = await client.updateIssue(
+                    remote.key,
+                    payload,
+                    remote.version,
+                  );
+                else {
+                  // A stable unique value allows recovery when the create response is lost.
+                  remote = await client.findByUnique(row.id);
+                  if (!remote)
+                    remote = await client.createIssue({
+                      ...payload,
+                      queue: c.queue,
+                      summary: row.title,
+                      unique: row.id,
+                    } as Parameters<YandexTrackerClient["createIssue"]>[0]);
+                }
+                // Persist identity before the separate transition call, even if the transition fails.
+                await checkpoint(c, "issue", row.id, new Date(0), remote);
+                if (
+                  String(remote.status?.id) !== status &&
+                  remote.status?.key !== status
+                ) {
+                  const transitions = await client.getTransitions(remote.key);
+                  const transition = transitions.find(
+                    (t) => String(t.to.id) === status || t.to.key === status,
+                  );
+                  if (!transition)
+                    throw new IssueInputError(
+                      `${remote.key}: no transition to the mapped status is available.`,
+                    );
+                  await client.executeTransition(remote.key, transition.id);
+                  remote = await client.getIssue(remote.key);
+                }
+                await checkpoint(c, "issue", row.id, row.updatedAt, remote);
+              }
+              if (!remote) continue;
+              const remoteComments = await client.getComments(remote.key);
+              const comments = await db
+                .select()
+                .from(issueComment)
+                .where(
+                  and(
+                    eq(issueComment.issueId, row.id),
+                    isNull(issueComment.deletedAt),
+                  ),
+                );
+              for (const comment of comments) {
+                const [cl] = await db
+                  .select()
+                  .from(entity)
+                  .where(identity(c, "comment", comment.id));
+                if (
+                  !overwriteConflicts &&
+                  cl &&
+                  cl.localUpdatedAt.getTime() === comment.updatedAt.getTime()
+                )
+                  continue;
+                let rc = cl
+                  ? remoteComments.find((r) => String(r.id) === cl.externalKey)
+                  : remoteComments.find((r) =>
+                      r.text.includes(marker(comment.id)),
+                    );
+                if (
+                  cl &&
+                  (!rc ||
+                    (!overwriteConflicts &&
+                      rc.updatedAt !== cl.remoteUpdatedAt))
+                )
+                  throw new IssueConflictError(
+                    `${remote.key}: comment changed in Tracker. Import before pushing.`,
+                  );
+                const text = `${plain(comment.body)}\n${marker(comment.id)}`;
+                rc = rc
+                  ? await client.updateComment(remote.key, String(rc.id), text)
+                  : await client.createComment(remote.key, text);
+                await db.transaction(async (tx) => {
+                  const values = {
+                    integrationId: c.id,
+                    entityType: "comment" as const,
+                    localId: comment.id,
+                    externalId: `${remote!.id}:${rc!.id}`,
+                    externalKey: String(rc!.id),
+                    localUpdatedAt: comment.updatedAt,
+                    remoteUpdatedAt: rc!.updatedAt,
+                  };
+                  await tx
+                    .insert(entity)
+                    .values(values)
+                    .onConflictDoUpdate({
+                      target: [
+                        entity.integrationId,
+                        entity.entityType,
+                        entity.localId,
+                      ],
+                      set: values,
+                    });
+                  await tx
+                    .update(issueComment)
+                    .set({
+                      externalId: String(rc!.id),
+                      updatedAt: sql`${issueComment.updatedAt}`,
+                    })
+                    .where(eq(issueComment.id, comment.id));
+                });
+              }
+              processed++;
+            } catch (error) {
+              errors.push(
+                error instanceof IssueInputError ||
+                  error instanceof IssueConflictError
+                  ? error.message
+                  : `${row.title}: push failed. Retry after checking Tracker access.`,
+              );
+            }
+          }
+        }
+        return { processed, errors };
       } finally {
-        activeSyncs--;
+        try {
+          if (projectLocked)
+            await guard.query("select pg_advisory_unlock(hashtext($1))", [
+              `tracker:${projectId}`,
+            ]);
+          if (slot)
+            await guard.query("select pg_advisory_unlock(hashtext($1))", [
+              slot,
+            ]);
+        } catch {
+          broken = true;
+        }
+        guard.release(broken);
       }
     },
   };
