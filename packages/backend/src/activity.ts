@@ -1,3 +1,4 @@
+import { commentSyncStates } from "./integrations/comment-sync-state";
 import { normalizeHistoryChanges } from "./history-changes";
 import { and, or, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { schema, type Database } from "@spectron/db";
@@ -201,6 +202,7 @@ export function createActivityService(db: Database) {
             createdAt: f.createdAt.toISOString(),
           }),
         );
+        const syncStates = await commentSyncStates(tx, input.projectId, comments.map(c => c.row));
         return {
           nextCursor: rows.length > 50 ? page.at(-1)!.entry.id : null,
           events: page.reverse().map(({ entry: e, actorName }) => {
@@ -249,6 +251,7 @@ export function createActivityService(db: Database) {
                 r && found
                   ? {
                       id: r.id,
+                      jiraSync: syncStates.get(r.id),
                       issueId: r.issueId,
                       parentId: r.parentId,
                       authorId: found.resolvedAuthorId,

@@ -1,4 +1,5 @@
 export type JiraMappings = {
+  issueTypes?: Record<string, string> | undefined;
   statuses: Record<string, string>;
   priorities: Record<string, string>;
   fields: Record<string, string | null>;
@@ -13,6 +14,7 @@ export type JiraConfigInput = {
 };
 export type JiraConnection = Omit<JiraConfigInput, "apiToken"> & {
   id: string;
+  createdAt?: string;
   scheduleMinutes: number | null;
   nextImportAt: string | null;
   lastScheduledAt: string | null;

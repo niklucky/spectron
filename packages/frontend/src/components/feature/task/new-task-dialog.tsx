@@ -1,3 +1,4 @@
+import { ISSUE_TITLE_MAX_LENGTH } from "@spectron/shared";
 import { useState } from "react";
 import { Dialog } from "../../ui/dialog";
 import { Input, Select } from "../../ui/input";
@@ -56,7 +57,7 @@ export function NewTaskDialog({
           value={newTitle}
           onChange={(event) => setNewTitle(event.target.value)}
           required
-          maxLength={140}
+          maxLength={ISSUE_TITLE_MAX_LENGTH}
         />
         {error && (
           <p className="project-error" role="alert">

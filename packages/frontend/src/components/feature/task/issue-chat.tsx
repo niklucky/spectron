@@ -1,8 +1,10 @@
+import { AttachmentMarkdown, nonInlineFiles } from "./issue-comments";
 import { MessageMarkdown } from "../../ui/message-markdown";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type {
   IssueActivityEvent,
   IssueActivityPage,
+  IssueAttachmentSummary,
   IssueSettings,
   IssueSummary,
   ProjectMemberSummary,
@@ -57,6 +59,24 @@ export function IssueChat({
   const [expandedHistory, setExpandedHistory] = useState<Set<string>>(
     new Set(),
   );
+  const [attachments, setAttachments] = useState<IssueAttachmentSummary[]>([]);
+  const [attachmentError, setAttachmentError] = useState("");
+  useEffect(() => {
+    if (!active) return;
+    let alive = true;
+    setAttachments([]);
+    setAttachmentError("");
+    void actions.files.list(issue.projectId, issue.id).then(
+      (files) => { if (alive) setAttachments(files); },
+      (cause) => {
+        if (alive) setAttachmentError(
+          cause instanceof Error ? cause.message : "Could not load attachments.",
+        );
+      },
+    );
+    return () => { alive = false; };
+  }, [actions.files, issue.projectId, issue.id, issue.updatedAt, active, revision, reload]);
+  const composer = useRef<HTMLDivElement>(null);
   const stream = useRef<HTMLDivElement>(null),
     generation = useRef(0),
     pages = useRef(1),
@@ -117,6 +137,26 @@ export function IssueChat({
     revision,
     reload,
   ]);
+  useEffect(() => {
+    if (!active || !events.some(e => e.comment?.jiraSync === "pending" || e.comment?.jiraSync === "syncing")) return;
+    const timer = window.setTimeout(() => setReload(n => n + 1), 3000);
+    return () => window.clearTimeout(timer);
+  }, [active, events]);
+  useLayoutEffect(() => {
+    const element = composer.current;
+    const messages = stream.current;
+    if (!element || !messages) return;
+    const resize = () => {
+      messages.style.setProperty("--composer-height", `${element.getBoundingClientRect().height}px`);
+    };
+    resize();
+    const observer = new ResizeObserver(resize);
+    observer.observe(element);
+    return () => {
+      observer.disconnect();
+      messages.style.removeProperty("--composer-height");
+    };
+  }, [active, tool, issue.deletedAt]);
   useLayoutEffect(() => {
     const el = stream.current;
     if (!el) return;
@@ -139,6 +179,12 @@ export function IssueChat({
     revision,
     changed,
   };
+  const descriptionFiles = attachments.filter((f) => f.inDescription);
+  const timeline = [
+    ...events.map((event) => ({ event, file: null as IssueAttachmentSummary | null, date: event.comment?.createdAt ?? event.entry.createdAt })),
+    ...attachments.filter((f) => !f.inDescription && !f.commentIds?.length)
+      .map((file) => ({ event: null, file, date: file.attachedAt ?? file.createdAt })),
+  ].sort((a, b) => a.date.localeCompare(b.date));
   const names: Record<string, string> = {
     key: "Issue",
     title: "Title",
@@ -164,7 +210,7 @@ export function IssueChat({
       aria-label={`${issue.key} chat`}
     >
       <div className="issue-chat-stream" ref={stream}>
-        {issue.description.trim() && (
+        {(issue.description.trim() || descriptionFiles.length > 0) && (
           <article
             className={`chat-message-row ${issue.authorId === actions.worklogs.currentUserId ? "chat-own-message" : ""}`}
           >
@@ -178,13 +224,17 @@ export function IssueChat({
                   label="Author"
                 />
               )}
-              <MessageMarkdown text={issue.description} />
+              {issue.description.trim() && (
+                <AttachmentMarkdown text={issue.description.trim()} files={descriptionFiles} />
+              )}
+              {descriptionFiles.length > 0 && <CommentMedia files={nonInlineFiles(issue.description, descriptionFiles)} />}
               <time dateTime={issue.createdAt}>
                 {new Date(issue.createdAt).toLocaleString()}
               </time>
             </div>
           </article>
         )}
+        {attachmentError && <p role="alert">{attachmentError}</p>}
         {cursor && (
           <Button
             variant="ghost"
@@ -225,7 +275,17 @@ export function IssueChat({
             Load earlier activity
           </Button>
         )}
-        {events.map((event) => {
+        {timeline.map(({ event, file }) => {
+          if (file) return (
+            <article className="chat-message-row" key={`file-${file.attachmentId}`}>
+              <div className="chat-conversation-message initial-description">
+                <UserInfo name={valueLabel("authorId", file.uploadedBy)} />
+                <CommentMedia files={[file]} />
+                <time dateTime={file.attachedAt ?? file.createdAt}>{new Date(file.attachedAt ?? file.createdAt).toLocaleString()}</time>
+              </div>
+            </article>
+          );
+          if (!event) return null;
           const e = event.entry;
           if (event.comment)
             return (
@@ -242,7 +302,10 @@ export function IssueChat({
                   )}
                   <CommentItem
                     context={context}
-                    row={event.comment}
+                    row={{ ...event.comment, attachments: [
+                      ...event.comment.attachments,
+                      ...attachments.filter((f) => !event.comment!.deletedAt && f.commentIds?.includes(event.comment!.id) && !event.comment!.attachments.some((a) => a.projectFileId === f.projectFileId)),
+                    ] }}
                     depth={0}
                     flat
                     hideAuthor={
@@ -372,7 +435,7 @@ export function IssueChat({
         </div>
       )}
       {!issue.deletedAt && (
-        <div className="chat-message-composer" hidden={!!tool}>
+        <div className="chat-message-composer" ref={composer} hidden={!!tool}>
           {composing ? (
             <CommentEditor
               key={composerKey}

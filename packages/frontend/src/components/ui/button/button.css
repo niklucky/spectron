@@ -28,3 +28,29 @@
 .primary-button:disabled {
   opacity: 0.45;
 }
+.ghost-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid var(--color-line);
+  border-radius: 6px;
+  background: var(--color-hover);
+  color: var(--color-text-primary);
+  padding: 7px 12px;
+  font-size: var(--font-size-base);
+}
+.ghost-button:hover:not(:disabled) {
+  border-color: var(--color-text-secondary);
+}
+.ghost-button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.ghost-button.navigation-button {
+  background: transparent;
+  border-color: transparent;
+}
+.ghost-button.navigation-button:hover:not(:disabled) {
+  border-color: var(--color-line);
+}

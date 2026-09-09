@@ -1,3 +1,4 @@
+import { ISSUE_TITLE_MAX_LENGTH } from "./issues";
 /** Basic message Markdown; titles always remain plain text. */
 export function messagePlainText(text: string): string {
   return text
@@ -14,6 +15,6 @@ export function firstMessageFields(message: string) {
       .split(/\r?\n/)
       .find((line) => line.trim())
       ?.trim()
-      .slice(0, 140) ?? "";
+      .slice(0, ISSUE_TITLE_MAX_LENGTH) ?? "";
   return { title, description: text === title ? "" : text };
 }

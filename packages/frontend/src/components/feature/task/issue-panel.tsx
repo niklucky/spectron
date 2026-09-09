@@ -1,3 +1,5 @@
+import { AttachmentGallery } from "./attachment-gallery";
+import { ISSUE_TITLE_MAX_LENGTH, ISSUE_DESCRIPTION_MAX_LENGTH } from "@spectron/shared";
 import { UserInfo } from "../../ui/avatar";
 import { Menu } from "../../ui/menu";
 import { MessageMarkdown } from "../../ui/message-markdown";
@@ -63,15 +65,24 @@ export function IssuePanel({
   onCopy: () => void;
   onSelect: (id: string, projectId: string) => void;
 }) {
-  const [view, setView] = useState<"chat" | "all" | "issue">(() => {
+  const [titleDraft, setTitleDraft] = useState(issue.title);
+  const [titleError, setTitleError] = useState("");
+  const [titleSaving, setTitleSaving] = useState(false);
+  const titleCancelled = useRef(false);
+  useEffect(() => setTitleDraft(issue.title), [issue.id, issue.title]);
+  const issueType = settings.issueTypes?.find(type => type.id === issue.issueTypeId);
+  const typeColor = issueType?.color ?? ({ epic: "#a855f7", story: "#22c55e", bug: "#ef4444", task: "#3b82f6" }[issueType?.name.toLowerCase() ?? ""] ?? "#64748b");
+  const [keyCopied, setKeyCopied] = useState(false);
+  const [view, setView] = useState<"chat" | "all" | "issue" | "files">(() => {
     try {
       const saved = sessionStorage.getItem("issue-view");
-      return saved === "issue" || saved === "all" ? saved : "chat";
+      return saved === "issue" || saved === "all" || saved === "files" ? saved : "chat";
     } catch {
       return "chat";
     }
   });
-  const selectView = (value: "chat" | "all" | "issue") => {
+  useEffect(() => { if (!keyCopied) return; const timer = window.setTimeout(() => setKeyCopied(false), 2000); return () => window.clearTimeout(timer); }, [keyCopied]);
+  const selectView = (value: "chat" | "all" | "issue" | "files") => {
     setView(value);
     setReload((n) => n + 1);
     try {
@@ -161,6 +172,8 @@ export function IssuePanel({
       return String(value.filename);
     if (field === "stateId")
       return settings.states.find((s) => s.id === value)?.name ?? String(value);
+    if (field === "issueTypeId") return settings.issueTypes?.find(type => type.id === value)?.name ?? String(value);
+    if (field === "tagIds" && Array.isArray(value)) return value.map(id => settings.tags?.find(tag => tag.id === id)?.name ?? id).join(", ") || "None";
     if (field === "priorityId")
       return (
         settings.priorities.find((s) => s.id === value)?.name ?? String(value)
@@ -187,12 +200,15 @@ export function IssuePanel({
     description: "Description",
     stateId: "State",
     priorityId: "Priority",
+    issueTypeId: "Issue type",
+    tagIds: "Tags",
     assigneeId: "Assignee",
     authorId: "Author",
     parentId: "Parent",
     deletedAt: "Deleted at",
   };
   return (
+    <AttachmentGallery projectId={issue.projectId} issueId={issue.id} actions={actions.files}>
     <main className="chat-panel" aria-label={`${issue.key} issue`}>
       <header className="chat-header">
         <div className="chat-title-row">
@@ -202,9 +218,26 @@ export function IssuePanel({
             className="mobile-back"
             onClick={onBack}
           />
-          <span className="chat-task-id">{issue.key}</span>
+          <span className="issue-type-badge" style={{ color: typeColor, background: `color-mix(in srgb, ${typeColor} 14%, transparent)`, borderColor: `color-mix(in srgb, ${typeColor} 35%, transparent)` }}>{settings.issueTypes?.find(type => type.id === issue.issueTypeId)?.name ?? "No type"}</span>
+          <button type="button" className="chat-task-id issue-key-copy" title={keyCopied ? "Copied!" : "Click to copy key"} aria-label={keyCopied ? "Issue key copied" : `Copy issue key ${issue.key}`} onClick={async () => {
+            try { await navigator.clipboard.writeText(issue.key); setKeyCopied(true); }
+            catch { setError("Could not copy issue key."); }
+          }}>{issue.key}</button>
           <span className="title-divider">/</span>
-          <h2>{issue.title}</h2>
+          <h2>{issue.deletedAt ? issue.title : <input className="issue-inline-title" aria-label="Issue title" value={titleDraft} maxLength={ISSUE_TITLE_MAX_LENGTH} disabled={titleSaving} onChange={e => setTitleDraft(e.target.value)} onKeyDown={e => {
+            if (e.key === "Enter") e.currentTarget.blur();
+            if (e.key === "Escape") { titleCancelled.current = true; setTitleDraft(issue.title); e.currentTarget.blur(); }
+          }} onBlur={async () => {
+            if (titleCancelled.current) { titleCancelled.current = false; return; }
+            const title = titleDraft.trim();
+            if (!title) { setTitleDraft(issue.title); return; }
+            if (title === issue.title || titleSaving) return;
+            setTitleError("");
+            setTitleSaving(true);
+            try { await actions.save(issue, { title }); setTitleDraft(title); }
+            catch (cause) { setTitleError(cause instanceof Error ? cause.message : "Could not save title."); setTitleDraft(issue.title); }
+            finally { setTitleSaving(false); }
+          }} />}</h2>
           <div
             className="issue-view-selector"
             role="group"
@@ -228,15 +261,24 @@ export function IssuePanel({
               aria-pressed={view === "issue"}
               onClick={() => selectView("issue")}
             />
+            <IconButton icon="paperclip" label="Files" aria-pressed={view === "files"} onClick={() => selectView("files")} />
           </div>
           <div className="chat-actions">
+            {settings.jiraBaseUrl && issue.externalKey && (
+              <a className="issue-integration-link"
+                href={`${settings.jiraBaseUrl.replace(/\/$/, "")}/browse/${encodeURIComponent(issue.externalKey)}`}
+                target="_blank" rel="noreferrer" title={`Open ${issue.externalKey} in Jira`}>
+                <img src="/assets/integrations/jira.svg" alt="Jira" />
+                <span>{issue.externalKey}</span>
+              </a>
+            )}
             {!issue.deletedAt &&
               actions.pushJira &&
               actions.canPublish?.(issue.projectId) && (
                 <IconButton
-                  icon="jira"
+                  icon="check"
                   label={
-                    issue.externalId ? "Update Jira issue" : "Create in Jira"
+                    issue.externalId ? "Sync issue to Jira" : "Create in Jira"
                   }
                   disabled={busy}
                   onClick={async () => {
@@ -262,7 +304,7 @@ export function IssuePanel({
                   }}
                 />
               )}
-            <IconButton icon="link" label="Copy issue link" onClick={onCopy} />
+            <IconButton icon="copy" label="Copy issue link" onClick={onCopy} />
             {!issue.deletedAt && (
               <IconButton
                 icon="edit"
@@ -317,6 +359,7 @@ export function IssuePanel({
           />
         </div>
       </header>
+      {titleError && <p role="alert" className="project-error">{titleError}</p>}
       {jiraFeedback && (
         <p role="status" className="project-feedback">
           {jiraFeedback}
@@ -328,7 +371,7 @@ export function IssuePanel({
         issues={issues}
         members={members}
         actions={actions}
-        active={view !== "issue"}
+        active={view === "chat" || view === "all"}
         showHistory={view === "all"}
         tool={chatTool}
         setTool={setChatTool}
@@ -340,6 +383,9 @@ export function IssuePanel({
         onSelect={onSelect}
         valueLabel={valueLabel}
       />
+      {view === "files" && <div className="issue-content">
+        <IssueFiles projectId={issue.projectId} issueId={issue.id} deleted={!!issue.deletedAt} actions={actions.files} refreshKey={reload} onChange={() => { setReload((n) => n + 1); onActivityChange?.(); }} />
+      </div>}
       <div className="issue-content" hidden={view !== "issue"}>
         {issue.deletedAt && (
           <div className="issue-deleted" role="status">
@@ -401,6 +447,8 @@ export function IssuePanel({
                   </dd>
                 </div>
               ))}
+              <div><dt>Issue type</dt><dd>{settings.issueTypes?.find(type => type.id === issue.issueTypeId)?.name ?? "Not set"}</dd></div>
+              <div><dt>Tags</dt><dd className="issue-tags">{issue.tagIds?.length ? issue.tagIds.map(id => <span className="issue-tag" key={id}>{settings.tags?.find(tag => tag.id === id)?.name ?? id}</span>) : "No tags"}</dd></div>
               <div>
                 <dt>Priority</dt>
                 <dd>
@@ -641,6 +689,7 @@ export function IssuePanel({
         )}
       </div>
     </main>
+    </AttachmentGallery>
   );
 }
 function IssueEditor({
@@ -677,6 +726,8 @@ function IssueEditor({
     description: issue.description,
     stateId: issue.stateId,
     priorityId: issue.priorityId,
+    issueTypeId: issue.issueTypeId ?? null,
+    tagIds: issue.tagIds ?? [],
     parentId: issue.parentId,
     assigneeId: issue.assigneeId,
   }));
@@ -723,7 +774,7 @@ function IssueEditor({
           Title
           <Input
             required
-            maxLength={140}
+            maxLength={ISSUE_TITLE_MAX_LENGTH}
             value={fields.title}
             onChange={(e) => set("title", e.target.value)}
           />
@@ -732,7 +783,7 @@ function IssueEditor({
           Description
           <Textarea
             rows={6}
-            maxLength={100000}
+            maxLength={ISSUE_DESCRIPTION_MAX_LENGTH}
             value={fields.description}
             onChange={(e) => set("description", e.target.value)}
           />
@@ -852,6 +903,8 @@ function IssueEditor({
                 ))}
             </Select>
           </label>
+          <label>Issue type<Select value={fields.issueTypeId ?? ""} onChange={event => set("issueTypeId", event.target.value || null)}><option value="">Not set</option>{(settings.issueTypes ?? []).filter(type => !type.deletedAt || type.id === fields.issueTypeId).map(type => <option key={type.id} value={type.id}>{type.name}{type.deletedAt ? " (deleted)" : ""}</option>)}</Select></label>
+          <fieldset className="issue-tag-picker"><legend>Tags</legend>{(settings.tags ?? []).filter(tag => !tag.deletedAt || fields.tagIds?.includes(tag.id)).map(tag => <label key={tag.id}><input type="checkbox" checked={fields.tagIds?.includes(tag.id) ?? false} onChange={event => set("tagIds", event.target.checked ? [...(fields.tagIds ?? []), tag.id] : (fields.tagIds ?? []).filter(id => id !== tag.id))} />{tag.name}{tag.deletedAt ? " (deleted)" : ""}</label>)}{!settings.tags?.length && <p className="muted">Create tags in Project settings → Tags.</p>}</fieldset>
           <label>
             Priority
             <Select

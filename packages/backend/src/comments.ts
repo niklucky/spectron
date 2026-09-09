@@ -1,3 +1,5 @@
+import { commentSyncStates } from "./integrations/comment-sync-state";
+import { enqueueExport } from "./integrations/export-events";
 import { and, asc, eq, gt, inArray, isNull, or, sql } from "drizzle-orm";
 import { schema, type Database } from "@spectron/db";
 import {
@@ -327,11 +329,13 @@ export function createCommentService(db: Database) {
             tx,
             page.filter((r) => !r.comment.deletedAt).map((r) => r.comment.id),
           );
+        const syncStates = await commentSyncStates(tx, scope.projectId, page.map(r => r.comment));
         const last = page.at(-1)?.comment;
         return {
           comments: page.map(
             ({ comment: r, authorName, resolvedAuthorId, replyCount }) => ({
               id: r.id,
+              jiraSync: syncStates.get(r.id),
               issueId: r.issueId,
               parentId: r.parentId,
               authorId: resolvedAuthorId,
@@ -452,6 +456,7 @@ export function createCommentService(db: Database) {
           action: old ? "updated" : "created",
           changes,
         });
+        await enqueueExport(tx, input.projectId, input.issueId, row!.id, old ? "comment.update" : "comment.create");
         return { id: row!.id };
       });
     },

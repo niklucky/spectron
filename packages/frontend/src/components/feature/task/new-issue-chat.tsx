@@ -1,3 +1,4 @@
+import { ISSUE_DESCRIPTION_MAX_LENGTH } from "@spectron/shared";
 import { MessageComposer, MessageComposerActions } from "./message-composer";
 import type { IssueFileActions } from "./issue-files";
 import { useRef, useState } from "react";
@@ -39,7 +40,7 @@ export function NewIssueChat({
     setDraft((previous) =>
       `${previous}${previous && !/\s$/.test(previous) ? " " : ""}${text}`.slice(
         0,
-        100000,
+        ISSUE_DESCRIPTION_MAX_LENGTH,
       ),
     ),
   );
@@ -156,7 +157,7 @@ export function NewIssueChat({
             aria-label="First message"
             placeholder="Describe the issue…"
             value={draft}
-            maxLength={100000}
+            maxLength={ISSUE_DESCRIPTION_MAX_LENGTH}
             disabled={busy || voice.listening}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => {

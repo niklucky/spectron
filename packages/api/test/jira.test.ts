@@ -130,6 +130,8 @@ test("Jira project fields, import, publishing, conflicts and retry safety", asyn
     fields: {
       project: { key: "TEAM" },
       summary: "Imported issue",
+      labels: ["frontend", "urgent"],
+      issuetype: { id: "10001", name: "Story" },
       description: textToAdf("One\n\nTwo"),
       status: { id: "1", name: "Open" },
       priority: { id: "2", name: "Medium" },
@@ -352,7 +354,15 @@ test("Jira project fields, import, publishing, conflicts and retry safety", asyn
     issueTypeId: "10001",
   };
   await assert.rejects(jira.save("member", p.id, config));
-  const saved = await jira.save("owner", p.id, config);
+  await assert.rejects(jira.test("member", p.id, config));
+  await assert.rejects(jira.test("outsider", p.id, config));
+  assert.ok((await jira.test("owner", p.id, config)).issueTypes.length);
+  assert.equal(await jira.get("owner", p.id), null, "Testing must not save a connection");
+  const saved = await jira.save("owner", p.id, { ...config, issueTypeId: "" });
+  assert.equal(saved.issueTypeId, config.issueTypeId, "New connections provision a valid default before mapping");
+  const beforeTest = await jira.get("owner", p.id);
+  await jira.test("owner", p.id, { ...config, apiToken: "", issueTypeId: "other" });
+  assert.deepEqual(await jira.get("owner", p.id), beforeTest, "Testing must not modify credentials or mappings");
   await jira.save("outsider", q.id, config);
   const beforeAuto = await issues.settings("outsider", q.id);
   const autoMapped = await jira.prepare("outsider", q.id);
@@ -384,7 +394,15 @@ test("Jira project fields, import, publishing, conflicts and retry safety", asyn
   assert.ok(!JSON.stringify(saved).includes('"token"'));
   await assert.rejects(jira.get("outsider", p.id));
   assert.equal((await jira.discover("owner", p.id)).issueTypes[0]!.id, "10001");
+  remote.fields.summary = "T".repeat(256);
+  await assert.rejects(jira.import("owner", p.id, "100"), /Jira title has 256 characters; Spectron allows 255/);
+  remote.fields.summary = "T".repeat(153);
+  const originalDescription = remote.fields.description;
+  remote.fields.description = textToAdf("D".repeat(100001));
+  await assert.rejects(jira.import("owner", p.id, "100"), /Jira description has 100001 characters; Spectron allows 100,000/);
+  remote.fields.description = originalDescription;
   const autoImported = await jira.import("owner", p.id, "100");
+  assert.equal((await issues.list("owner", p.id)).find(issue => issue.id === autoImported.id)?.title, remote.fields.summary);
   assert.equal((await issues.list("owner", p.id)).length, 1);
   const identity = (await issues.settings("owner", p.id))
     .externalIdentities![0]!;
@@ -406,6 +424,7 @@ test("Jira project fields, import, publishing, conflicts and retry safety", asyn
     parentId: null,
   });
   assert.equal(importedComments.comments.length, 2);
+  assert.equal(importedComments.comments[0]!.jiraSync, "synced");
   assert.equal(importedComments.comments[0]!.authorName, "Jira Owner");
   assert.equal(importedComments.comments[0]!.canEdit, false);
   const worklogService = createWorklogService(db);
@@ -442,6 +461,7 @@ test("Jira project fields, import, publishing, conflicts and retry safety", asyn
     }),
   );
   const mapping = {
+    issueTypes: { "10001": settings.issueTypes![0]!.id },
     statuses: {
       "1": settings.states[0]!.id,
       "3": settings.states.find((s) => s.trigger === "finished")!.id,
@@ -449,6 +469,7 @@ test("Jira project fields, import, publishing, conflicts and retry safety", asyn
     priorities: { "2": settings.priorities[0]!.id },
     users: { "jira-owner": "owner" },
     fields: {
+      labels: "issue:tags",
       customfield_1: points.id,
       customfield_2: due.id,
       customfield_3: reviewer.id,
@@ -469,6 +490,18 @@ test("Jira project fields, import, publishing, conflicts and retry safety", asyn
   let rows = await issues.list("owner", p.id);
   assert.equal(rows.length, 1);
   let row = rows[0]!;
+  assert.equal(row.issueTypeId, settings.issueTypes![0]!.id);
+  assert.equal(row.tagIds!.length, 2);
+  assert.equal((await pool.query("select * from tags where project_id=$1", [p.id])).rowCount, 2);
+  remote.fields.labels = [];
+  await jira.import("owner", p.id, "100");
+  row = (await issues.list("owner", p.id))[0]!;
+  assert.deepEqual(row.tagIds, []);
+  remote.fields.labels = ["frontend", "urgent"];
+  await jira.import("owner", p.id, "100");
+  row = (await issues.list("owner", p.id))[0]!;
+  assert.equal(row.tagIds!.length, 2);
+  assert.equal((await pool.query("select * from tags where project_id=$1", [p.id])).rowCount, 2);
   assert.equal(row.externalId, "100");
   assert.equal(row.externalKey, "TEAM-1");
   assert.equal(row.key, "SP-1");
@@ -513,6 +546,8 @@ test("Jira project fields, import, publishing, conflicts and retry safety", asyn
   await assert.rejects(jira.pushIssue("owner", p.id, row.id), /Jira changed/);
   await jira.pushIssue("owner", p.id, row.id, true);
   assert.equal(remote.fields.summary, "Local edit");
+  assert.deepEqual((remote.fields.labels as string[]).slice().sort(), ["frontend", "urgent"]);
+  assert.equal(remote.fields.issuetype?.id, "10001");
   row = (await issues.list("owner", p.id))[0]!;
   await issues.update("owner", {
     projectId: p.id,
@@ -542,9 +577,13 @@ test("Jira project fields, import, publishing, conflicts and retry safety", asyn
     body: [{ type: "text", text: "Local comment" }],
     files: [],
   });
+  const syncState = async () => (await comments.list("owner", { projectId: p.id, issueId: row.id, parentId: null })).comments.find(c => c.id === comment.id)!.jiraSync;
+  assert.equal(await syncState(), "unsynced");
   await jira.pushComment("owner", p.id, comment.id);
+  assert.equal(await syncState(), "synced");
   await jira.pushComment("owner", p.id, comment.id);
   assert.equal(commentCreates, 1);
+  assert.equal(await syncState(), "synced");
   const localComment = (
     await pool.query("select * from issue_comments where id=$1", [comment.id])
   ).rows[0];
@@ -556,8 +595,10 @@ test("Jira project fields, import, publishing, conflicts and retry safety", asyn
     body: [{ type: "text", text: "Edited comment" }],
     files: [],
   });
+  assert.equal(await syncState(), "unsynced");
   await jira.pushComment("owner", p.id, comment.id);
   assert.equal(commentCreates, 1);
+  assert.equal(await syncState(), "synced");
   assert.equal(adfToText(remoteComments.at(-1)!.body), "Edited comment");
   const localNew = await issues.create("owner", {
     projectId: p.id,

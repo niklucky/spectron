@@ -5,7 +5,7 @@ import type {
   ProjectMemberSummary,
   InvitationSummary,
 } from "@spectron/shared";
-import { Dialog } from "../../ui/dialog";
+import { IntegrationOverview, type IntegrationSummary } from "./integration-overview";
 import { Button } from "../../ui/button";
 import { Input } from "../../ui/input";
 import {
@@ -27,31 +27,31 @@ export type ProjectSettingsActions = {
   cancel: (id: string) => Promise<InvitationSummary>;
   discoverLogo: (url: string) => Promise<{ logo: string | null }>;
 };
-export function ProjectSettingsDialog({
+export function ProjectSettingsPage({
   project,
   actions,
   onClose,
   yandexSettings,
   externalBusy = false,
+  loadIntegrations,
 }: {
+  loadIntegrations: () => Promise<IntegrationSummary[]>;
   yandexSettings?: ReactNode;
   externalBusy?: boolean;
   project: ProjectSummary;
   actions: ProjectSettingsActions;
   onClose: () => void;
 }) {
-  const [provider, setProvider] = useState("jira");
+  const [provider, setProvider] = useState<string | null>(null);
   const [tab, setTab] = useState("general");
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
   return (
-    <Dialog
-      title={`${project.name} settings`}
-      className="project-settings-dialog"
-      onClose={() => {
-        if (!busy && !externalBusy) onClose();
-      }}
-    >
+    <main className="project-settings-page">
+      <header className="project-settings-header">
+        <Button variant="ghost" className="navigation-button" disabled={busy || externalBusy} onClick={onClose}>← Back to project</Button>
+        <h1>{project.name} settings</h1>
+      </header>
       <div className="project-settings-layout">
         <nav
           className="project-settings-nav"
@@ -63,6 +63,8 @@ export function ProjectSettingsDialog({
               "members",
               "states",
               "priorities",
+              "types",
+              "tags",
               "fields",
               "integrations",
             ] as const
@@ -71,7 +73,7 @@ export function ProjectSettingsDialog({
               key={item}
               aria-current={tab === item ? "page" : undefined}
               disabled={busy || externalBusy}
-              onClick={() => setTab(item)}
+              onClick={() => { setTab(item); setProvider(null); }}
             >
               {item.charAt(0).toUpperCase() + item.slice(1)}
             </button>
@@ -114,37 +116,19 @@ export function ProjectSettingsDialog({
               onBusyChange={setBusy}
             />
           ) : tab === "integrations" ? (
-            <>
-              <label>
-                Integration
-                <select
-                  aria-label="Integration provider"
-                  value={provider}
-                  disabled={busy || externalBusy}
-                  onChange={(event) => setProvider(event.target.value)}
-                >
-                  <option value="jira">Jira</option>
-                  {yandexSettings && (
-                    <option value="yandex">Yandex Tracker</option>
-                  )}
-                </select>
-              </label>
-              {provider === "jira" ? (
-                <JiraSettings
-                  actions={actions.jira}
-                  owner={project.role === "owner"}
-                  onBusyChange={setBusy}
-                />
-              ) : (
-                yandexSettings
-              )}
-            </>
-          ) : tab === "states" || tab === "priorities" ? (
+            provider ? (
+              <>
+                <Button variant="ghost" className="navigation-button" disabled={busy || externalBusy} onClick={() => setProvider(null)}>← Integrations</Button>
+                
+                {provider === "jira" ? <JiraSettings actions={actions.jira} owner={project.role === "owner"} onBusyChange={setBusy} /> : yandexSettings}
+              </>
+            ) : <IntegrationOverview owner={project.role === "owner"} load={loadIntegrations} onSelect={setProvider} />
+          ) : ["states", "priorities", "types", "tags"].includes(tab) ? (
             <ProjectIssueSettings
               key={tab}
               projectId={project.id}
               owner={project.role === "owner"}
-              kind={tab === "states" ? "state" : "priority"}
+              kind={tab === "states" ? "state" : tab === "types" ? "type" : tab === "tags" ? "tag" : "priority"}
               actions={actions.issueSettings}
               onBusyChange={setBusy}
             />
@@ -157,7 +141,7 @@ export function ProjectSettingsDialog({
           )}
         </section>
       </div>
-    </Dialog>
+    </main>
   );
 }
 

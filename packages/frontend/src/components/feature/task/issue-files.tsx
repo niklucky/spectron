@@ -1,3 +1,4 @@
+import { useAttachmentGallery } from "./attachment-gallery";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   filePreviewKind,
@@ -55,6 +56,7 @@ export function IssueFiles({
   onChange: () => void;
   refreshKey?: number;
 }) {
+  const openGallery = useAttachmentGallery();
   const [files, setFiles] = useState<IssueAttachmentSummary[]>([]);
   const [maxBytes, setMaxBytes] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
@@ -198,7 +200,7 @@ export function IssueFiles({
           return (
             <li key={file.attachmentId}>
               {kind === "image" && (
-                <a href={url} target="_blank" rel="noreferrer">
+                <a href={url} onClick={event => { if (openGallery && !event.metaKey && !event.ctrlKey) { event.preventDefault(); openGallery(file); } }} target="_blank" rel="noreferrer">
                   <img
                     className="issue-file-image"
                     src={url}
@@ -235,7 +237,7 @@ export function IssueFiles({
                 </a>
                 <small>{sizeLabel(file.sizeBytes)}</small>
               </div>
-              {!deleted && (
+              {!deleted && file.canUnlink !== false && (
                 <Button
                   variant="ghost"
                   disabled={busy}

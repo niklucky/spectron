@@ -597,6 +597,29 @@ test("Persistent issues, workflow configuration and audit integrity", async (t) 
       );
     },
   );
+  await t.test("tags and issue types are project-scoped, audited and retained after removal", async () => {
+    const service = createIssueService(db);
+    const tag = await service.saveOption(owner.id, { projectId: p.id, kind: "tag", name: "frontend", position: 0, color: null });
+    const second = await service.saveOption(owner.id, { projectId: p.id, kind: "tag", name: "urgent", position: 1, color: null });
+    const foreign = await service.saveOption(owner.id, { projectId: q.id, kind: "tag", name: "foreign", position: 0, color: null });
+    const typeId = settings.issueTypes![0]!.id;
+    await assert.rejects(service.saveOption(member.id, { projectId: p.id, kind: "tag", name: "forbidden", position: 0, color: null }));
+    await assert.rejects(create("Foreign tag", { tagIds: [foreign.id] }));
+    await assert.rejects(create("Foreign type", { issueTypeId: otherSettings.issueTypes![0]!.id }));
+    await assert.rejects(create("Duplicate tag", { tagIds: [tag.id, tag.id] }));
+    let tagged = await create("Tagged", { tagIds: [tag.id, second.id], issueTypeId: typeId });
+    const another = await create("Shared tag", { tagIds: [tag.id] });
+    assert.deepEqual(tagged.tagIds, [tag.id, second.id].sort());
+    assert.equal(tagged.issueTypeId, typeId);
+    assert.deepEqual((await service.list(owner.id, p.id)).find(row => row.id === another.id)!.tagIds, [tag.id]);
+    tagged = await update(tagged, { tagIds: [], issueTypeId: null }, member);
+    assert.deepEqual(tagged.tagIds, []);
+    const history = await service.history(owner.id, p.id, tagged.id, 0);
+    assert.ok(history.some(entry => entry.changes.tagIds && entry.changes.issueTypeId));
+    await service.deleteOption(owner.id, { projectId: p.id, kind: "tag", id: tag.id });
+    assert.deepEqual((await service.list(owner.id, p.id)).find(row => row.id === another.id)!.tagIds, [tag.id]);
+    await assert.rejects(create("Deleted tag", { tagIds: [tag.id] }));
+  });
   await t.test(
     "archive retains readable issues and history but blocks writes",
     async () => {

@@ -1,3 +1,7 @@
+import { createFileService } from "../files";
+import { ISSUE_TITLE_MAX_LENGTH, ISSUE_DESCRIPTION_MAX_LENGTH } from "@spectron/shared";
+import { exportWorklog } from "./export-worklogs";
+import { stable } from "./jira";
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { schema, type Database } from "@spectron/db";
@@ -100,6 +104,7 @@ export function createTrackerService(
       c.organizationType === "360" ? c.organizationId : undefined,
       c.organizationType === "cloud" ? c.organizationId : undefined,
     ),
+  files?: ReturnType<typeof createFileService>,
 ) {
   async function lock(tx: Tx, projectId: string) {
     const result = await tx.execute(
@@ -338,13 +343,13 @@ export function createTrackerService(
         externalId: String(remote.id),
         externalKey: remote.key,
       };
-      if (
-        !values.title ||
-        values.title.length > 140 ||
-        values.description.length > 100000
-      )
+      if (!values.title || values.title.length > ISSUE_TITLE_MAX_LENGTH)
         throw new IssueInputError(
-          `Title must contain 1–140 characters (received ${values.title?.length ?? 0}); description limit is 100,000 characters (received ${values.description.length}).`,
+          `Yandex title must contain 1–${ISSUE_TITLE_MAX_LENGTH} characters (received ${values.title?.length ?? 0}).`,
+        );
+      if (values.description.length > ISSUE_DESCRIPTION_MAX_LENGTH)
+        throw new IssueInputError(
+          `Yandex description has ${values.description.length} characters; Spectron allows ${ISSUE_DESCRIPTION_MAX_LENGTH.toLocaleString("en-US")}.`,
         );
       const now = new Date(
         Math.max(Date.now(), (current?.updatedAt.getTime() ?? 0) + 1),
@@ -564,6 +569,7 @@ export function createTrackerService(
           queue: c.queue,
           mappings: c.mappings,
           hasToken: true,
+          createdAt: c.createdAt.toISOString(),
         };
       });
     },
@@ -614,6 +620,23 @@ export function createTrackerService(
         return { saved: true };
       });
     },
+    async test(actor: string, input: Omit<TrackerInput, "mappings">) {
+      const saved = await db.transaction(async (tx) => {
+        await issueAccess(tx, actor, input.projectId, false, true);
+        const [row] = await tx.select().from(integration).where(eq(integration.projectId, input.projectId));
+        return row;
+      });
+      const token = input.token ? sealToken(input.token, secret) : saved?.token;
+      if (!token) throw new IssueInputError("Enter an OAuth token.");
+      const preview: Config = {
+        id: saved?.id ?? "connection-test", projectId: input.projectId,
+        organizationId: input.organizationId, organizationType: input.organizationType,
+        queue: input.queue, token, mappings: { statuses: {}, priorities: {}, fields: {}, users: {} },
+        createdAt: saved?.createdAt ?? new Date(), updatedAt: saved?.updatedAt ?? new Date(),
+      };
+      await factory(preview).getQueue(input.queue);
+      return { success: true };
+    },
     async metadata(actor: string, projectId: string) {
       const c = await db.transaction((tx) => config(tx, actor, projectId));
       const client = factory(c);
@@ -645,6 +668,7 @@ export function createTrackerService(
       projectId: string,
       direction: "import" | "push",
       overwriteConflicts = false,
+      target?: { issueId: string; commentId?: string; worklogId?: string; remove?: boolean; reconcileId?: string },
     ) {
       // Reject unauthorized callers before occupying a sync slot.
       await db.transaction(async (tx) => {
@@ -713,6 +737,23 @@ export function createTrackerService(
                   id,
                   overwriteConflicts,
                 );
+                if (files) for (const attachment of await client.getAttachments(remote.key)) {
+                  const externalId = `yandex:${c.id}:${attachment.id}`;
+                  const [saved] = await db.select().from(schema.projectFile).where(and(
+                    eq(schema.projectFile.projectId, c.projectId), eq(schema.projectFile.externalId, externalId),
+                  ));
+                  let projectFileId = saved?.id;
+                  if (!projectFileId) {
+                    const uploaded = await files.upload(actor, c.projectId, attachment.name,
+                      await client.downloadAttachment(remote.key, String(attachment.id), attachment.name), attachment.size);
+                    projectFileId = uploaded.projectFileId;
+                    await db.update(schema.projectFile).set({ externalId }).where(eq(schema.projectFile.id, projectFileId));
+                    await db.update(schema.storedFile).set({
+                      externalId, ...(attachment.createdAt ? { createdAt: new Date(attachment.createdAt) } : {}),
+                    }).where(eq(schema.storedFile.id, uploaded.id));
+                  }
+                  await files.link(actor, { projectId: c.projectId, issueId: id, sourceProjectId: c.projectId, projectFileId });
+                }
                 processed++;
               } catch (error) {
                 errors.push(
@@ -730,7 +771,7 @@ export function createTrackerService(
             .select()
             .from(issue)
             .where(
-              and(eq(issue.projectId, projectId), isNull(issue.deletedAt)),
+              and(eq(issue.projectId, projectId), isNull(issue.deletedAt), target ? eq(issue.id, target.issueId) : undefined),
             );
           for (const row of rows) {
             try {
@@ -742,9 +783,9 @@ export function createTrackerService(
                 ? await client.getIssue(link.externalKey!)
                 : undefined;
               if (
-                overwriteConflicts ||
+                (!target?.commentId && !target?.worklogId) && (overwriteConflicts ||
                 !link ||
-                row.updatedAt.getTime() !== link.localUpdatedAt.getTime()
+                row.updatedAt.getTime() !== link.localUpdatedAt.getTime())
               ) {
                 if (
                   !overwriteConflicts &&
@@ -870,7 +911,43 @@ export function createTrackerService(
                 }
                 await checkpoint(c, "issue", row.id, row.updatedAt, remote);
               }
-              if (!remote) continue;
+              if (!remote) {
+                if (target) throw new IssueInputError("Export the issue before its comments or worklogs.");
+                continue;
+              }
+              // Child writes advance Tracker's issue timestamp too. Refresh that
+              // checkpoint only if mapped issue values stayed unchanged, preserving
+              // unrelated remote edits as conflicts.
+              const issueBeforeChildren = remote;
+              const checkpointAfterChildren = async () => {
+                const [before] = await db.select().from(entity).where(identity(c, "issue", row.id));
+                if (!before || before.remoteUpdatedAt !== issueBeforeChildren.updatedAt) return;
+                const after = await client.getIssue(issueBeforeChildren.key);
+                const mappedContent = (r: YTIssue) => ({
+                  summary: r.summary, description: r.description,
+                  status: r.status?.id, priority: r.priority?.id,
+                  assignee: r.assignee ? trackerUserId(r.assignee) : null,
+                  fields: Object.fromEntries(Object.entries(c.mappings.fields).filter(([, local]) => !!local).map(([key]) => [key, r[key]])),
+                });
+                if (stable(mappedContent(after)) === stable(mappedContent(issueBeforeChildren))) {
+                  await db.update(entity).set({ remoteUpdatedAt: after.updatedAt }).where(and(identity(c, "issue", row.id), eq(entity.remoteUpdatedAt, before.remoteUpdatedAt)));
+                }
+              };
+              if (target?.worklogId) {
+                const [log] = await db.select().from(schema.issueWorklog).where(and(eq(schema.issueWorklog.id, target.worklogId), eq(schema.issueWorklog.issueId, row.id)));
+                if (!log) throw new IssueInputError("Worklog not found.");
+                const key = remote.key;
+                await exportWorklog(db, {
+                  provider: "tracker", projectId, row: log, remove: !!target.remove, reconcileId: target.reconcileId,
+                  list: () => client.getWorklogs(key),
+                  create: () => client.addWorklog(key, { start: log.startedAt, durationMinutes: log.durationSeconds / 60, comment: log.description }),
+                  delete: id => client.deleteWorklog(key, id), fingerprint: stable,
+                });
+                await checkpointAfterChildren();
+                processed++;
+                continue;
+              }
+              if (target && !target.commentId) { processed++; continue; }
               const remoteComments = await client.getComments(remote.key);
               const comments = await db
                 .select()
@@ -878,6 +955,7 @@ export function createTrackerService(
                 .where(
                   and(
                     eq(issueComment.issueId, row.id),
+                    target?.commentId ? eq(issueComment.id, target.commentId) : undefined,
                     isNull(issueComment.deletedAt),
                   ),
                 );
@@ -940,8 +1018,10 @@ export function createTrackerService(
                     .where(eq(issueComment.id, comment.id));
                 });
               }
+              await checkpointAfterChildren();
               processed++;
             } catch (error) {
+              if (target) throw error;
               errors.push(
                 error instanceof IssueInputError ||
                   error instanceof IssueConflictError

@@ -1,4 +1,5 @@
 const paths = {
+  copy: "M9 9h12v12H9z M15 9V3H3v12h6",
   chat: "M4 4h16v12H9l-5 4z",
   history: "M3 11a9 9 0 1 1 2 7 M3 4v7h7 M12 7v5l3 2",
   edit: "M4 16L16 4l4 4L8 20H4z M14 6l4 4",
@@ -14,6 +15,7 @@ const paths = {
   plus: "M12 5v14 M5 12h14",
   search: "M10.5 3a7.5 7.5 0 1 0 0 15 7.5 7.5 0 0 0 0-15 M16 16l5 5",
   chevron: "M8 10l4 4 4-4",
+  reply: "M9 5l-6 6 6 6 M3 11h10a8 8 0 0 1 8 8",
   back: "M15 5l-7 7 7 7",
   arrow: "M12 19V5 M6 11l6-6 6 6",
   more: "M5 12h.01 M12 12h.01 M19 12h.01",

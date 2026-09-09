@@ -1,6 +1,6 @@
 # Text and color tokens
 
-The CSS files in this directory are the source of truth. Their values preserve the slate light theme and blue-gray dark theme. They are plain CSS custom properties, usable by any web framework.
+The CSS files in this directory are the source of truth. Content surfaces are white in light mode and black in dark mode, with slate backgrounds reserved for the main navigation sidebar. Interaction, badge, and message colors remain distinct. They are plain CSS custom properties, usable by any web framework.
 
 ## Typography
 

@@ -4,6 +4,8 @@ import { serve } from "@hono/node-server";
 import { createDatabase, getDatabaseURL } from "@spectron/db";
 import {
   createAuth,
+  createExportService,
+  createTrackerService,
   createFileService,
   createJiraService,
   createJiraScheduler,
@@ -71,6 +73,7 @@ const stopScheduler = createJiraScheduler(
     apiOptions.integrationSecret,
   ),
 ).start();
+const stopExports = createExportService(db, createJiraService(db, createFileService(db, apiOptions.fileStorage), apiOptions.integrationSecret), createTrackerService(db)).start();
 const server = serve(
   { fetch: api.fetch, port, hostname: process.env.API_HOST || "127.0.0.1" },
   () => {
@@ -80,7 +83,7 @@ const server = serve(
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.once(signal, () => {
     server.close(() => {
-      void stopScheduler()
+      void Promise.all([stopScheduler(), stopExports()])
         .then(() => pool.end())
         .then(() => process.exit(0));
     });

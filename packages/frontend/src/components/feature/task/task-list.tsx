@@ -124,7 +124,7 @@ export function TaskList({
         ))}
         {!loading && !error && !tasks.length && (
           <div className="list-empty">
-            {query || filter.values.length > 0 || filter.deleted ? (
+            {query || filter.values.length > 0 || filter.typeIds?.length || filter.deleted ? (
               <>
                 No tasks found.
                 <button onClick={onClearFilters}>Clear filters</button>

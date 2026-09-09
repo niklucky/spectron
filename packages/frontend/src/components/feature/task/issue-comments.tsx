@@ -1,3 +1,5 @@
+import { Menu } from "../../ui/menu";
+import { useAttachmentGallery } from "./attachment-gallery";
 import { UserInfo } from "../../ui/avatar";
 import { MessageComposer, MessageComposerActions } from "./message-composer";
 import { MessageMarkdown } from "../../ui/message-markdown";
@@ -5,6 +7,7 @@ import { Icon } from "../../ui/icon";
 import { useDictation } from "./use-dictation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  trackerImages,
   commentDraftText,
   commentBodyFromText,
   moveMentionRanges,
@@ -238,12 +241,12 @@ export function CommentItem({
         />
       ) : (
         <>
-          <div className="comment-body">
+          {row.body.some(n => n.type !== "text" || n.text.trim()) && <div className="comment-body">
             {row.body.every((n) => n.type === "text") ? (
-              <MessageMarkdown
+              <AttachmentMarkdown files={row.attachments}
                 text={row.body
                   .map((n) => (n.type === "text" ? n.text : ""))
-                  .join("")}
+                  .join("").trim()}
               />
             ) : (
               row.body.map((n, i) =>
@@ -263,14 +266,18 @@ export function CommentItem({
                 ),
               )
             )}
-          </div>
-          <CommentMedia files={row.attachments} />
+          </div>}
+          <CommentMedia files={nonInlineFiles(row.body.map(n => n.type === "text" ? n.text : "").join(""), row.attachments)} />
         </>
       )}
       {jiraFeedback && <p role="status">{jiraFeedback}</p>}
-      <div className="comment-actions">
+      {!row.deletedAt && row.jiraSync && row.jiraSync !== "synced" && (
+        <p className="comment-sync-state" role="status">{row.jiraSync === "pending" ? "Waiting to sync with Jira" : row.jiraSync === "syncing" ? "Syncing with Jira…" : row.jiraSync === "failed" ? "Jira sync failed" : "Not synced with Jira"}</p>
+      )}
+      <div className="comment-actions message-actions">
         {!row.deletedAt &&
           !context.deleted &&
+          (row.jiraSync === "unsynced" || row.jiraSync === "failed") &&
           context.actions.pushJira &&
           context.actions.canPublish?.(context.scope.projectId) && (
             <Button
@@ -299,7 +306,7 @@ export function CommentItem({
                 }
               }}
             >
-              Send comment to Jira
+              <Icon name="jira" size={14} /> Send comment to Jira
             </Button>
           )}
         {!context.deleted && (
@@ -308,7 +315,7 @@ export function CommentItem({
             disabled={busy || mode !== null}
             onClick={() => setMode("reply")}
           >
-            Reply
+            <Icon name="reply" size={16} /> Reply
           </Button>
         )}
         {row.canEdit && !context.deleted && (
@@ -317,7 +324,7 @@ export function CommentItem({
             disabled={busy || mode !== null}
             onClick={() => setMode("edit")}
           >
-            Edit comment
+            <Icon name="edit" size={14} /> Edit comment
           </Button>
         )}
         {row.canDelete && !context.deleted && (
@@ -345,7 +352,7 @@ export function CommentItem({
               }
             }}
           >
-            Delete comment
+            <Icon name="close" size={14} /> Delete comment
           </Button>
         )}
         {!flat && (row.replyCount > 0 || expanded) && (
@@ -410,16 +417,35 @@ export function CommentItem({
     </article>
   );
 }
+export function AttachmentMarkdown({ text, files }: { text: string; files: ProjectFileSummary[] }) {
+  const openGallery = useAttachmentGallery();
+  return <MessageMarkdown text={text} renderImage={image => {
+    const file = files.find(file => file.inlineExternalId === image.id && filePreviewKind(file.contentType) === "image");
+    if (!file) return null;
+    const url = projectFileURL(file.projectId, file.projectFileId);
+    return <a href={url} title={file.filename} target="_blank" rel="noreferrer"
+      onClick={event => { if (openGallery && !event.metaKey && !event.ctrlKey) { event.preventDefault(); openGallery(file); } }}>
+      <img src={url} alt={image.filename || file.filename} loading="lazy"
+        style={{ maxWidth: "100%", height: "auto", width: image.width || undefined, verticalAlign: "middle" }} />
+    </a>;
+  }} />;
+}
+export function nonInlineFiles(text: string, files: ProjectFileSummary[]) {
+  const ids = new Set(trackerImages(text).map(image => image.id));
+  return files.filter(file => !file.inlineExternalId || !ids.has(file.inlineExternalId) || filePreviewKind(file.contentType) !== "image");
+}
 export function CommentMedia({ files }: { files: ProjectFileSummary[] }) {
+  const openGallery = useAttachmentGallery();
+  if (!files.length) return null;
   return (
-    <ul className="issue-file-grid">
+    <ul className="issue-file-grid message-file-grid">
       {files.map((file) => {
         const url = projectFileURL(file.projectId, file.projectFileId),
           kind = filePreviewKind(file.contentType);
         return (
           <li key={file.projectFileId}>
             {kind === "image" && (
-              <a href={url} target="_blank" rel="noreferrer">
+              <a href={url} onClick={event => { if (openGallery && !event.metaKey && !event.ctrlKey) { event.preventDefault(); openGallery(file); } }} target="_blank" rel="noreferrer" title={file.filename}>
                 <img
                   className="issue-file-image"
                   src={url}
@@ -444,9 +470,10 @@ export function CommentMedia({ files }: { files: ProjectFileSummary[] }) {
                 aria-label={file.filename}
               />
             )}
-            <a href={projectFileURL(file.projectId, file.projectFileId, true)}>
-              {file.filename}
-            </a>
+            {kind !== "image" && <a className="message-file-download" href={projectFileURL(file.projectId, file.projectFileId, true)}>
+              <Icon name="file" size={16} />
+              <span>{file.filename}</span>
+            </a>}
           </li>
         );
       })}
@@ -743,24 +770,16 @@ export function CommentEditor({
         </ul>
         {chat ? (
           <div className="new-issue-toolbar">
-            <button
-              type="button"
+            <Menu
+              label="Add attachments"
+              icon="plus"
               className="new-issue-attach"
-              aria-label="Add attachments"
-              title="Add attachments or drop files here"
               disabled={busy || files.length >= 20}
-              onClick={() => upload.current?.click()}
-            >
-              <Icon name="plus" size={18} />
-            </button>
-            <button
-              type="button"
-              className="message-preview-toggle"
-              disabled={busy || files.length >= 20}
-              onClick={() => setPicker(true)}
-            >
-              Reuse file
-            </button>
+              items={[
+                { label: "Upload", onSelect: () => upload.current?.click() },
+                { label: "Choose from gallery", onSelect: () => setPicker(true) },
+              ]}
+            />
             <MessageComposerActions
               preview={preview}
               setPreview={setPreview}
@@ -814,11 +833,6 @@ export function CommentEditor({
         {voice.error && (
           <p role="alert" className="project-error">
             {voice.error}
-          </p>
-        )}
-        {chat && (
-          <p className="new-issue-hint">
-            Shift+Enter for a new line. Type @ to mention someone.
           </p>
         )}
         {status && <p role="status">{status}</p>}

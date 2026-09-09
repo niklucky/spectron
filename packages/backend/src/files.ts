@@ -1,10 +1,12 @@
+import { trackerImages } from "@spectron/shared";
+import { referencedAttachmentIds } from "./integrations/attachment-references";
 import { createWriteStream } from "node:fs";
 import { mkdir, rename, stat } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { fileTypeFromFile } from "file-type";
-import { and, asc, desc, eq, ilike, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, ilike, inArray, isNull } from "drizzle-orm";
 import { schema, type Database } from "@spectron/db";
 import {
   createId,
@@ -270,7 +272,7 @@ export function createFileService(db: Database, config?: FileStorageConfig) {
       return db.transaction(async (tx) => {
         await member(tx, userId, projectId);
         const [owner] = await tx
-          .select({ id: issue.id })
+          .select({ id: issue.id, description: issue.description })
           .from(issue)
           .where(and(eq(issue.id, issueId), eq(issue.projectId, projectId)));
         if (!owner) throw new ProjectAccessError("Issue not found.");
@@ -296,16 +298,67 @@ export function createFileService(db: Database, config?: FileStorageConfig) {
             ),
           )
           .orderBy(asc(issueAttachment.position), asc(issueAttachment.id));
-        return rows.map(
+        const comments = await tx.select({ id: schema.issueComment.id, body: schema.issueComment.body }).from(schema.issueComment)
+          .where(eq(schema.issueComment.issueId, issueId));
+        const records = await tx.select({ localId: schema.integrationRecord.localId, kind: schema.integrationRecord.kind, remote: schema.integrationRecord.remoteHash })
+          .from(schema.integrationRecord)
+          .innerJoin(schema.jiraIntegration, eq(schema.jiraIntegration.id, schema.integrationRecord.integrationId))
+          .where(and(eq(schema.jiraIntegration.projectId, projectId), inArray(schema.integrationRecord.localId, [issueId, ...comments.map((c) => c.id)])));
+        const candidates = rows.map((r) => ({ id: r.association.id, externalId: r.association.externalId, filename: r.file.filename }));
+        const description = new Set<string>();
+        const commentIds = new Map<string, string[]>();
+        for (const row of rows) {
+          if (!row.association.externalId?.startsWith("yandex:")) continue;
+          const externalId = row.association.externalId.split(":").at(-1);
+          if (trackerImages(owner.description).some(image => image.id === externalId)) description.add(row.association.id);
+          for (const comment of comments) {
+            const text = comment.body.map(node => node.type === "text" ? node.text : "").join("");
+            if (trackerImages(text).some(image => image.id === externalId))
+              commentIds.set(row.association.id, [...(commentIds.get(row.association.id) ?? []), comment.id]);
+          }
+        }
+
+        const nativeLinks = comments.length ? await tx.select().from(schema.commentAttachment)
+          .where(and(eq(schema.commentAttachment.projectId, projectId), isNull(schema.commentAttachment.deletedAt), inArray(schema.commentAttachment.commentId, comments.map((c) => c.id)))) : [];
+        for (const link of nativeLinks) {
+          if (comments.some((c) => c.id === link.commentId))
+            commentIds.set(link.projectFileId, [...(commentIds.get(link.projectFileId) ?? []), link.commentId]);
+        }
+        for (const record of records) {
+          if (record.localId !== issueId && !comments.some((c) => c.id === record.localId)) continue;
+          let document: unknown;
+          try { document = JSON.parse(record.remote ?? "null"); } catch { continue; }
+          if (record.kind === "issue") document = (document as { description?: unknown })?.description;
+          else if (record.kind !== "comment") continue;
+          for (const id of referencedAttachmentIds(document, candidates)) {
+            if (record.kind === "issue") description.add(id);
+            else commentIds.set(id, [...new Set([...(commentIds.get(id) ?? []), record.localId])]);
+          }
+        }
+        const commentFiles = nativeLinks.length ? await tx.select({ file, association: projectFile, projectName: project.name })
+          .from(projectFile).innerJoin(file, eq(file.id, projectFile.fileId))
+          .innerJoin(project, eq(project.id, projectFile.projectId))
+          .where(and(visibleFile, inArray(projectFile.id, nativeLinks.map((l) => l.projectFileId)))) : [];
+        const extra = commentFiles.filter((f) => !rows.some((r) => r.association.id === f.association.id)).map(({file: row, association, projectName}) => ({
+          ...fileSummary(row), projectFileId: association.id, projectId, projectName,
+          attachmentId: `comment:${association.id}`, position: 0, canUnlink: false,
+          inDescription: false, commentIds: commentIds.get(association.id) ?? [],
+          attachedAt: row.createdAt.toISOString(),
+        }));
+        return [...rows.map(
           ({ file: row, association, attachment, projectName }) => ({
             ...fileSummary(row),
             projectFileId: association.id,
             projectId,
             projectName,
             attachmentId: attachment.id,
+            inDescription: description.has(association.id),
+            inlineExternalId: association.externalId?.startsWith("yandex:") ? association.externalId.split(":").at(-1) : undefined,
+            commentIds: commentIds.get(association.id) ?? [],
+            attachedAt: (attachment.externalId ? row.createdAt : attachment.createdAt).toISOString(),
             position: attachment.position,
           }),
-        );
+        ), ...extra];
       });
     },
     async link(
