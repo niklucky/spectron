@@ -28,12 +28,12 @@
   --color-shadow-dialog: #00000025;
   --color-shadow-toast: #0002;
   --color-page-text: #202020;
-  --color-page-background: #fafafa;
+  --color-page-background: #fff;
 
   --color-composer: #fff;
-  --color-surface: #f8fafc;
+  --color-surface: #fff;
   --color-sidebar: #f1f5f9;
-  --color-list: #f8fafc;
+  --color-list: #fff;
   --color-hover: #e2e8f0;
   --color-selected: #e2e8f0;
   --color-bubble: #f1f5f9;
@@ -63,9 +63,9 @@
   --color-media-gradient: #172b4aab;
   --color-media-control: #283f65bb;
   --color-overlay: #152b4945;
-  --color-surface: #19202d;
+  --color-surface: #000;
   --color-sidebar: #121925;
-  --color-list: #161e2b;
+  --color-list: #000;
   --color-hover: #28364e;
   --color-selected: #24344f;
   --color-bubble: #222e40;
@@ -79,7 +79,7 @@
   --color-text-danger: #f0a39e;
   --color-action: #94b4f4;
   --color-on-action: #172947;
-  --color-menu: #202c3e;
+  --color-menu: #000;
   --color-nav-active: #293d60;
   --color-focus: #82a5eb;
   color-scheme: dark;

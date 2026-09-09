@@ -5,3 +5,6 @@ export { Button, IconButton } from "./components/ui/button";
 export { Input, Textarea, Select } from "./components/ui/input";
 export { Avatar } from "./components/ui/avatar";
 export { Dialog } from "./components/ui/dialog";
+export { IntegrationTabs, type IntegrationTab } from "./components/feature/project/integration-tabs";
+export { IntegrationSyncLog } from "./components/feature/project/integration-sync-log";
+export { ExportSettings, type ExportActions } from "./components/feature/project/export-settings";

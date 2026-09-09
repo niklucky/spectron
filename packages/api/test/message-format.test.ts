@@ -15,9 +15,9 @@ test("first message keeps formatted details and derives a plain title", () => {
   assert.equal(messagePlainText("1. **First**\n2. _Second_"), "First\nSecond");
 });
 test("long first messages retain every character in the description", () => {
-  const message = "A".repeat(200) + "\nDetails";
+  const message = "A".repeat(300) + "\nDetails";
   const fields = firstMessageFields(message);
-  assert.equal(fields.title.length, 140);
+  assert.equal(fields.title.length, 255);
   assert.equal(fields.description, message);
   assert.equal(firstMessageFields("\n\n- **Привет**\nМир").title, "Привет");
 });

@@ -314,7 +314,15 @@ test("database import/push, mappings, typed fields, permissions, repeat sync and
     "update project_fields set external_id='jira-field' where id=$1",
     [number.id],
   );
+  await assert.rejects(tracker.test("outsider", input));
+  await tracker.test("owner", input);
+  assert.equal(await tracker.get("owner", p.id), null, "Testing must not save a connection");
   await tracker.save("owner", input);
+  const beforeTest = await tracker.get("owner", p.id);
+  const projectBeforeTest = (await pool.query("select external_id from projects where id=$1", [p.id])).rows;
+  await tracker.test("owner", { ...input, token: undefined, queue: "OTHER" });
+  assert.deepEqual(await tracker.get("owner", p.id), beforeTest, "Testing must not modify credentials or mappings");
+  assert.deepEqual((await pool.query("select external_id from projects where id=$1", [p.id])).rows, projectBeforeTest);
   assert.equal(
     (
       await pool.query("select external_id from issue_states where id=$1", [

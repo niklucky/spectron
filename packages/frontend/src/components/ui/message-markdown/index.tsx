@@ -1,3 +1,4 @@
+import { trackerImages } from "@spectron/shared";
 import { Fragment, type ReactNode } from "react";
 
 /** Render a deliberately small Markdown subset as React nodes, never HTML. */
@@ -17,7 +18,20 @@ function inline(text: string): ReactNode[] {
       return <Fragment key={i}>{part}</Fragment>;
     });
 }
-export function MessageMarkdown({ text }: { text: string }) {
+export function MessageMarkdown({ text, renderImage }: { text: string; renderImage?: (image: ReturnType<typeof trackerImages>[number]) => ReactNode }) {
+  function renderLine(line: string): ReactNode {
+    if (!renderImage) return inline(line);
+    const parts: ReactNode[] = [];
+    let offset = 0;
+    for (const image of trackerImages(line)) {
+      const start = line.indexOf(image.markup, offset);
+      parts.push(...inline(line.slice(offset, start)));
+      parts.push(<Fragment key={start}>{renderImage(image) ?? image.markup}</Fragment>);
+      offset = start + image.markup.length;
+    }
+    parts.push(...inline(line.slice(offset)));
+    return parts;
+  }
   const lines = text.split(/\r?\n/),
     blocks: ReactNode[] = [];
   for (let i = 0; i < lines.length; ) {
@@ -32,7 +46,7 @@ export function MessageMarkdown({ text }: { text: string }) {
         start = i;
       const pattern = kind === "ul" ? /^\s*[-*+] / : /^\s*\d+[.)] /;
       while (i < lines.length && pattern.test(lines[i]!)) {
-        items.push(<li key={i}>{inline(lines[i]!.replace(pattern, ""))}</li>);
+        items.push(<li key={i}>{renderLine(lines[i]!.replace(pattern, ""))}</li>);
         i++;
       }
       blocks.push(
@@ -43,7 +57,7 @@ export function MessageMarkdown({ text }: { text: string }) {
         ),
       );
     } else {
-      blocks.push(<div key={i}>{line ? inline(line) : <br />}</div>);
+      blocks.push(<div key={i}>{line ? renderLine(line) : <br />}</div>);
       i++;
     }
   }

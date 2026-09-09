@@ -8,12 +8,17 @@ export type StoredFile = {
   createdAt: string;
 };
 export type ProjectFileSummary = StoredFile & {
+  inlineExternalId?: string;
   projectFileId: string;
   projectId: string;
   projectName: string;
 };
 export type IssueAttachmentSummary = ProjectFileSummary & {
   attachmentId: string;
+  canUnlink?: boolean;
+  inDescription?: boolean;
+  commentIds?: string[];
+  attachedAt?: string;
   position: number;
 };
 export type FilePage = {

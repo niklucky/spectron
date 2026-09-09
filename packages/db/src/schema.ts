@@ -229,6 +229,13 @@ export const issuePriority = pgTable(
     uniqueIndex("issue_priorities_project_id_unique").on(t.projectId, t.id),
   ],
 );
+export const issueType = pgTable("issue_types", optionFields(), (t) => [
+  uniqueIndex("issue_types_project_id_unique").on(t.projectId, t.id),
+]);
+export const tag = pgTable("tags", optionFields(), (t) => [
+  uniqueIndex("tags_project_id_unique").on(t.projectId, t.id),
+  uniqueIndex("tags_project_name_unique").on(t.projectId, t.name).where(sql`${t.deletedAt} IS NULL`),
+]);
 export const externalIdentity = pgTable(
   "external_identities",
   {
@@ -291,6 +298,7 @@ export const issue = pgTable(
     ),
     stateId: text("state_id").notNull(),
     priorityId: text("priority_id"),
+    issueTypeId: text("issue_type_id"),
     ...dates(),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
   },
@@ -321,6 +329,7 @@ export const issue = pgTable(
       foreignColumns: [issueState.projectId, issueState.id],
       name: "issues_state_fk",
     }).onDelete("restrict"),
+    foreignKey({ columns: [t.projectId, t.issueTypeId], foreignColumns: [issueType.projectId, issueType.id], name: "issues_type_fk" }).onDelete("restrict"),
     foreignKey({
       columns: [t.projectId, t.priorityId],
       foreignColumns: [issuePriority.projectId, issuePriority.id],
@@ -328,6 +337,15 @@ export const issue = pgTable(
     }).onDelete("restrict"),
   ],
 );
+export const issueTag = pgTable("issue_tags", {
+  projectId: text("project_id").notNull(),
+  issueId: text("issue_id").notNull(),
+  tagId: text("tag_id").notNull(),
+}, (t) => [
+  primaryKey({ columns: [t.issueId, t.tagId] }),
+  foreignKey({ columns: [t.projectId, t.issueId], foreignColumns: [issue.projectId, issue.id], name: "issue_tags_issue_fk" }).onDelete("cascade"),
+  foreignKey({ columns: [t.projectId, t.tagId], foreignColumns: [tag.projectId, tag.id], name: "issue_tags_tag_fk" }).onDelete("restrict"),
+]);
 export const issueHistory = pgTable(
   "issue_history",
   {
@@ -696,3 +714,36 @@ export const integrationEntity = pgTable(
     ),
   ],
 );
+
+export const exportSetting = pgTable("export_settings", {
+  id: text("id").$defaultFn(createId).primaryKey(),
+  projectId: text("project_id").notNull().references(() => project.id),
+  provider: text("provider").$type<import("@spectron/shared").ExportProvider>().notNull(),
+  actorId: text("actor_id").notNull().references(() => user.id),
+  config: jsonb("config").$type<import("@spectron/shared").ExportConfig>().notNull(),
+  nextRunAt: timestamp("next_run_at", { withTimezone: true }),
+  ...dates(),
+}, t => [uniqueIndex("export_settings_project_provider").on(t.projectId, t.provider)]);
+export const exportJob = pgTable("export_jobs", {
+  id: text("id").$defaultFn(createId).primaryKey(),
+  settingId: text("setting_id").notNull().references(() => exportSetting.id),
+  issueId: text("issue_id").notNull().references(() => issue.id),
+  entityId: text("entity_id").notNull(),
+  action: text("action").$type<import("@spectron/shared").ExportAction>().notNull(),
+  status: text("status").$type<"pending" | "running" | "succeeded" | "failed" | "cancelled">().default("pending").notNull(),
+  attempts: integer("attempts").default(0).notNull(),
+  availableAt: timestamp("available_at", { withTimezone: true }).defaultNow().notNull(),
+  error: text("error"),
+  ...dates(),
+}, t => [index("export_jobs_queue").on(t.settingId, t.status, t.availableAt)]);
+// A pending create is persisted BEFORE the HTTP request; an ambiguous response must be reconciled.
+export const exportWorklog = pgTable("export_worklogs", {
+  id: text("id").$defaultFn(createId).primaryKey(),
+  provider: text("provider").$type<import("@spectron/shared").ExportProvider>().notNull(),
+  projectId: text("project_id").notNull().references(() => project.id),
+  localId: text("local_id").notNull().references(() => issueWorklog.id),
+  externalId: text("external_id"),
+  remoteVersion: text("remote_version"),
+  pendingCreate: boolean("pending_create").default(false).notNull(),
+  ...dates(),
+}, t => [uniqueIndex("export_worklogs_local").on(t.projectId, t.provider, t.localId), uniqueIndex("export_worklogs_remote").on(t.projectId, t.provider, t.externalId)]);

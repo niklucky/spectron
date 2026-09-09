@@ -447,13 +447,17 @@ export class JiraClient {
   ): Promise<JiraWorklog> {
     return this.request<JiraWorklog>(
       "POST",
-      `/rest/api/3/issue/${encodeURIComponent(issueKey)}/worklog`,
+      `/rest/api/3/issue/${encodeURIComponent(issueKey)}/worklog?adjustEstimate=leave`,
       {
         started: formatJiraDate(entry.start),
-        timeSpentSeconds: entry.durationMinutes * 60,
+        timeSpentSeconds: Math.round(entry.durationMinutes * 60),
         ...(entry.comment ? { comment: textToAdf(entry.comment) } : {}),
       },
     );
+  }
+
+  async deleteWorklog(issueKey: string, id: string): Promise<void> {
+    await this.request<void>("DELETE", `/rest/api/3/issue/${encodeURIComponent(issueKey)}/worklog/${encodeURIComponent(id)}?adjustEstimate=leave`);
   }
 
   async downloadAttachment(

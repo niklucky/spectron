@@ -1,3 +1,4 @@
+import { exportActionsFor } from "./lib/export-actions";
 import { ProjectIntegrationSettings } from "./project-integration-settings";
 import type {
   WorklogFields,
@@ -26,7 +27,7 @@ import { Toast } from "@spectron/frontend/components/ui/toast";
 import { previewMedia } from "./fixtures/preview-metadata";
 import {
   CreateProjectDialog,
-  ProjectSettingsDialog,
+  ProjectSettingsPage,
   ProjectEmptyState,
 } from "@spectron/frontend/components/feature/project";
 import { InvitationPage } from "./invitation-page";
@@ -99,6 +100,8 @@ function Workspace({
         },
       },
       jira: {
+        exports: exportActionsFor(settingsId!, "jira"),
+        test: (config: import("@spectron/shared").JiraConfigInput) => trpc.jira.test.mutate({ projectId: settingsId!, config }),
         get: () => trpc.jira.get.query({ projectId: settingsId! }),
         save: async (config: import("@spectron/shared").JiraConfigInput) => {
           const result = await trpc.jira.save.mutate({
@@ -165,7 +168,7 @@ function Workspace({
           await trpc.issues.saveOption.mutate(input);
           await workspace.refresh();
         },
-        remove: async (kind: "state" | "priority", id: string) => {
+        remove: async (kind: "state" | "priority" | "type" | "tag", id: string) => {
           await trpc.issues.deleteOption.mutate({
             projectId: settingsId!,
             kind,
@@ -335,6 +338,16 @@ function Workspace({
       user.id,
     ],
   );
+  const loadIntegrations = useMemo(() => async () => {
+    const [jira, tracker] = await Promise.all([
+      trpc.jira.get.query({ projectId: settingsId! }),
+      trpc.tracker.get.query({ projectId: settingsId! }),
+    ]);
+    return [
+      ...(jira ? [{ provider: "jira", name: "Jira Cloud", key: jira.projectKey, url: jira.baseUrl, account: jira.email, connectedAt: jira.createdAt, lastSyncAt: jira.lastImportedAt }] : []),
+      ...(tracker ? [{ provider: "yandex", name: "Yandex Tracker", key: tracker.queue, url: `https://tracker.yandex.ru/${encodeURIComponent(tracker.queue)}`, account: tracker.organizationId, connectedAt: tracker.createdAt, lastSyncAt: null }] : []),
+    ];
+  }, [settingsId]);
   const clearFilters = () => {
     workspace.setQuery("");
     workspace.setFilter(defaultTaskFilters);
@@ -350,8 +363,8 @@ function Workspace({
         projects={projects}
         isFlow={workspace.isFlow}
         onToggleCollapse={() => workspace.setCollapsed((value) => !value)}
-        onSelectProject={workspace.selectProject}
-        onSelectFlow={workspace.selectFlow}
+        onSelectProject={(id) => { if (!integrationBusy) { setSettingsId(null); workspace.selectProject(id); } }}
+        onSelectFlow={() => { if (!integrationBusy) { setSettingsId(null); workspace.selectFlow(); } }}
         onCreateProject={projectState.openCreate}
         onProjectSettings={setSettingsId}
         onArchiveProject={(id) => {
@@ -396,7 +409,29 @@ function Workspace({
           />
         }
       />
-      {projectState.loading || !projects.length ? (
+      {settingsProject ? (
+        <ProjectSettingsPage
+          key={settingsProject.id}
+          project={settingsProject}
+          actions={settingsActions}
+          externalBusy={integrationBusy}
+          loadIntegrations={loadIntegrations}
+          yandexSettings={
+            settingsProject.role === "owner" ? (
+              <ProjectIntegrationSettings
+                projectId={settingsProject.id}
+                onChanged={workspace.refresh}
+                onBusyChange={setIntegrationBusy}
+              />
+            ) : (
+              <p className="muted">
+                Only the project owner can manage Yandex Tracker.
+              </p>
+            )
+          }
+          onClose={() => setSettingsId(null)}
+        />
+      ) : projectState.loading || !projects.length ? (
         <ProjectEmptyState
           hasArchived={projectState.projects.some(
             (item) => item.state === "archived",
@@ -491,28 +526,6 @@ function Workspace({
             const created = await projectState.create(input);
             workspace.selectProject(created.id);
           }}
-        />
-      )}
-      {settingsProject && (
-        <ProjectSettingsDialog
-          key={settingsProject.id}
-          project={settingsProject}
-          actions={settingsActions}
-          externalBusy={integrationBusy}
-          yandexSettings={
-            settingsProject.role === "owner" ? (
-              <ProjectIntegrationSettings
-                projectId={settingsProject.id}
-                onChanged={workspace.refresh}
-                onBusyChange={setIntegrationBusy}
-              />
-            ) : (
-              <p className="muted">
-                Only the project owner can manage Yandex Tracker.
-              </p>
-            )
-          }
-          onClose={() => setSettingsId(null)}
         />
       )}
       <WorkspaceDialogs

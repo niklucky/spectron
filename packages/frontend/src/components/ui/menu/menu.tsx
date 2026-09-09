@@ -1,11 +1,15 @@
-import { useId, useRef, useState } from "react";
+import { type ComponentProps, useId, useRef, useState } from "react";
 import { Icon } from "../icon";
 export function Menu({
   label,
   items,
+  icon = "more",
+  disabled = false,
   className = "",
 }: {
   label: string;
+  icon?: ComponentProps<typeof Icon>["name"];
+  disabled?: boolean;
   className?: string;
   items: { label: string; onSelect: () => void }[];
 }) {
@@ -17,6 +21,8 @@ export function Menu({
   return (
     <>
       <button
+        type="button"
+        disabled={disabled}
         ref={trigger}
         className={`icon-button ${className}`}
         aria-label={label}
@@ -36,7 +42,7 @@ export function Menu({
           ref.current?.togglePopover();
         }}
       >
-        <Icon name="more" />
+        <Icon name={icon} />
       </button>
       <div
         ref={ref}
@@ -78,6 +84,7 @@ export function Menu({
       >
         {items.map((item) => (
           <button
+            type="button"
             key={item.label}
             role="menuitem"
             onClick={() => {

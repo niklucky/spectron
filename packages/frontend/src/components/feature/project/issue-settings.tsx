@@ -11,7 +11,7 @@ import { Input, Select } from "../../ui/input";
 export type IssueSettingsActions = {
   load: () => Promise<IssueSettings>;
   save: (input: IssueOptionInput) => Promise<void>;
-  remove: (kind: "state" | "priority", id: string) => Promise<void>;
+  remove: (kind: "state" | "priority" | "type" | "tag", id: string) => Promise<void>;
 };
 export function ProjectIssueSettings({
   projectId,
@@ -22,7 +22,7 @@ export function ProjectIssueSettings({
 }: {
   projectId: string;
   owner: boolean;
-  kind: "state" | "priority";
+  kind: "state" | "priority" | "type" | "tag";
   actions: IssueSettingsActions;
   onBusyChange: (busy: boolean) => void;
 }) {
@@ -64,7 +64,7 @@ export function ProjectIssueSettings({
   }, [actions, reload]);
   const rows: (IssuePriority &
     Partial<Pick<IssueState, "trigger" | "isDefault">>)[] =
-    kind === "state" ? settings.states : settings.priorities;
+    kind === "state" ? settings.states : kind === "type" ? settings.issueTypes ?? [] : kind === "tag" ? settings.tags ?? [] : settings.priorities;
   async function run(action: () => Promise<void>) {
     if (busy) return;
     setBusy(true);
@@ -83,11 +83,11 @@ export function ProjectIssueSettings({
   }
   return (
     <>
-      <h3>{kind === "state" ? "Issue states" : "Issue priorities"}</h3>
+      <h3>{kind === "state" ? "Issue states" : kind === "type" ? "Issue types" : kind === "tag" ? "Tags" : "Issue priorities"}</h3>
       <p className="muted">
         {kind === "state"
           ? "Choose project labels and their canonical states. The default must map to Opened. Automations will come later."
-          : "Priorities are specific to this project. Lower positions appear first."}
+          : "Manage this project’s dictionary. Lower positions appear first."}
       </p>
       {loading ? (
         <p role="status">Loading…</p>

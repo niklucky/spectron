@@ -63,10 +63,9 @@ export function TaskItem({
           </span>
         )}
       </div>
-      <p className="task-description">
-        {messagePlainText(item.description).replace(/\s+/g, " ") ||
-          "No description"}
-      </p>
+      {item.description.trim() && <p className="task-description">
+        {messagePlainText(item.description).replace(/\s+/g, " ")}
+      </p>}
       <div className="task-status">
         <span
           className="task-assignee"
@@ -90,6 +89,7 @@ export function TaskItem({
       </div>
       {activity && (
         <div className="task-preview">
+          <span title={activity.actorImage ? activity.actorName : `${activity.actorName} has no profile photo`}>
           {activity.actorImage ? (
             <img
               className="task-actor-image"
@@ -103,6 +103,7 @@ export function TaskItem({
               small
             />
           )}
+          </span>
           <span className="task-actor">{activity.actorName}</span>
           <span className="task-update">{activity.preview}</span>
         </div>

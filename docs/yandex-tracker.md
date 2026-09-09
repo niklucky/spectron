@@ -31,11 +31,11 @@ Open **Project settings → Integrations**:
 4. Save the mappings. A blank token keeps the existing encrypted token. The organization and queue can be corrected before any records have synced. After sync, they are fixed to protect existing identities; use another project for another queue.
 5. Use **Import issues and comments** or **Push local changes**. Both actions operate on the configured project and report per-issue failures. Successfully processed entities remain committed if a later entity fails.
 
-Unmapped authors import as the owner running the import. Unmapped assignees import as unassigned. Users are matched only through explicit mappings, never by creating accounts or guessing identities from display names. Imported creation dates are preserved. Issue titles exceeding the local 140-character limit are reported for correction rather than silently truncated.
+Unmapped authors import as the owner running the import. Unmapped assignees import as unassigned. Users are matched only through explicit mappings, never by creating accounts or guessing identities from display names. Imported creation dates are preserved. Issue titles exceeding the local 255-character limit are reported for correction rather than silently truncated.
 
 ## Sync semantics
 
-Sync is manual in this version; there are no webhooks, schedules or automatic remote writes when saving locally. Import fetches all queue issues in pages and each issue's comments using Tracker's comment cursor. Push processes local issues and comments that changed since their checkpoint, including unlinked local issues. Deleted issues/comments are skipped; deletion, attachment transfer, worklog transfer, parent relationships and historical event migration are outside this version.
+Import remains manual. Export supports On save and By schedule when enabled in Sync → Export; see [automatic export setup and recovery](export-sync.md). Manual Push local changes remains available. Import fetches all queue issues in pages and each issue's comments using Tracker's comment cursor. Push processes local issues and comments that changed since their checkpoint, including unlinked local issues. Deleted issues/comments are skipped; issue/comment deletion, attachment transfer, worklog import/updates, parent relationships and historical event migration are outside this version. Automatic export supports worklog creation and deletion.
 
 Issue and comment identities are namespaced by integration. Comments also include the remote issue ID because comment IDs can repeat across issues. `externalId` is present on projects, users, states, priorities, fields, issues and comments; issues also have `externalKey`. Tracker status, priority and field links are stored only in its mappings, preserving Jira’s option external IDs. User mappings are authoritative per integration; the optional user-level external ID is informational.
 
@@ -43,7 +43,7 @@ An import does not overwrite unsynced local edits. A push does not overwrite rem
 
 A stable Tracker `unique` value identifies outbound issue creation, allowing a retry to recover a created issue through Tracker’s `_findByUnique` endpoint when its response was lost. Outbound comments contain a `<!-- spectron-comment:... -->` marker for the same recovery purpose; retain it when editing in Tracker. This is application-level recovery, not a distributed transaction. Checkpoints are saved before status transitions so unavailable transitions can be retried without creating another issue. A project has one active sync at a time across API processes; two database-wide session advisory-lock slots bound Tracker sync across API replicas. A sync holds one pooled lock connection without an open transaction; per-entity writes use short transactions, so at most four pooled connections are used by the two active Tracker runs.
 
-Run sync with the settings dialog open. Large queues may exceed a deployment's HTTP request timeout; raise the proxy timeout if needed. After an interrupted request, retry once the active run has finished. Already committed identities are reused.
+Run manual sync with the settings page open. Automatic export runs in the API server. Large queues may exceed a deployment's HTTP request timeout; raise the proxy timeout if needed. After an interrupted request, retry once the active run has finished. Already committed identities are reused.
 
 ## Verification
 

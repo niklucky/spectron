@@ -1,3 +1,5 @@
+import { ISSUE_TITLE_MAX_LENGTH, ISSUE_DESCRIPTION_MAX_LENGTH } from "@spectron/shared";
+import { exportWorklog } from "./export-worklogs";
 import { historyChanges } from "../history-changes";
 import {
   createCipheriv,
@@ -5,7 +7,7 @@ import {
   createHash,
   randomBytes,
 } from "node:crypto";
-import { and, eq, isNull, or, lt } from "drizzle-orm";
+import { and, eq, isNull, or, lt, sql } from "drizzle-orm";
 import { schema as s, type Database } from "@spectron/db";
 import {
   builtInIssueField,
@@ -19,7 +21,7 @@ import {
   type FieldValues,
 } from "@spectron/shared";
 import { importBuiltIn, exportBuiltIn } from "./jira-fields";
-import { issueAccess, IssueInputError, IssueConflictError } from "../issues";
+import { issueAccess, IssueInputError, IssueConflictError, issueTagIds, setIssueTags } from "../issues";
 import { validateFieldValues } from "../fields";
 import type { FileService } from "../files";
 import {
@@ -79,6 +81,7 @@ export function decryptToken(value: string, secret?: string) {
   ]).toString("utf8");
 }
 const publicConnection = (c: Connection) => ({
+  createdAt: c.createdAt.toISOString(),
   id: c.id,
   scheduleMinutes: c.scheduleMinutes,
   nextImportAt: c.nextImportAt?.toISOString() ?? null,
@@ -93,7 +96,9 @@ const publicConnection = (c: Connection) => ({
   mappings: c.mappings,
   lastImportedAt: c.lastImportedAt?.toISOString() ?? null,
 });
-const localIssue = (row: typeof s.issue.$inferSelect) => ({
+const localIssue = (row: typeof s.issue.$inferSelect, tagIds: string[] = []) => ({
+  issueTypeId: row.issueTypeId ?? null,
+  tagIds: [...tagIds].sort(),
   estimateTime: row.estimateTime,
   startAt: issueTimestamp(row.startAt),
   finishAt: issueTimestamp(row.finishAt),
@@ -107,6 +112,7 @@ const localIssue = (row: typeof s.issue.$inferSelect) => ({
 function remoteIssue(row: JiraIssue, mappings: JiraMappings) {
   const f = row.fields;
   return {
+    ...(Object.keys(mappings.issueTypes ?? {}).length ? { issuetype: (f.issuetype as { id?: string } | undefined)?.id ?? null } : {}),
     summary: f.summary ?? "",
     description: f.description ?? null,
     status: f.status?.id ?? null,
@@ -191,6 +197,8 @@ export function shouldImport(
   const baseline =
     rec.kind === "issue" && rec.localHash
       ? stable({
+          issueTypeId: null,
+          tagIds: [],
           estimateTime: null,
           startAt: null,
           finishAt: null,
@@ -501,6 +509,26 @@ export function createJiraService(
         "priorities",
         remote.fields.priority,
       );
+      const oldTagIds = existing ? await issueTagIds(tx, existing.id) : [];
+      let tagIds = oldTagIds;
+      let issueTypeId = existing?.issueTypeId ?? null;
+      const remoteType = remote.fields.issuetype as { id?: string } | undefined;
+      if (remoteType?.id && c.mappings.issueTypes?.[remoteType.id]) {
+        issueTypeId = c.mappings.issueTypes[remoteType.id]!;
+        const [type] = await tx.select().from(s.issueType).where(and(eq(s.issueType.id, issueTypeId), eq(s.issueType.projectId, c.projectId), isNull(s.issueType.deletedAt)));
+        if (!type) throw new IssueInputError("Mapped issue type is unavailable.");
+      }
+      if (c.mappings.fields.labels === "issue:tags") {
+        const labels = remote.fields.labels ?? [];
+        if (!Array.isArray(labels) || labels.length > 100 || labels.some(label => typeof label !== "string" || !label.trim() || label.length > 80)) throw new IssueInputError("Jira labels must be up to 100 nonempty strings of at most 80 characters.");
+        tagIds = [];
+        for (const name of [...new Set((labels as string[]).map(label => label.trim()))]) {
+          let [tag] = await tx.select().from(s.tag).where(and(eq(s.tag.projectId, c.projectId), eq(s.tag.name, name), isNull(s.tag.deletedAt)));
+          if (!tag) [tag] = await tx.insert(s.tag).values({ projectId: c.projectId, name, position: 0 }).returning();
+          tagIds.push(tag!.id);
+        }
+        tagIds.sort();
+      }
       const timing = {
         estimateTime: existing?.estimateTime ?? null,
         startAt: issueTimestamp(existing?.startAt),
@@ -508,7 +536,7 @@ export function createJiraService(
       };
       const fieldValues: FieldValues = { ...existing?.fieldValues };
       for (const [external, localId] of Object.entries(c.mappings.fields)) {
-        if (!localId) continue;
+        if (!localId || localId === "issue:tags") continue;
         const native = builtInIssueField(localId);
         if (native) {
           const converted = importBuiltIn(localId, remote.fields[external]);
@@ -559,6 +587,7 @@ export function createJiraService(
       await validateFieldValues(tx, c.projectId, fieldValues);
       const values = {
         ...timing,
+        issueTypeId,
         title: remote.fields.summary ?? remote.key,
         description: adfToText(remote.fields.description),
         assigneeId: assignee.userId,
@@ -569,24 +598,26 @@ export function createJiraService(
         externalId: remote.id,
         externalKey: remote.key,
       };
-      if (values.title.length > 140 || values.description.length > 100000)
-        throw new IssueInputError(
-          "Jira title or description exceeds Spectron's limits.",
-        );
+      if (values.title.length > ISSUE_TITLE_MAX_LENGTH)
+        throw new IssueInputError(`Jira title has ${values.title.length} characters; Spectron allows ${ISSUE_TITLE_MAX_LENGTH}.`);
+      if (values.description.length > ISSUE_DESCRIPTION_MAX_LENGTH)
+        throw new IssueInputError(`Jira description has ${values.description.length} characters; Spectron allows ${ISSUE_DESCRIPTION_MAX_LENGTH.toLocaleString("en-US")}.`);
       const snapshot = remoteIssue(remote, c.mappings);
       if (
         existing &&
         !overwriteLocal &&
-        !shouldImport(rec, localIssue(existing), snapshot)
+        !shouldImport(rec, localIssue(existing, oldTagIds), snapshot)
       )
         return existing;
       let row: typeof s.issue.$inferSelect;
       if (existing) {
         if (
           existing.externalKey === remote.key &&
-          stable(localIssue(existing)) ===
+          stable(localIssue(existing, oldTagIds)) ===
             stable({
               ...timing,
+              issueTypeId,
+              tagIds,
               title: values.title,
               description: values.description,
               assigneeId: assignee.reference,
@@ -622,14 +653,15 @@ export function createJiraService(
           })
           .returning()) as [typeof s.issue.$inferSelect];
       }
-      if (!existing || stable(localIssue(existing)) !== stable(localIssue(row)))
+      await setIssueTags(tx, c.projectId, row.id, tagIds);
+      if (!existing || stable(localIssue(existing, oldTagIds)) !== stable(localIssue(row, tagIds)))
         await tx.insert(s.issueHistory).values({
           issueId: row.id,
           actorUserId: userId,
           action: existing ? "updated" : "created",
           changes: historyChanges(
-            existing ? localIssue(existing) : {},
-            localIssue(row),
+            existing ? localIssue(existing, oldTagIds) : {},
+            localIssue(row, tagIds),
           ),
         });
       await remember(
@@ -638,7 +670,7 @@ export function createJiraService(
         "issue",
         row.id,
         remote.id,
-        localIssue(row),
+        localIssue(row, tagIds),
         snapshot,
       );
       return row;
@@ -931,7 +963,10 @@ export function createJiraService(
       if (!test.success) throw new IssueInputError(test.message);
       const jiraProject = await api.getProject(input.projectKey);
       const issueTypes = await api.getIssueTypes(input.projectKey);
-      if (!issueTypes.some((t) => t.id === input.issueTypeId))
+      // Credentials can be saved before choosing a mapping. Preserve the saved
+      // type, or provision a valid default for a new connection.
+      const issueTypeId = input.issueTypeId || existing?.issueTypeId || issueTypes[0]?.id;
+      if (!issueTypeId || !issueTypes.some((t) => t.id === issueTypeId))
         throw new IssueInputError(
           "Enter an issue type ID from this Jira project.",
         );
@@ -950,7 +985,7 @@ export function createJiraService(
           projectKey: input.projectKey,
           email: input.email,
           encryptedToken: encryptToken(token, secret),
-          issueTypeId: input.issueTypeId,
+          issueTypeId,
         };
         if (
           current &&
@@ -974,6 +1009,18 @@ export function createJiraService(
           .where(eq(s.project.id, projectId));
         return publicConnection(c!);
       });
+    },
+    async test(userId: string, projectId: string, input: JiraConfigInput) {
+      await db.transaction((tx) => issueAccess(tx, userId, projectId, false, true));
+      const [saved] = await db.select().from(s.jiraIntegration).where(eq(s.jiraIntegration.projectId, projectId));
+      const token = input.apiToken || (saved ? decryptToken(saved.encryptedToken, secret) : "");
+      if (!token) throw new IssueInputError("Enter a Jira API token.");
+      if (saved && new URL(input.baseUrl).origin !== saved.baseUrl && !input.apiToken)
+        throw new IssueInputError("Enter a token for the new Jira site.");
+      const api = new JiraClient(input.baseUrl, input.email, token);
+      const result = await api.testConnection(input.projectKey);
+      if (!result.success) throw new IssueInputError(result.message);
+      return { issueTypes: await api.getIssueTypes(input.projectKey) };
     },
     async discover(userId: string, projectId: string, input?: JiraConfigInput) {
       await db.transaction((tx) =>
@@ -1024,11 +1071,11 @@ export function createJiraService(
         db.transaction(async (tx) => {
           await issueAccess(tx, userId, projectId, true, true);
           for (const [kind, map] of Object.entries(mappings)) {
-            for (const id of Object.values(map)) {
+            for (const id of Object.values(map ?? {})) {
               if (id === null && kind === "fields") continue;
               if (typeof id !== "string" || !id)
                 throw new IssueInputError("Invalid mapping.");
-              if (kind === "fields" && builtInIssueField(id)) continue;
+              if (kind === "fields" && (builtInIssueField(id) || id === "issue:tags")) continue;
               if (kind === "users") {
                 const [m] = await tx
                   .select()
@@ -1049,7 +1096,7 @@ export function createJiraService(
                     ? s.issueState
                     : kind === "priorities"
                       ? s.issuePriority
-                      : s.projectField;
+                      : kind === "issueTypes" ? s.issueType : s.projectField;
                 const [f] = await tx
                   .select()
                   .from(table)
@@ -1067,13 +1114,14 @@ export function createJiraService(
               }
             }
             if (kind !== "users") {
-              const values = Object.values(map).filter((v) => v !== null);
+              const values = Object.values(map ?? {}).filter((v) => v !== null);
               if (new Set(values).size !== values.length)
                 throw new IssueInputError(
                   `Use one-to-one ${kind} mappings so export is unambiguous.`,
                 );
             }
           }
+          if (Object.entries(mappings.fields).some(([remote, local]) => (local === "issue:tags" && remote !== "labels") || (remote === "labels" && local && local !== "issue:tags"))) throw new IssueInputError("Map Jira labels only to Tags.");
           const reserved = [
             "summary",
             "description",
@@ -1101,7 +1149,7 @@ export function createJiraService(
               "Map either Original estimate or Time tracking, not both.",
             );
           for (const [externalId, id] of Object.entries(mappings.fields))
-            if (id && !builtInIssueField(id))
+            if (id && id !== "issue:tags" && !builtInIssueField(id))
               await tx
                 .update(s.projectField)
                 .set({ externalId })
@@ -1315,7 +1363,8 @@ export function createJiraService(
         const before = rec?.localHash
           ? (JSON.parse(rec.localHash) as Record<string, unknown>)
           : {};
-        const local = localIssue(row);
+        const tagIds = await issueTagIds(db, row.id);
+        const local = localIssue(row, tagIds);
         const changed = (k: keyof typeof local) =>
           overwriteRemote || stable(before[k]) !== stable(local[k]);
         let remote = rec?.externalId
@@ -1333,6 +1382,13 @@ export function createJiraService(
         if (changed("title")) fields.summary = row.title;
         if (changed("description"))
           fields.description = textToAdf(row.description);
+        if (c.mappings.fields.labels === "issue:tags" && changed("tagIds")) {
+          const tags = await db.select().from(s.tag).where(eq(s.tag.projectId, projectId));
+          const labels = tagIds.map(id => tags.find(tag => tag.id === id)?.name);
+          if (labels.some(name => !name || /\s/.test(name))) throw new IssueInputError("Jira labels cannot contain whitespace. Rename the affected tags before sending.");
+          fields.labels = labels;
+        }
+        if (local.issueTypeId && Object.keys(c.mappings.issueTypes ?? {}).length && changed("issueTypeId")) fields.issuetype = { id: reverse(c.mappings.issueTypes ?? {}, local.issueTypeId, "issue type") };
         if (changed("priorityId"))
           fields.priority = row.priorityId
             ? { id: reverse(c.mappings.priorities, row.priorityId, "priority") }
@@ -1353,6 +1409,7 @@ export function createJiraService(
         const remoteFields = await api.getFields();
         const previousValues = (before.fieldValues ?? {}) as FieldValues;
         for (const [external, localId] of Object.entries(c.mappings.fields)) {
+          if (localId === "issue:tags") continue;
           const native = localId ? builtInIssueField(localId) : undefined;
           if (native) {
             const value = local[native.key];
@@ -1396,7 +1453,7 @@ export function createJiraService(
           : null;
         if (!remote) {
           fields.project = { key: c.projectKey };
-          fields.issuetype = { id: c.issueTypeId };
+          fields.issuetype = { id: local.issueTypeId && Object.keys(c.mappings.issueTypes ?? {}).length ? reverse(c.mappings.issueTypes ?? {}, local.issueTypeId, "issue type") : c.issueTypeId };
           // Persist intent before non-idempotent POST. A timeout/crash cannot lead to blind retries.
           await db
             .insert(s.integrationRecord)
@@ -1436,7 +1493,7 @@ export function createJiraService(
           }
           await db
             .update(s.issue)
-            .set({ externalId: created.id, externalKey: created.key })
+            .set({ externalId: created.id, externalKey: created.key, updatedAt: sql`${s.issue.updatedAt}` })
             .where(eq(s.issue.id, id));
           remote = await api.getIssue(created.id);
           await remember(
@@ -1483,6 +1540,25 @@ export function createJiraService(
           remoteIssue(remote, c.mappings),
         );
         return { key: remote.key };
+      });
+    },
+    async pushWorklog(userId: string, projectId: string, id: string, remove: boolean, reconcileId?: string) {
+      return locked(userId, projectId, async (c, api) => {
+        const [row] = await db.select().from(s.issueWorklog).where(and(eq(s.issueWorklog.id, id), eq(s.issueWorklog.projectId, projectId)));
+        if (!row) throw new IssueInputError("Worklog not found.");
+        const parent = await record(db, c.id, "issue", "localId", row.issueId);
+        if (!parent?.externalId) throw new IssueInputError("Export the issue before its worklogs.");
+        const imported = await record(db, c.id, "worklog", "localId", id);
+        await exportWorklog(db, {
+          provider: "jira", projectId, row, remove, reconcileId, imported,
+          list: () => api.getWorklogs(parent.externalId!),
+          create: () => api.addWorklog(parent.externalId!, { start: row.startedAt, durationMinutes: row.durationSeconds / 60, comment: row.description }),
+          delete: remoteId => api.deleteWorklog(parent.externalId!, remoteId),
+          fingerprint: stable,
+          linked: async remote => {
+            await remember(db, c, "worklog", row.id, remote.id, { workerUserId: row.workerUserId ?? row.externalWorkerId, startedAt: row.startedAt.toISOString(), durationSeconds: row.durationSeconds, description: row.description }, remote);
+          },
+        });
       });
     },
     async pushComment(
@@ -1580,7 +1656,7 @@ export function createJiraService(
         }
         await db
           .update(s.issueComment)
-          .set({ externalId: remote.id })
+          .set({ externalId: remote.id, updatedAt: sql`${s.issueComment.updatedAt}` })
           .where(eq(s.issueComment.id, id));
         await remember(db, c, "comment", id, remote.id, row.body, remote.body);
         return { sent: true };
@@ -1635,7 +1711,7 @@ export function createJiraService(
               );
             await tx
               .update(s.issue)
-              .set({ externalId: remote.id, externalKey: remote.key })
+              .set({ externalId: remote.id, externalKey: remote.key, updatedAt: sql`${s.issue.updatedAt}` })
               .where(and(eq(s.issue.id, id), eq(s.issue.projectId, projectId)));
             await remember(
               tx,
@@ -1689,7 +1765,7 @@ export function createJiraService(
               );
             await tx
               .update(s.issueComment)
-              .set({ externalId: remote.id })
+              .set({ externalId: remote.id, updatedAt: sql`${s.issueComment.updatedAt}` })
               .where(eq(s.issueComment.id, id));
             await remember(tx, c, kind, id, remote.id, [], remote.body);
           });

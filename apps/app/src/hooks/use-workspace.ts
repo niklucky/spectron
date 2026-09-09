@@ -55,13 +55,15 @@ export function useWorkspace(
       if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
         return {};
       return Object.fromEntries(
-        Object.entries(parsed).filter(
+        Object.entries(parsed).map(([key, v]) => [key, v?.field === "type" ? { ...v, field: "trigger", values: [], typeIds: v.values } : { ...v, typeIds: v?.typeIds ?? (v?.typeId ? [v.typeId] : []) }]).filter(
           ([, v]) =>
             v &&
-            (v.field === "state" || v.field === "trigger") &&
+            (v.field === "state" || v.field === "trigger" || v.field === "type") &&
             Array.isArray(v.values) &&
             v.values.every((id: unknown) => typeof id === "string") &&
-            typeof v.deleted === "boolean",
+            typeof v.deleted === "boolean" &&
+            Array.isArray(v.typeIds) &&
+            v.typeIds.every((id: unknown) => typeof id === "string"),
         ),
       );
     } catch {
@@ -183,9 +185,10 @@ export function useWorkspace(
       (i) =>
         (route.isFlow || i.projectId === route.project) &&
         (filter.deleted ? !!i.deletedAt : !i.deletedAt) &&
+        (!filter.typeIds?.length || filter.typeIds.includes(i.issueTypeId ?? "")) &&
         (!filter.values.length ||
           filter.values.includes(
-            filter.field === "trigger" ? i.statusTrigger : i.stateId,
+            filter.field === "trigger" ? i.statusTrigger : filter.field === "type" ? (i.issueTypeId ?? "") : i.stateId,
           )) &&
         `${i.key} ${i.title} ${i.description}`
           .toLowerCase()

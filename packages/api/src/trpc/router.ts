@@ -1,3 +1,4 @@
+import { ISSUE_TITLE_MAX_LENGTH, ISSUE_DESCRIPTION_MAX_LENGTH } from "@spectron/shared";
 import { initTRPC, TRPCError } from "@trpc/server";
 import { z } from "zod";
 import {
@@ -13,6 +14,7 @@ import {
 } from "@spectron/backend";
 import {
   applicationIdPattern,
+  exportActions,
   issueTriggers,
   normalizeProjectURL,
 } from "@spectron/shared";
@@ -116,16 +118,18 @@ const issueFields = z
       z.string().min(1).max(128),
       z.union([z.string().max(100000), z.number().finite(), z.null()]),
     ),
-    title: z.string().trim().min(1).max(140),
-    description: z.string().max(100_000),
+    title: z.string().trim().min(1).max(ISSUE_TITLE_MAX_LENGTH),
+    description: z.string().max(ISSUE_DESCRIPTION_MAX_LENGTH),
     parentId: applicationId.nullable(),
     assigneeId: z.string().min(1).max(128).nullable(),
     stateId: applicationId,
     priorityId: applicationId.nullable(),
+    issueTypeId: applicationId.nullable(),
+    tagIds: z.array(applicationId).max(100),
   })
   .strict();
 const optionRef = issueScope.extend({
-  kind: z.enum(["state", "priority"]),
+  kind: z.enum(["state", "priority", "type", "tag"]),
   id: applicationId,
 });
 const commentScope = z
@@ -185,8 +189,21 @@ const trackerMapping = z.record(
   z.string().min(1).max(255),
   applicationId.nullable(),
 );
+const exportScope = z.object({ projectId: applicationId, provider: z.enum(["jira", "tracker"]) });
 export const appRouter = t.router({
+  exports: t.router({
+    get: authenticated.input(exportScope).query(({ ctx, input }) => ctx.exports.get(ctx.userId, input.projectId, input.provider)),
+    save: authenticated.input(exportScope.extend({ config: z.object({ mode: z.enum(["off", "on_save", "scheduled"]), intervalMinutes: z.union([z.literal(15), z.literal(60), z.literal(1440)]), actions: z.array(z.enum(exportActions)).max(6) }) })).mutation(({ ctx, input }) => ctx.exports.save(ctx.userId, input.projectId, input.provider, input.config)),
+    retry: authenticated.input(exportScope.extend({ id: applicationId })).mutation(({ ctx, input }) => ctx.exports.retry(ctx.userId, input.projectId, input.provider, input.id)),
+    reconcile: authenticated.input(exportScope.extend({ id: applicationId, remoteId: z.string().trim().min(1).max(200) })).mutation(({ ctx, input }) => ctx.exports.reconcile(ctx.userId, input.projectId, input.provider, input.id, input.remoteId)),
+  }),
   tracker: t.router({
+    test: authenticated.input(issueScope.extend({
+      token: z.string().trim().min(1).max(4096).optional(),
+      organizationId: z.string().trim().regex(/^[a-zA-Z0-9_-]+$/).max(128),
+      organizationType: z.enum(["cloud", "360"]),
+      queue: z.string().trim().regex(/^[A-Z][A-Z0-9_]*$/).max(80),
+    })).mutation(({ ctx, input }) => ctx.tracker.test(ctx.userId, input)),
     get: authenticated
       .input(issueScope)
       .query(({ ctx, input }) => ctx.tracker.get(ctx.userId, input.projectId)),
@@ -253,6 +270,7 @@ export const appRouter = t.router({
       .mutation(({ ctx, input }) => ctx.fields.save(ctx.userId, input)),
   }),
   jira: t.router({
+    test: authenticated.input(issueScope.extend({ config: jiraConfig })).mutation(({ ctx, input }) => ctx.jira.test(ctx.userId, input.projectId, input.config)),
     get: authenticated
       .input(issueScope)
       .query(({ ctx, input }) => ctx.jira.get(ctx.userId, input.projectId)),
@@ -271,6 +289,7 @@ export const appRouter = t.router({
         issueScope.extend({
           mappings: z
             .object({
+              issueTypes: mapping.optional(),
               statuses: mapping,
               priorities: mapping,
               users: mapping,

@@ -4,14 +4,16 @@ import { Icon } from "../../ui/icon";
 import type { Project } from "./types";
 
 export type TaskFilters = {
-  field: "trigger" | "state";
+  field: "trigger" | "state" | "type";
   values: string[];
+  typeIds?: string[];
   deleted: boolean;
 };
 export const defaultTaskFilters: TaskFilters = {
   field: "trigger",
   values: [],
   deleted: false,
+  typeIds: [],
 };
 export function TaskFiltersSelect({
   value,
@@ -54,10 +56,11 @@ export function TaskFiltersSelect({
         }}
       >
         {value.values.length
-          ? `${value.values.length} ${value.field === "trigger" ? "triggers" : "states"}`
+          ? `${value.values.length} ${value.field === "trigger" ? "triggers" : value.field === "type" ? "types" : "states"}`
           : value.deleted
             ? "Deleted issues"
             : "All issues"}
+        {value.typeIds?.length ? ` · ${value.typeIds.length === 1 ? Object.values(settings).flatMap(s => s.issueTypes ?? []).find(t => t.id === value.typeIds![0])?.name ?? "Type" : `${value.typeIds.length} types`}` : ""}
         <Icon name="chevron" size={13} />
       </button>
       <div
@@ -89,12 +92,13 @@ export function TaskFiltersSelect({
           >
             <option value="trigger">Trigger</option>
             <option value="state">Project state</option>
+
           </select>
         </label>
         <p className="task-filter-hint">
           {value.field === "trigger"
             ? "Shared across all projects."
-            : "Choose states from each project."}{" "}
+            : value.field === "type" ? "Choose issue types from each project." : "Choose states from each project."}{" "}
           Any selected value matches.
         </p>
         <div className="task-filter-options">
@@ -114,7 +118,7 @@ export function TaskFiltersSelect({
             : projects.map((project) => (
                 <fieldset key={project.id}>
                   <legend>{project.name}</legend>
-                  {(settings[project.id]?.states ?? []).map((state) => (
+                  {((value.field === "type" ? settings[project.id]?.issueTypes : settings[project.id]?.states) ?? []).map((state) => (
                     <label key={state.id}>
                       <input
                         type="checkbox"
@@ -127,6 +131,30 @@ export function TaskFiltersSelect({
                   ))}
                 </fieldset>
               ))}
+        </div>
+        <div className="task-filter-options" role="group" aria-label="Issue types">
+          <strong>Issue types</strong>
+          <p className="task-filter-hint">Any selected type matches. Leave empty for all types.</p>
+          {projects.map(project => (
+            <fieldset key={project.id}>
+              <legend>{project.name}</legend>
+              {(settings[project.id]?.issueTypes ?? []).map(type => (
+                <label key={type.id}>
+                  <input
+                    type="checkbox"
+                    checked={value.typeIds?.includes(type.id) ?? false}
+                    onChange={() => onChange({
+                      ...value,
+                      typeIds: value.typeIds?.includes(type.id)
+                        ? value.typeIds.filter(id => id !== type.id)
+                        : [...(value.typeIds ?? []), type.id],
+                    })}
+                  />
+                  {type.name}{type.deletedAt ? " (removed)" : ""}
+                </label>
+              ))}
+            </fieldset>
+          ))}
         </div>
         <label className="task-filter-deleted">
           <input

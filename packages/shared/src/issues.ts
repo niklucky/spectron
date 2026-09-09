@@ -1,3 +1,5 @@
+export const ISSUE_TITLE_MAX_LENGTH = 255;
+export const ISSUE_DESCRIPTION_MAX_LENGTH = 1_000_000;
 export const issueTriggers = [
   "opened",
   "in_progress",
@@ -24,8 +26,11 @@ export type ExternalIdentitySummary = {
   localUserId: string | null;
 };
 export type IssueSettings = {
+  issueTypes?: IssuePriority[];
+  tags?: IssuePriority[];
   externalIdentities?: ExternalIdentitySummary[];
   jiraConnected?: boolean;
+  jiraBaseUrl?: string | null;
   fields?: ProjectField[];
   states: IssueState[];
   priorities: IssuePriority[];
@@ -38,6 +43,8 @@ export type ProjectField = {
   externalId: string | null;
 };
 export type IssueSummary = {
+  issueTypeId?: string | null;
+  tagIds?: string[];
   author?: { name: string; image: string | null } | null;
   assignee?: { name: string; image: string | null } | null;
   lastActivity?: {
@@ -69,6 +76,8 @@ export type IssueSummary = {
 };
 export type IssueFields = Pick<
   IssueSummary,
+  | "issueTypeId"
+  | "tagIds"
   | "title"
   | "description"
   | "parentId"
@@ -104,7 +113,7 @@ export type IssueHistoryEntry = {
 };
 export type IssueOptionInput = {
   projectId: string;
-  kind: "state" | "priority";
+  kind: "state" | "priority" | "type" | "tag";
   id?: string | undefined;
   name: string;
   position: number;

@@ -299,7 +299,7 @@ export class YandexTrackerClient {
     key: string,
     entry: { start: Date; durationMinutes: number; comment?: string },
   ): Promise<YTWorklog> {
-    const duration = minutesToIsoDuration(entry.durationMinutes);
+    const duration = `PT${Math.round(entry.durationMinutes * 60)}S`;
     return this.request<YTWorklog>(
       "POST",
       `/issues/${encodeURIComponent(key)}/worklog`,
@@ -309,6 +309,26 @@ export class YandexTrackerClient {
         ...(entry.comment && { comment: entry.comment }),
       },
     );
+  }
+
+  async deleteWorklog(key: string, id: string): Promise<void> {
+    await this.request<void>("DELETE", `/issues/${encodeURIComponent(key)}/worklog/${encodeURIComponent(id)}`);
+  }
+
+  getAttachments(key: string) {
+    return this.request<{ id: string; name: string; size: number; createdAt?: string }[]>(
+      "GET", `/issues/${encodeURIComponent(key)}/attachments`);
+  }
+  async downloadAttachment(key: string, id: string, name: string) {
+    const path = `/issues/${encodeURIComponent(key)}/attachments/${encodeURIComponent(id)}/${encodeURIComponent(name)}`;
+    const response = await fetch(BASE_URL + path, {
+      headers: this.headers(), signal: AbortSignal.timeout(30000), redirect: "error",
+    });
+    if (!response.ok || !response.body) {
+      await response.body?.cancel();
+      throw new YTApiError(response.status, "Could not download Tracker attachment.", path);
+    }
+    return response.body;
   }
 
   async getComments(key: string): Promise<YTComment[]> {

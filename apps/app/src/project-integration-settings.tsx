@@ -1,15 +1,16 @@
+import { exportActionsFor } from "./lib/export-actions";
+import { ExportSettings } from "@spectron/frontend";
+import { IntegrationTabs, IntegrationSyncLog, type IntegrationTab } from "@spectron/frontend";
 import {
   issueTriggers,
   type IssueTrigger,
   matchTrackerMappings,
   trackerFieldType,
 } from "@spectron/shared";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { trpc } from "./lib/trpc";
 type Config = NonNullable<Awaited<ReturnType<typeof trpc.tracker.get.query>>>;
 type Metadata = Awaited<ReturnType<typeof trpc.tracker.metadata.mutate>>;
-const identity = (c: Config) =>
-  JSON.stringify([c.organizationType, c.organizationId, c.queue]);
 const emptyMappings: Config["mappings"] = {
   statuses: {},
   priorities: {},
@@ -25,12 +26,16 @@ export function ProjectIntegrationSettings({
   onChanged: () => Promise<void>;
   onBusyChange: (busy: boolean) => void;
 }) {
+  const [exportBusy, setExportBusy] = useState(false);
+  const exports = useMemo(() => exportActionsFor(projectId, "tracker"), [projectId]);
+  const [tab, setTab] = useState<IntegrationTab>("connection");
   const [config, setConfig] = useState<Config>({
     organizationId: "",
     organizationType: "cloud",
     queue: "",
     mappings: emptyMappings,
     hasToken: false,
+    createdAt: "",
   });
   const [creating, setCreating] = useState<{
     kind: "statuses" | "priorities" | "fields";
@@ -39,7 +44,6 @@ export function ProjectIntegrationSettings({
     name: string;
     type: "text" | "date" | "number" | "user";
   } | null>(null);
-  const [savedIdentity, setSavedIdentity] = useState("");
   const [token, setToken] = useState("");
   const [metadata, setMetadata] = useState<Metadata | null>(null);
   const [options, setOptions] = useState<
@@ -65,7 +69,6 @@ export function ProjectIntegrationSettings({
         if (!active) return;
         if (saved) {
           setConfig(saved);
-          setSavedIdentity(identity(saved));
         }
         setOptions({
           statuses: settings.states.filter((s) => !s.deletedAt),
@@ -117,7 +120,6 @@ export function ProjectIntegrationSettings({
       ...(token ? { token } : {}),
     });
     setConfig((c) => ({ ...c, mappings, hasToken: true }));
-    setSavedIdentity(identity(config));
     setToken("");
     setDirty(false);
   }
@@ -129,6 +131,8 @@ export function ProjectIntegrationSettings({
         Connect a queue, map its values, then import issues or push local
         changes. Only project owners can run sync.
       </p>
+      <IntegrationTabs value={tab} onChange={(value) => { setFeedback(""); setError(""); setTab(value); }} busy={busy || exportBusy} connected={config.hasToken} />
+      <div hidden={tab !== "connection"} className="integration-connection-form">
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -212,17 +216,20 @@ export function ProjectIntegrationSettings({
             encrypted on the server. You can correct the organization and queue
             until the first sync.
           </p>
-          <button type="submit">Save settings and mappings</button>{" "}
+          <button type="submit">Save connection</button>{" "}
+          <button type="button" onClick={() => void run(async () => {
+            await trpc.tracker.test.mutate({ projectId, organizationId: config.organizationId, organizationType: config.organizationType, queue: config.queue, ...(token ? { token } : {}) });
+            setFeedback("Connection successful.");
+          })}>Test connection</button>
+        </fieldset>
+      </form>
+      </div>
+      <div hidden={tab !== "mapping"} className="integration-panel">
           <button
             type="button"
             onClick={() =>
               void run(async () => {
-                if (
-                  !config.hasToken ||
-                  token ||
-                  identity(config) !== savedIdentity
-                )
-                  await save();
+                if (dirty) throw new Error("Save connection and mapping changes before loading mappings.");
                 const discovered = await trpc.tracker.metadata.mutate({
                   projectId,
                 });
@@ -273,14 +280,13 @@ export function ProjectIntegrationSettings({
                   },
                 }));
                 setDirty(true);
-                setFeedback("Connected. Review the mappings below.");
+                setFeedback("Mappings loaded. Review and save your choices.");
               })
             }
           >
-            Test connection and load mappings
+            Load mappings
           </button>
-        </fieldset>
-      </form>
+      {!metadata && <p className="muted">Load fields, statuses, priorities and users from the saved connection.</p>}
       {metadata && (
         <fieldset disabled={busy}>
           {(["statuses", "priorities", "users", "fields"] as const).map(
@@ -535,8 +541,9 @@ export function ProjectIntegrationSettings({
           </button>
         </fieldset>
       )}
-      <section>
-        <h4>Sync</h4>
+      </div>
+      <section hidden={tab !== "sync"} className="integration-panel">
+        <h3>Full import</h3>
         <p className="muted">
           Import updates from Tracker. Push creates and updates issues and
           comments in Tracker. Deleted items are skipped. If both sides changed,
@@ -559,20 +566,21 @@ export function ProjectIntegrationSettings({
             disabled={busy || !config.hasToken || dirty}
             onClick={() =>
               void run(async () => {
+                setFeedback(direction === "import" ? "Full import started…" : "Push started…");
                 const result = await trpc.tracker.run.mutate({
                   projectId,
                   direction,
                   overwriteConflicts,
                 });
                 setOverwriteConflicts(false);
-                setFeedback(`${result.processed} issues processed.`);
+                setFeedback(`${direction === "import" ? "Full import" : "Push"} finished: ${result.processed} issues processed, ${result.errors.length} errors.`);
                 setError(result.errors.join("\n"));
                 await onChanged();
               })
             }
           >
             {direction === "import"
-              ? "Import issues and comments"
+              ? "Full import"
               : "Push local changes"}
           </button>
         ))}
@@ -580,7 +588,7 @@ export function ProjectIntegrationSettings({
       </section>
       {busy && (
         <p role="status">
-          Working… Keep this dialog open until the operation finishes.
+          Working… Keep this page open until the operation finishes.
         </p>
       )}
       {feedback && <p role="status">{feedback}</p>}
@@ -593,6 +601,8 @@ export function ProjectIntegrationSettings({
           {error}
         </p>
       )}
+      {config.hasToken && tab === "sync" && <ExportSettings actions={exports} disabled={busy} onBusyChange={value => { setExportBusy(value); onBusyChange(value); }} />}
+      <div hidden={tab !== "sync"}><IntegrationSyncLog active={tab === "sync"} feedback={feedback} error={error} /></div>
     </div>
   );
 }

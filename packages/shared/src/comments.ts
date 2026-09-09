@@ -16,6 +16,7 @@ export type CommentSummary = {
   createdAt: string;
   updatedAt: string;
   deletedAt: string | null;
+  jiraSync?: "synced" | "pending" | "syncing" | "failed" | "unsynced" | undefined;
   canEdit: boolean;
   canDelete: boolean;
 };

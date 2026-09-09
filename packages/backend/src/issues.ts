@@ -1,3 +1,5 @@
+import { ISSUE_TITLE_MAX_LENGTH, ISSUE_DESCRIPTION_MAX_LENGTH } from "@spectron/shared";
+import { enqueueExport } from "./integrations/export-events";
 import {
   historyChanges as changes,
   normalizeHistoryChanges,
@@ -25,6 +27,7 @@ const {
   issue,
   issueState,
   issuePriority,
+  issueType, tag, issueTag,
   issueHistory,
   projectHistory,
   user,
@@ -34,6 +37,13 @@ type OptionalFields = { [K in keyof IssueFields]?: IssueFields[K] | undefined };
 export class IssueInputError extends Error {}
 export class IssueConflictError extends Error {}
 
+export async function issueTagIds(tx: Tx | Database, issueId: string): Promise<string[]> {
+  return (await tx.select({ id: issueTag.tagId }).from(issueTag).where(eq(issueTag.issueId, issueId))).map(t => t.id).sort();
+}
+export async function setIssueTags(tx: Tx, projectId: string, issueId: string, ids: string[]) {
+  await tx.delete(issueTag).where(eq(issueTag.issueId, issueId));
+  if (ids.length) await tx.insert(issueTag).values([...new Set(ids)].map(tagId => ({ projectId, issueId, tagId })));
+}
 export async function seedIssueSettings(tx: Tx, projectId: string) {
   await tx.insert(issueState).values(
     [
@@ -44,6 +54,7 @@ export async function seedIssueSettings(tx: Tx, projectId: string) {
       { name: "Done", trigger: "finished" as const },
     ].map((s, position) => ({ ...s, projectId, position })),
   );
+  await tx.insert(issueType).values(["Story", "Epic", "Bug", "Task"].map((name, position) => ({ projectId, name, position })));
   await tx.insert(issuePriority).values(
     ["Urgent", "High", "Normal", "Low"].map((name, position) => ({
       projectId,
@@ -111,15 +122,25 @@ async function validate(
   } catch (e) {
     throw new IssueInputError((e as Error).message);
   }
+  if (input.issueTypeId && input.issueTypeId !== current?.issueTypeId) {
+    const [type] = await tx.select().from(issueType).where(and(eq(issueType.id, input.issueTypeId), eq(issueType.projectId, projectId), isNull(issueType.deletedAt)));
+    if (!type) throw new IssueInputError("Choose an active issue type from this project.");
+  }
+  if (input.tagIds !== undefined) {
+    if (input.tagIds.length > 100 || new Set(input.tagIds).size !== input.tagIds.length) throw new IssueInputError("Choose up to 100 distinct tags.");
+    const available = input.tagIds.length ? await tx.select().from(tag).where(and(eq(tag.projectId, projectId), inArray(tag.id, input.tagIds), isNull(tag.deletedAt))) : [];
+    const existingTags = current ? await issueTagIds(tx, current.id) : [];
+    if (input.tagIds.some(id => !available.some(t => t.id === id) && !existingTags.includes(id))) throw new IssueInputError("Choose tags from this project.");
+  }
   if (input.fieldValues !== undefined)
     await validateFieldValues(tx, projectId, input.fieldValues);
   if (
     input.title !== undefined &&
-    (!input.title.trim() || input.title.length > 140)
+    (!input.title.trim() || input.title.length > ISSUE_TITLE_MAX_LENGTH)
   )
-    throw new IssueInputError("Enter a title of up to 140 characters.");
-  if (input.description !== undefined && input.description.length > 100_000)
-    throw new IssueInputError("Description is too long.");
+    throw new IssueInputError(`Enter a title of up to ${ISSUE_TITLE_MAX_LENGTH} characters.`);
+  if (input.description !== undefined && input.description.length > ISSUE_DESCRIPTION_MAX_LENGTH)
+    throw new IssueInputError(`Description must be at most ${ISSUE_DESCRIPTION_MAX_LENGTH.toLocaleString("en-US")} characters.`);
   if (input.stateId !== undefined && input.stateId !== current?.stateId) {
     const [state] = await tx
       .select()
@@ -235,6 +256,8 @@ function activityPreview(entry: typeof issueHistory.$inferSelect): string {
     description: "description",
     stateId: "state",
     priorityId: "priority",
+    issueTypeId: "issue type",
+    tagIds: "tags",
     assigneeId: "assignee",
     parentId: "parent",
     estimateTime: "estimate",
@@ -321,7 +344,9 @@ export function createIssueService(db: Database) {
             },
           ]),
         );
+        const links = await tx.select().from(issueTag).where(eq(issueTag.projectId, projectId));
         return rows.map((row) => ({
+          tagIds: links.filter(link => link.issueId === row.id).map(link => link.tagId).sort(),
           ...summary(row, p.key),
           lastActivity: activity.get(row.id) ?? null,
           author:
@@ -356,11 +381,14 @@ export function createIssueService(db: Database) {
           )
           .orderBy(asc(schema.projectField.createdAt));
         const [integration] = await tx
-          .select({ id: schema.jiraIntegration.id })
+          .select({ id: schema.jiraIntegration.id, baseUrl: schema.jiraIntegration.baseUrl })
           .from(schema.jiraIntegration)
           .where(eq(schema.jiraIntegration.projectId, projectId));
         return {
+          issueTypes: (await tx.select().from(issueType).where(eq(issueType.projectId, projectId)).orderBy(asc(issueType.position))).map(t => ({ ...t, deletedAt: t.deletedAt?.toISOString() ?? null })),
+          tags: (await tx.select().from(tag).where(eq(tag.projectId, projectId)).orderBy(asc(tag.name))).map(t => ({ ...t, deletedAt: t.deletedAt?.toISOString() ?? null })),
           jiraConnected: !!integration,
+          jiraBaseUrl: integration?.baseUrl ?? null,
           externalIdentities: await tx
             .select({
               id: schema.externalIdentity.id,
@@ -421,6 +449,8 @@ export function createIssueService(db: Database) {
           parentId: input.parentId ?? null,
           assigneeId: input.assigneeId ?? null,
           priorityId: input.priorityId ?? null,
+          issueTypeId: input.issueTypeId ?? null,
+          tagIds: [...(input.tagIds ?? [])].sort(),
           stateId: input.stateId ?? defaultState.id,
         };
         await validate(tx, p.id, values);
@@ -473,7 +503,8 @@ export function createIssueService(db: Database) {
             authorId: userId,
           })
           .returning();
-        const result = summary(row!, p.key);
+        await setIssueTags(tx, p.id, row!.id, values.tagIds ?? []);
+        const result = { ...summary(row!, p.key), tagIds: values.tagIds ?? [] };
         await tx.insert(issueHistory).values({
           issueId: row!.id,
           actorUserId: userId,
@@ -509,6 +540,7 @@ export function createIssueService(db: Database) {
             },
           });
         }
+        await enqueueExport(tx, p.id, row!.id, row!.id, "issue.create");
         return result;
       });
     },
@@ -539,6 +571,8 @@ export function createIssueService(db: Database) {
           expectedUpdatedAt: ___,
           ...values
         } = input;
+        const oldTagIds = await issueTagIds(tx, row.id);
+        if (values.tagIds) values.tagIds = [...values.tagIds].sort();
         if (values.startAt !== undefined)
           values.startAt = issueTimestamp(values.startAt);
         if (values.finishAt !== undefined)
@@ -551,6 +585,7 @@ export function createIssueService(db: Database) {
         const diff = changes(
           {
             ...row,
+            tagIds: oldTagIds,
             startAt: issueTimestamp(row.startAt),
             finishAt: issueTimestamp(row.finishAt),
             assigneeId: row.assigneeId ?? row.externalAssigneeId,
@@ -560,7 +595,7 @@ export function createIssueService(db: Database) {
         const identity = values.assigneeId
           ? await findExternalIdentity(tx, p.id, values.assigneeId)
           : undefined;
-        if (!Object.keys(diff).length) return summary(row, p.key);
+        if (!Object.keys(diff).length) return { ...summary(row, p.key), tagIds: oldTagIds };
         const [updated] = await tx
           .update(issue)
           .set({
@@ -583,7 +618,9 @@ export function createIssueService(db: Database) {
           action: "updated",
           changes: diff,
         });
-        return summary(updated!, p.key);
+        if (values.tagIds !== undefined) await setIssueTags(tx, p.id, row.id, values.tagIds);
+        await enqueueExport(tx, p.id, row.id, row.id, "issue.update");
+        return { ...summary(updated!, p.key), tagIds: values.tagIds ?? oldTagIds };
       });
     },
     async setDeleted(
@@ -607,7 +644,7 @@ export function createIssueService(db: Database) {
             "This issue changed. Reload it before continuing.",
           );
         if (Boolean(row.deletedAt) === input.deleted)
-          return summary(row, p.key);
+          return { ...summary(row, p.key), tagIds: await issueTagIds(tx, row.id) };
         if (input.deleted) {
           const [child] = await tx
             .select({ id: issue.id })
@@ -643,7 +680,7 @@ export function createIssueService(db: Database) {
             },
           },
         });
-        return summary(updated!, p.key);
+        return { ...summary(updated!, p.key), tagIds: await issueTagIds(tx, updated!.id) };
       });
     },
     async history(userId: string, projectId: string, id: string, offset = 0) {
@@ -675,7 +712,7 @@ export function createIssueService(db: Database) {
         await issueAccess(tx, userId, input.projectId, true, true);
         if (!input.name.trim() || input.name.length > 80)
           throw new IssueInputError("Enter a name of up to 80 characters.");
-        const table = input.kind === "state" ? issueState : issuePriority;
+        const table = input.kind === "state" ? issueState : input.kind === "type" ? issueType : input.kind === "tag" ? tag : issuePriority;
         const [before] = input.id
           ? await tx
               .select()
@@ -749,12 +786,12 @@ export function createIssueService(db: Database) {
         } else {
           [result] = input.id
             ? await tx
-                .update(issuePriority)
+                .update(table)
                 .set(common)
-                .where(eq(issuePriority.id, input.id))
+                .where(eq(table.id, input.id))
                 .returning()
             : await tx
-                .insert(issuePriority)
+                .insert(table)
                 .values({ ...common, projectId: input.projectId })
                 .returning();
         }
@@ -770,11 +807,11 @@ export function createIssueService(db: Database) {
     },
     async deleteOption(
       userId: string,
-      input: { projectId: string; kind: "state" | "priority"; id: string },
+      input: { projectId: string; kind: "state" | "priority" | "type" | "tag"; id: string },
     ) {
       return db.transaction(async (tx) => {
         await issueAccess(tx, userId, input.projectId, true, true);
-        const table = input.kind === "state" ? issueState : issuePriority;
+        const table = input.kind === "state" ? issueState : input.kind === "type" ? issueType : input.kind === "tag" ? tag : issuePriority;
         const [row] = await tx
           .select()
           .from(table)

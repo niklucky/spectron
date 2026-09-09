@@ -1,3 +1,4 @@
+import { enqueueExport } from "./integrations/export-events";
 import { sql, and, desc, eq, isNull, lt, or } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { schema, type Database } from "@spectron/db";
@@ -244,6 +245,7 @@ export function createWorklogService(db: Database) {
           action: old ? "updated" : "created",
           changes,
         });
+        if (!old) await enqueueExport(tx, input.projectId, input.issueId, row!.id, "worklog.create");
         return { id: row!.id };
       });
     },
@@ -259,6 +261,7 @@ export function createWorklogService(db: Database) {
         await access(tx, actor, input, true);
         const row = await find(tx, input, input.id, input.expectedUpdatedAt);
         if (!!row.deletedAt === input.deleted) return;
+        if (input.deleted) await enqueueExport(tx, input.projectId, input.issueId, row.id, "worklog.delete");
         const now = new Date(Math.max(Date.now(), row.updatedAt.getTime() + 1)),
           deletedAt = input.deleted ? now : null;
         await tx
