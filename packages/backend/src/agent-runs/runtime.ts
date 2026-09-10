@@ -1,4 +1,11 @@
 import {
+  modelLimits,
+  validateLimits,
+  promptByteBudget,
+  type ModelLimits,
+} from "./model-limits";
+import { startModelBridge } from "./model-bridge";
+import {
   createCredentialProxy,
   providerBaseURLs,
   providerRequestError,
@@ -115,7 +122,11 @@ export function processCommand(
     child.stdin.end(options.stdin);
   });
 }
-export function openCodeConfig(agent: AgentIdentity, key: string) {
+export function openCodeConfig(
+  agent: AgentIdentity,
+  key: string,
+  limits: ModelLimits = modelLimits(agent),
+) {
   const provider = agent.provider;
   const baseURL = providerBaseURLs[provider];
   const npm =
@@ -177,7 +188,7 @@ export function openCodeConfig(agent: AgentIdentity, key: string) {
               output: ["text"],
             },
             options,
-            limit: { context: 128000, output: 16384 },
+            limit: limits,
           },
         },
       },
@@ -191,6 +202,17 @@ export function openCodeConfig(agent: AgentIdentity, key: string) {
       },
     },
     default_agent: "spectron",
+  };
+}
+// CLI text events are snapshots of a part, not token deltas. Preserve order
+// between parts while replacing updates of the same part.
+export function createTextParts() {
+  const parts = new Map<string, string>();
+  return {
+    update(id: string, text: string) {
+      parts.set(id, text);
+      return [...parts.values()].join("\n\n");
+    },
   };
 }
 export function parseResult(text: string): AgentResult {
@@ -298,6 +320,10 @@ export function createDockerAgentRuntime(options: {
 }): AgentRuntime {
   const root = resolve(options.root),
     image = options.image ?? "spectron-agent:1.18.30";
+  const bridges = new Map<
+    string,
+    Awaited<ReturnType<typeof startModelBridge>>
+  >();
   const secrets = new Map<string, string[]>();
   const proxies = new Map<
     string,
@@ -451,6 +477,8 @@ export function createDockerAgentRuntime(options: {
         join(dir, "attachments", "manifest.json"),
         JSON.stringify(attachments),
       );
+      bridges.get(run.id)?.close();
+      bridges.delete(run.id);
       await proxies.get(run.id)?.close();
       const proxy = await createCredentialProxy(
         run.agent.provider,
@@ -459,8 +487,15 @@ export function createDockerAgentRuntime(options: {
         options.dns,
       );
       proxies.set(run.id, proxy);
-      const modelConfig = openCodeConfig(run.agent, proxy.token);
-      modelConfig.provider.spectron.options.baseURL = proxy.baseURL;
+      const modelConfig = openCodeConfig(
+        run.agent,
+        proxy.token,
+        run.context?.modelLimits
+          ? validateLimits(run.context.modelLimits)
+          : modelLimits(run.agent),
+      );
+      modelConfig.provider.spectron.options.baseURL =
+        "http://127.0.0.1:4780/v1";
       await writeFile(
         join(dir, "config.json"),
         JSON.stringify({
@@ -490,8 +525,8 @@ export function createDockerAgentRuntime(options: {
           name(run.id),
           "--label",
           "spectron.agent-run=true",
-          "--add-host",
-          "host.docker.internal:host-gateway",
+          "--network",
+          "none",
           "--read-only",
           "--cap-drop=ALL",
           "--security-opt=no-new-privileges",
@@ -514,9 +549,20 @@ export function createDockerAgentRuntime(options: {
         ],
         { signal },
       );
+      bridges.set(run.id, await startModelBridge(name(run.id), proxy.port));
       return repositories;
     },
     async turn(run, prompt, signal, activity, partial, accepted) {
+      const limits = run.context?.modelLimits
+        ? validateLimits(run.context.modelLimits)
+        : modelLimits(run.agent);
+      if (
+        Buffer.byteLength(prompt + run.instructions, "utf8") >
+        promptByteBudget(limits)
+      )
+        throw new Error(
+          "The prompt exceeds this model's input budget. Shorten the instructions or start a continuation with less context.",
+        );
       const dir = directory(run.id);
       let session = await readFile(join(dir, "session"), "utf8").catch(
         () => "",
@@ -528,6 +574,7 @@ export function createDockerAgentRuntime(options: {
         persistenceFailed = false,
         chain = Promise.resolve();
       const secret = secrets.get(run.id) ?? [];
+      const parts = createTextParts();
       const attachments = JSON.parse(
         await readFile(join(dir, "attachments", "manifest.json"), "utf8"),
       ) as { path: string; native: boolean; filename: string }[];
@@ -581,7 +628,10 @@ export function createDockerAgentRuntime(options: {
               }
               if (e.type === "text" && typeof e.part?.text === "string") {
                 lastText = redact(e.part.text, secret);
-                text += lastText;
+                text = parts.update(
+                  typeof e.part.id === "string" ? e.part.id : "anonymous",
+                  lastText,
+                );
                 chain = chain.then(() => partial(text.slice(0, 500_000)));
               }
               if (e.type === "tool_use" && typeof e.part?.tool === "string") {
@@ -625,6 +675,8 @@ export function createDockerAgentRuntime(options: {
       return result;
     },
     async cleanup(id) {
+      bridges.get(id)?.close();
+      bridges.delete(id);
       await proxies.get(id)?.close();
       proxies.delete(id);
       // docker rm -f stops the whole container, including shell/tool descendants.

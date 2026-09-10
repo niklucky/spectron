@@ -4,6 +4,7 @@ import {
   projectFileURL,
   type AgentRunActions,
   type AgentRunView,
+  type AgentRewritePreview,
 } from "@spectron/shared";
 import { MessageMarkdown } from "../../ui/message-markdown";
 import { UserInfo } from "../../ui/avatar";
@@ -24,6 +25,7 @@ export function AgentRunCard({
     [error, setError] = useState(""),
     [writing, setWriting] = useState(false),
     [message, setMessage] = useState("");
+  const [preview, setPreview] = useState<AgentRewritePreview | null>(null);
   const active = ["queued", "preparing", "working"].includes(run.state);
   const waiting = run.state === "needs_input";
   const ref = { projectId: run.projectId, issueId: run.issueId, id: run.id };
@@ -173,12 +175,98 @@ export function AgentRunCard({
             run.result?.rewrite && (
               <Button
                 disabled={busy || !!run.appliedAt}
-                onClick={() => void act(() => actions.apply(ref))}
+                onClick={() =>
+                  void act(async () =>
+                    setPreview(await actions.previewRewrite(ref)),
+                  )
+                }
               >
-                {run.appliedAt ? "Applied" : "Apply issue changes"}
+                {run.appliedAt ? "Applied" : "Review and apply issue changes"}
               </Button>
             )}
         </div>
+      )}
+      {preview && !closed && !run.appliedAt && (
+        <section
+          aria-label="Review issue changes"
+          className="agent-rewrite-preview"
+        >
+          <h4>Review issue changes</h4>
+          {preview.stale && (
+            <p>
+              The issue changed since this run started. Review the current
+              values before replacing them.
+            </p>
+          )}
+          {preview.changes.map((change) => (
+            <details key={change.field} open>
+              <summary>
+                {(
+                  {
+                    title: "Title",
+                    description: "Description",
+                    stateId: "State",
+                    priorityId: "Priority",
+                    assigneeId: "Assignee",
+                    tagIds: "Tags",
+                    fieldValues: "Custom fields",
+                  } as Record<string, string>
+                )[change.field] ?? change.field}
+                {change.changedSinceInvocation
+                  ? " — changed since invocation"
+                  : ""}
+              </summary>
+              <p>Current</p>
+              <MessageMarkdown
+                text={
+                  typeof change.current === "string"
+                    ? change.current
+                    : JSON.stringify(change.current)
+                }
+              />
+              <p>Proposed</p>
+              <MessageMarkdown
+                text={
+                  typeof change.proposed === "string"
+                    ? change.proposed
+                    : JSON.stringify(change.proposed)
+                }
+              />
+            </details>
+          ))}
+          <Button
+            disabled={busy}
+            onClick={() =>
+              void act(async () => {
+                await actions.apply({
+                  ...ref,
+                  expectedUpdatedAt: preview.expectedUpdatedAt,
+                });
+                setPreview(null);
+              })
+            }
+          >
+            Apply reviewed changes
+          </Button>
+          <Button
+            variant="ghost"
+            disabled={busy}
+            onClick={() =>
+              void act(async () =>
+                setPreview(await actions.previewRewrite(ref)),
+              )
+            }
+          >
+            Refresh comparison
+          </Button>
+          <Button
+            variant="ghost"
+            disabled={busy}
+            onClick={() => setPreview(null)}
+          >
+            Cancel
+          </Button>
+        </section>
       )}
       {writing && !closed && (
         <form

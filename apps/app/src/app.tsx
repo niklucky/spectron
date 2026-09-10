@@ -248,7 +248,8 @@ function Workspace({
         invoke: (input: import('@spectron/shared').AgentInvocation) => trpc.runs.invoke.mutate(input),
         stop: (input: import('@spectron/shared').AgentRunScope & { id: string }) => trpc.runs.stop.mutate(input),
         instruct: (input: import('@spectron/shared').AgentRunScope & { id: string; requestId: string; message: string }) => trpc.runs.instruct.mutate(input),
-        apply: async (input: import('@spectron/shared').AgentRunScope & { id: string }) => { await trpc.runs.applyRewrite.mutate(input); await workspace.refresh(); },
+        previewRewrite: (input: import('@spectron/shared').AgentRunScope & { id: string }) => trpc.runs.previewRewrite.query(input),
+        apply: async (input: import('@spectron/shared').AgentRunScope & { id: string; expectedUpdatedAt?: string }) => { await trpc.runs.applyRewrite.mutate(input); await workspace.refresh(); },
       },
       activity: (input: {
         projectId: string;

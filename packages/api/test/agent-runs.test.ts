@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 import { createDatabase, migrateDatabase, schema } from "@spectron/db";
 import {
   createId,
+  agentRunPollDelay,
   type AgentInvocation,
   type AgentResult,
 } from "@spectron/shared";
@@ -22,10 +23,15 @@ import {
 import { eq } from "drizzle-orm";
 import {
   openCodeConfig,
+  createTextParts,
   parseResult,
   redact,
 } from "../../backend/src/agent-runs/runtime";
 import { runPrompt } from "../../backend/src/agent-runs/worker";
+import {
+  modelLimits,
+  promptByteBudget,
+} from "../../backend/src/agent-runs/model-limits";
 const secret = "agent-run-test-secret-at-least-32-characters";
 
 test("result parsing accepts only supported rewrite fields and redacts credentials", () => {
@@ -50,6 +56,33 @@ test("result parsing accepts only supported rewrite fields and redacts credentia
     ]),
     "[redacted] [redacted]",
   );
+});
+
+test("text part snapshots replace previous updates and preserve distinct parts", () => {
+  const parts = createTextParts();
+  assert.equal(parts.update("one", "A"), "A");
+  assert.equal(parts.update("one", "AB"), "AB");
+  assert.equal(parts.update("one", "ABC"), "ABC");
+  assert.equal(parts.update("two", "Result"), "ABC\n\nResult");
+  assert.equal(parts.update("two", "Final result"), "ABC\n\nFinal result");
+});
+test("polling stops when idle and model input budgets respect smaller windows", () => {
+  assert.equal(agentRunPollDelay([]), null);
+  assert.equal(
+    agentRunPollDelay([{ state: "completed" }, { state: "failed" }]),
+    null,
+  );
+  assert.equal(agentRunPollDelay([{ state: "needs_input" }]), 30000);
+  assert.equal(agentRunPollDelay([{ state: "working" }]), 2000);
+  const large = modelLimits({ provider: "openai", model: "gpt-5.6-sol" });
+  const small = modelLimits({
+    provider: "anthropic",
+    model: "claude-haiku-4-5-20251001",
+  });
+  assert.ok(large.context > small.context);
+  assert.ok(promptByteBudget(small) + small.output < small.context);
+  const unknown = modelLimits({ provider: "zai", model: "unlisted" });
+  assert.equal(unknown.context, 64000);
 });
 
 test("durable agent runs, permissions, snapshots, steering, cancellation and recovery", async (t) => {
@@ -181,6 +214,7 @@ test("durable agent runs, permissions, snapshots, steering, cancellation and rec
     summary: "Plan ready",
     details: "Read repo/file.ts; no checks run.",
   });
+  let emitsAccepted = true;
   let prepares = 0,
     cleanups = 0,
     cleanupFails = false;
@@ -192,7 +226,7 @@ test("durable agent runs, permissions, snapshots, steering, cancellation and rec
       return run.repositories.map((r) => ({ ...r, commit: "a".repeat(40) }));
     },
     turn: async (...args) => {
-      await args[5]();
+      if (emitsAccepted) await args[5]();
       return turn(...args);
     },
     cleanup: async () => {
@@ -485,6 +519,139 @@ test("durable agent runs, permissions, snapshots, steering, cancellation and rec
     },
   );
   await t.test(
+    "missing delivery acknowledgement never repeats a paid turn",
+    async () => {
+      const created = await runs.invoke(owner, args());
+      await runs.instruct(owner, {
+        ...scope,
+        id: created.id,
+        requestId: createId(),
+        message: "Pending instruction",
+      });
+      let calls = 0;
+      emitsAccepted = false;
+      turn = async () => {
+        calls++;
+        return { summary: "Saved response", details: "Answer" };
+      };
+      try {
+        await runToEnd();
+      } finally {
+        emitsAccepted = true;
+      }
+      const row = await view(created.id);
+      assert.equal(calls, 1);
+      assert.equal(row.state, "failed");
+      assert.equal(row.inputs[0]!.state, "queued");
+      assert.equal(row.result?.summary, "Saved response");
+      assert.match(row.error!, /without confirming/);
+    },
+  );
+  await t.test(
+    "continuous steering pauses after ten turns for explicit resumption",
+    async () => {
+      const created = await runs.invoke(owner, args());
+      let calls = 0;
+      turn = async (row) => {
+        calls++;
+        await runs.instruct(owner, {
+          ...scope,
+          id: row.id,
+          requestId: createId(),
+          message: "Next instruction",
+        });
+        return { summary: "Result", details: "Answer" };
+      };
+      await runToEnd();
+      const row = await view(created.id);
+      assert.equal(calls, 10);
+      assert.equal(row.state, "needs_input");
+      assert.match(row.result!.question!, /10-turn limit/);
+      assert.equal(row.inputs.filter((i) => i.state === "queued").length, 1);
+      await runs.stop(owner, { ...scope, id: row.id });
+      await worker.tick();
+    },
+  );
+  await t.test(
+    "closure cleans retained containers without changing successful results",
+    async () => {
+      const created = await runs.invoke(owner, args());
+      turn = async () => ({ summary: "Success", details: "Answer" });
+      await runToEnd();
+      await db
+        .update(schema.issue)
+        .set({ stateId: states[1]! })
+        .where(eq(schema.issue.id, issueId));
+      let row = await view(created.id);
+      assert.equal(row.state, "completed");
+      assert.equal(row.error, null);
+      assert.equal(row.stopRequested, true);
+      for (let n = 0; n < 20; n++) await worker.tick();
+      row = await view(created.id);
+      assert.equal(row.containerRetained, false);
+      assert.equal(row.error, null);
+      await db
+        .update(schema.issue)
+        .set({ stateId: states[0]! })
+        .where(eq(schema.issue.id, issueId));
+    },
+  );
+  await t.test(
+    "large historical results are bounded instead of locking out new runs",
+    async () => {
+      for (let i = 0; i < 6; i++) {
+        const created = await runs.invoke(owner, args());
+        await db
+          .update(schema.agentRun)
+          .set({
+            state: "completed",
+            result: { summary: "Older result", details: "x".repeat(500000) },
+          })
+          .where(eq(schema.agentRun.id, created.id));
+      }
+      const created = await runs.invoke(owner, args());
+      const [row] = await db
+        .select()
+        .from(schema.agentRun)
+        .where(eq(schema.agentRun.id, created.id));
+      assert.ok(JSON.stringify(row!.context.previous).length < 70000);
+      assert.match(String(row!.context.historyNotice), /excerpts/);
+      turn = async () => ({ summary: "Success", details: "Answer" });
+      await runToEnd();
+    },
+  );
+  await t.test(
+    "worker shutdown reports interruption instead of a human Stop",
+    async () => {
+      const created = await runs.invoke(owner, args());
+      let started!: () => void;
+      const ready = new Promise<void>((resolve) => (started = resolve));
+      turn = async (_row, _prompt, signal) => {
+        started();
+        await new Promise<void>((_resolve, reject) => {
+          signal.addEventListener(
+            "abort",
+            () => reject(new Error("cancelled")),
+            { once: true },
+          );
+        });
+        return { summary: "unused", details: "unused" };
+      };
+      const shuttingDown = createAgentWorker(db, files, runtime, {
+        aiSecret: secret,
+        integrationSecret: secret,
+        gitFactory: factory,
+      });
+      const stop = shuttingDown.start();
+      await shuttingDown.tick();
+      await ready;
+      await stop();
+      const row = await view(created.id);
+      assert.equal(row.state, "failed");
+      assert.match(row.error!, /shutdown/);
+    },
+  );
+  await t.test(
     "rewrite requires explicit Apply and rejects stale issue revisions",
     async () => {
       turn = async () => ({
@@ -517,6 +684,42 @@ test("durable agent runs, permissions, snapshots, steering, cancellation and rec
         runs.apply(owner, { ...scope, id: stale.id }),
         /changed/,
       );
+      const preview = await runs.previewRewrite(owner, {
+        ...scope,
+        id: stale.id,
+      });
+      assert.equal(preview.stale, true);
+      assert.equal(
+        preview.changes.find((c) => c.field === "title")?.current,
+        "Human edit",
+      );
+      assert.equal(
+        preview.changes.find((c) => c.field === "title")
+          ?.changedSinceInvocation,
+        true,
+      );
+      await db
+        .update(schema.issue)
+        .set({ title: "Newer edit", updatedAt: new Date(Date.now() + 2000) })
+        .where(eq(schema.issue.id, issueId));
+      await assert.rejects(
+        runs.apply(owner, {
+          ...scope,
+          id: stale.id,
+          expectedUpdatedAt: preview.expectedUpdatedAt,
+        }),
+        /changed/,
+      );
+      const fresh = await runs.previewRewrite(owner, {
+        ...scope,
+        id: stale.id,
+      });
+      await runs.apply(owner, {
+        ...scope,
+        id: stale.id,
+        expectedUpdatedAt: fresh.expectedUpdatedAt,
+      });
+      assert.ok((await view(stale.id)).appliedAt);
     },
   );
 });

@@ -220,7 +220,8 @@ export const appRouter = t.router({
     invoke: authenticated.input(runScope.extend({ requestId: applicationId, agentId: applicationId, command: z.enum(agentCommands), repositoryIds: z.array(applicationId).min(1).max(50), message: z.string().trim().min(1).max(100000), fileIds: z.array(applicationId).max(20), continuationId: applicationId.optional() })).mutation(({ ctx, input }) => ctx.runs.invoke(ctx.userId, input)),
     stop: authenticated.input(runRef).mutation(({ ctx, input }) => ctx.runs.stop(ctx.userId, input)),
     instruct: authenticated.input(runRef.extend({ requestId: applicationId, message: z.string().trim().min(1).max(100000) })).mutation(({ ctx, input }) => ctx.runs.instruct(ctx.userId, input)),
-    applyRewrite: authenticated.input(runRef).mutation(({ ctx, input }) => ctx.runs.apply(ctx.userId, input)),
+    previewRewrite: authenticated.input(runRef).query(({ ctx, input }) => ctx.runs.previewRewrite(ctx.userId, input)),
+    applyRewrite: authenticated.input(runRef.extend({ expectedUpdatedAt: z.string().datetime().optional() })).mutation(({ ctx, input }) => ctx.runs.apply(ctx.userId, input)),
   }),
   git: t.router({
     connections: authenticated.input(gitProject).query(({ ctx, input }) => ctx.git.connections(ctx.userId, input.projectId)),

@@ -62,6 +62,23 @@ export type AgentRunView = AgentRunScope & {
   canControl: boolean;
   appliedAt: string | null;
 };
+export type AgentRewritePreview = {
+  expectedUpdatedAt: string;
+  stale: boolean;
+  changes: {
+    field: string;
+    current: unknown;
+    proposed: unknown;
+    changedSinceInvocation: boolean;
+  }[];
+};
+export function agentRunPollDelay(
+  runs: Pick<AgentRunView, "state">[],
+): number | null {
+  if (runs.some((r) => ["queued", "preparing", "working"].includes(r.state)))
+    return 2000;
+  return runs.some((r) => r.state === "needs_input") ? 30000 : null;
+}
 export type AgentRunActions = {
   available: (projectId: string) => Promise<AgentIdentity[]>;
   repositories: (projectId: string) => Promise<GitRepository[]>;
@@ -71,5 +88,10 @@ export type AgentRunActions = {
   instruct: (
     input: AgentRunScope & { id: string; requestId: string; message: string },
   ) => Promise<void>;
-  apply: (input: AgentRunScope & { id: string }) => Promise<void>;
+  previewRewrite: (
+    input: AgentRunScope & { id: string },
+  ) => Promise<AgentRewritePreview>;
+  apply: (
+    input: AgentRunScope & { id: string; expectedUpdatedAt?: string },
+  ) => Promise<void>;
 };

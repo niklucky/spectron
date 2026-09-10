@@ -1,4 +1,6 @@
-import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { modelLimits, promptByteBudget } from "./model-limits";
+import { runPrompt } from "./prompt";
+import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { schema, type Database } from "@spectron/db";
 import {
   createId,
@@ -224,12 +226,16 @@ export function createAgentRunService(db: Database, files: FileService) {
           .select({
             id: r.id,
             agent: r.agent,
-            message: r.message,
-            result: r.result,
+            message: sql<string>`left(${r.message}, 1000)`,
+            result: sql<
+              Run["result"]
+            >`CASE WHEN ${r.result} IS NULL THEN NULL ELSE jsonb_build_object('summary', left(${r.result}->>'summary', 1000), 'details', left(${r.result}->>'details', 4000)) END`,
           })
           .from(r)
           .where(eq(r.issueId, args.issueId))
-          .orderBy(asc(r.createdAt));
+          .orderBy(desc(r.createdAt), desc(r.id))
+          .limit(10);
+        previous.reverse();
         let continuation: Run | undefined;
         if (args.continuationId) {
           [continuation] = await tx
@@ -283,7 +289,7 @@ export function createAgentRunService(db: Database, files: FileService) {
           ? await tx
               .select({
                 runId: input.runId,
-                message: input.message,
+                message: sql<string>`left(${input.message}, 1000)`,
                 state: input.state,
                 userId: input.userId,
               })
@@ -294,13 +300,18 @@ export function createAgentRunService(db: Database, files: FileService) {
                   previous.map((r) => r.id),
                 ),
               )
-              .orderBy(asc(input.createdAt))
+              .orderBy(desc(input.createdAt), desc(input.id))
+              .limit(20)
           : [];
+        const limits = modelLimits(agent);
         const context = {
+          modelLimits: limits,
           issue: { ...current.issue, tagIds: tags.map((t) => t.id) },
           settings,
           people,
-          earlierInputs,
+          earlierInputs: earlierInputs.reverse(),
+          historyNotice:
+            "Includes up to 10 recent agent results (summary and details excerpts) and 20 recent steering excerpts. Full history remains in issue chat.",
           status: current.trigger,
           comments: comments.map((c) => ({ ...c, body: commentText(c.body) })),
           previous,
@@ -331,9 +342,31 @@ export function createAgentRunService(db: Database, files: FileService) {
                 ),
               )
           : [];
-        if (JSON.stringify(context).length > 2_000_000)
+        const finalContext = { ...context, attachments: attachedFiles };
+        const promptSize = () =>
+          Buffer.byteLength(
+            runPrompt(
+              {
+                command: args.command,
+                repositories,
+                context: finalContext,
+                message: args.message,
+                result: null,
+              },
+              [],
+            ) + config.instructions,
+            "utf8",
+          );
+        const budget = promptByteBudget(limits);
+        // Historical results are excerpts, not a permanent lockout. Drop oldest
+        // excerpts first; immutable full results remain available in chat.
+        while (promptSize() > budget && finalContext.previous.length)
+          finalContext.previous.shift();
+        while (promptSize() > budget && finalContext.earlierInputs.length)
+          finalContext.earlierInputs.shift();
+        if (promptSize() > budget)
           throw new IssueInputError(
-            "This issue context exceeds the current 2 MB execution limit. Shorten the conversation or description before running.",
+            `This issue and its instructions exceed the model's ${budget.toLocaleString("en-US")}-byte input budget after omitting prior agent history. Shorten the issue conversation, description, or agent instructions.`,
           );
         const [created] = await tx
           .insert(r)
@@ -349,7 +382,7 @@ export function createAgentRunService(db: Database, files: FileService) {
             command: args.command,
             message: args.message.trim(),
             repositories,
-            context: { ...context, attachments: attachedFiles },
+            context: finalContext,
             instructions: config.instructions,
             connectionId: config.connectionId,
           })
@@ -377,7 +410,11 @@ export function createAgentRunService(db: Database, files: FileService) {
           .update(r)
           .set({
             stopRequested: true,
-            error: "Stopped by a project member.",
+            ...(["queued", "preparing", "working", "needs_input"].includes(
+              row.state,
+            )
+              ? { error: "Stopped by a project member." }
+              : {}),
             updatedAt: new Date(),
           })
           .where(eq(r.id, row.id));
@@ -425,7 +462,50 @@ export function createAgentRunService(db: Database, files: FileService) {
             .where(eq(r.id, row.id));
       });
     },
-    async apply(userId: string, args: AgentRunScope & { id: string }) {
+    async previewRewrite(userId: string, args: AgentRunScope & { id: string }) {
+      return db.transaction(async (tx) => {
+        const row = await controlled(tx, userId, args);
+        if (
+          row.command !== "rewrite-issue" ||
+          row.state !== "completed" ||
+          !row.result?.rewrite ||
+          row.appliedAt
+        )
+          throw new IssueInputError("No unapplied rewrite is available.");
+        const access = await runAccess(tx, userId, args, true);
+        const tags = await tx
+          .select({ id: schema.issueTag.tagId })
+          .from(schema.issueTag)
+          .where(eq(schema.issueTag.issueId, args.issueId));
+        const current: Record<string, unknown> = {
+          ...access.issue,
+          tagIds: tags.map((t) => t.id).sort(),
+        };
+        const original = row.context.issue as Record<string, unknown>;
+        const same = (a: unknown, b: unknown) =>
+          JSON.stringify(Array.isArray(a) ? [...a].sort() : a) ===
+          JSON.stringify(Array.isArray(b) ? [...b].sort() : b);
+        return {
+          expectedUpdatedAt: access.issue.updatedAt.toISOString(),
+          stale: access.issue.updatedAt.toISOString() !== original.updatedAt,
+          changes: Object.entries(row.result.rewrite).map(
+            ([field, proposed]) => ({
+              field,
+              current: current[field] ?? null,
+              proposed,
+              changedSinceInvocation: !same(current[field], original[field]),
+            }),
+          ),
+        };
+      });
+    },
+    async apply(
+      userId: string,
+      args: AgentRunScope & {
+        id: string;
+        expectedUpdatedAt?: string | undefined;
+      },
+    ) {
       // Existing issue service validates fields and optimistic revision and emits normal history/export events.
       await db.transaction(async (tx) => {
         const row = await controlled(tx, userId, args);
@@ -440,7 +520,7 @@ export function createAgentRunService(db: Database, files: FileService) {
         await createIssueService(tx as unknown as Database).update(userId, {
           projectId: row.projectId,
           id: row.issueId,
-          expectedUpdatedAt: original.updatedAt,
+          expectedUpdatedAt: args.expectedUpdatedAt ?? original.updatedAt,
           ...row.result.rewrite,
         });
         await tx

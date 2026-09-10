@@ -236,7 +236,7 @@ export async function createCredentialProxy(
   server.headersTimeout = 10_000;
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
-    server.listen(0, "0.0.0.0", () => {
+    server.listen(0, "127.0.0.1", () => {
       server.off("error", reject);
       resolve();
     });
@@ -247,7 +247,7 @@ export async function createCredentialProxy(
   return {
     token,
     port: address.port,
-    baseURL: `http://host.docker.internal:${address.port}/v1`,
+    baseURL: `http://127.0.0.1:${address.port}/v1`,
     get lastError() {
       return lastError;
     },

@@ -1,3 +1,5 @@
+import { createServer } from "node:http";
+import { startModelBridge } from "../../backend/src/agent-runs/model-bridge";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { mkdtemp, mkdir, writeFile, readFile, rm } from "node:fs/promises";
@@ -78,6 +80,31 @@ test(
         activity.push(s);
       },
     );
+    assert.equal(
+      (
+        await processCommand("docker", [
+          "inspect",
+          "--format",
+          "{{.HostConfig.NetworkMode}}",
+          `spectron-run-${id}`,
+        ])
+      ).trim(),
+      "none",
+    );
+    await processCommand("docker", [
+      "exec",
+      `spectron-run-${id}`,
+      "node",
+      "-e",
+      `
+      const net=require('node:net');
+      Promise.all(['1.1.1.1','172.17.0.1'].map(host=>new Promise((resolve,reject)=>{
+        const socket=net.connect({host,port:443});socket.setTimeout(2000);
+        socket.on('connect',()=>{socket.destroy();reject(new Error('Unexpected egress'));});
+        socket.on('error',()=>resolve());socket.on('timeout',()=>{socket.destroy();resolve();});
+      }))).catch(()=>process.exit(1));
+    `,
+    ]);
     assert.ok(
       !(await readFile(join(dir, "config.json"), "utf8")).includes(config.key),
     );
@@ -374,6 +401,62 @@ test(
       );
     } finally {
       await runtime.cleanup(nextId);
+    }
+  },
+);
+
+test(
+  "networkless Docker relay forwards streamed model requests only to the host gateway",
+  { skip: process.env.TEST_AGENT_DOCKER !== "true", timeout: 30000 },
+  async () => {
+    const name = `spectron-bridge-test-${createId()}`;
+    const server = createServer(async (req, res) => {
+      assert.equal(req.method, "POST");
+      assert.equal(req.url, "/v1/responses");
+      assert.equal(req.headers.authorization, "Bearer fixture-token");
+      let body = "";
+      for await (const chunk of req) body += chunk;
+      assert.deepEqual(JSON.parse(body), { model: "fixture" });
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.write("data: first\n\n");
+      res.end("data: last\n\n");
+    });
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", resolve),
+    );
+    const address = server.address();
+    assert.ok(address && typeof address !== "string");
+    let bridge: Awaited<ReturnType<typeof startModelBridge>> | undefined;
+    try {
+      await processCommand("docker", [
+        "run",
+        "-d",
+        "--name",
+        name,
+        "--network",
+        "none",
+        "--cap-drop=ALL",
+        "spectron-agent:1.18.30",
+      ]);
+      bridge = await startModelBridge(name, address.port);
+      await processCommand("docker", [
+        "exec",
+        name,
+        "node",
+        "-e",
+        `
+      (async()=>{
+        const response=await fetch('http://127.0.0.1:4780/v1/responses',{method:'POST',headers:{authorization:'Bearer fixture-token'},body:JSON.stringify({model:'fixture'})});
+        if(response.status!==200 || await response.text()!=='data: first\\n\\ndata: last\\n\\n')throw new Error('Invalid stream');
+        const blocked=await fetch('http://127.0.0.1:4780/anything-else',{method:'POST'});if(blocked.status!==403)throw new Error('Invalid route allowed');
+      })().catch(()=>process.exit(1));
+    `,
+      ]);
+    } finally {
+      bridge?.close();
+      await processCommand("docker", ["rm", "-f", name]);
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
     }
   },
 );

@@ -1,5 +1,5 @@
 import { AgentRunCard } from "./agent-run-card";
-import type { AgentRunView } from "@spectron/shared";
+import { agentRunPollDelay, type AgentRunView } from "@spectron/shared";
 import { formatDateTime } from "../../../lib/date-format";
 import { AttachmentMarkdown, nonInlineFiles } from "./issue-comments";
 import { MessageMarkdown } from "../../ui/message-markdown";
@@ -64,7 +64,11 @@ export function IssueChat({
   useEffect(() => {
     if (!active || !actions.runs) return;
     let alive = true;
+    let timer: number | undefined;
+    let refreshing = false;
     const refresh = async () => {
+      if (refreshing) return;
+      refreshing = true;
       try {
         const rows = await actions.runs!.list({
           projectId: issue.projectId,
@@ -73,19 +77,31 @@ export function IssueChat({
         if (alive) {
           setRuns(rows);
           setRunError("");
+          const delay = agentRunPollDelay(rows);
+          if (delay !== null)
+            timer = window.setTimeout(() => void refresh(), delay);
         }
       } catch (e) {
-        if (alive)
+        if (alive) {
           setRunError(
             e instanceof Error ? e.message : "Could not load agent runs.",
           );
+          timer = window.setTimeout(() => void refresh(), 30000);
+        }
+      } finally {
+        refreshing = false;
       }
     };
     void refresh();
-    const timer = window.setInterval(() => void refresh(), 2000);
+    const refocus = () => {
+      window.clearTimeout(timer);
+      void refresh();
+    };
+    window.addEventListener("focus", refocus);
     return () => {
       alive = false;
-      window.clearInterval(timer);
+      window.clearTimeout(timer);
+      window.removeEventListener("focus", refocus);
     };
   }, [active, actions.runs, issue.id, issue.projectId, revision, reload]);
   const [expandedHistory, setExpandedHistory] = useState<Set<string>>(
