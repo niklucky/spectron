@@ -6,6 +6,7 @@ import {
   ProjectAccessError,
   createProjectService,
   createIssueService,
+  createCommentService,
   createFieldService,
 } from "@spectron/backend";
 import {
@@ -156,6 +157,7 @@ test("database import/push, mappings, typed fields, permissions, repeat sync and
     key: "TEAM-1",
     version: 1,
     summary: "Imported",
+    createdBy: { id: "remote-author", uid: 202, login: "remote.author", display: "Remote Author" },
     status: { id: "open", key: "open", display: "Open" },
     createdAt: "2026-01-01",
     updatedAt: "v1",
@@ -383,6 +385,35 @@ test("database import/push, mappings, typed fields, permissions, repeat sync and
   );
   let local = (await issues.list("owner", p.id))[0]!;
   assert.equal(local.externalId, "remote1");
+  assert.notEqual(local.authorId, "owner");
+  assert.equal(local.author?.name, "Remote Author");
+  const originalTimestamp = local.updatedAt;
+  // Simulate a legacy import and verify attribution-only repair preserves the
+  // content version used by edits and sync checkpoints.
+  await pool.query("update issues set author_id='owner', external_author_id=null where id=$1", [local.id]);
+  await tracker.repairAuthors("owner", p.id, local.id);
+  const repaired = (await issues.list("owner", p.id))[0]!;
+  assert.equal(repaired.author?.name, "Remote Author");
+  assert.equal(repaired.updatedAt, originalTimestamp);
+  const importedComment = (await db.select().from(schema.issueComment))[0]!;
+  assert.equal(importedComment.authorId, null);
+  assert.ok(importedComment.externalAuthorId);
+  const mappedIdentity = (await db.select().from(schema.externalIdentity)).find(identity => identity.id === importedComment.externalAuthorId)!;
+  assert.equal(mappedIdentity.localUserId, "owner");
+  // Unchanged remote comments still repair legacy attribution and show unmapped
+  // external authors instead of granting the importing account ownership.
+  comments[0]!.createdBy = { id: "remote-author", uid: 202, display: "Remote Author" };
+  await tracker.run("owner", p.id, "import");
+  const externalComment = (await db.select().from(schema.issueComment))[0]!;
+  assert.equal(externalComment.authorId, null);
+  assert.equal(externalComment.externalAuthorId, repaired.authorId);
+  const listedComment = (await createCommentService(db).list("owner", { projectId: p.id, issueId: local.id, parentId: null })).comments[0]!;
+  assert.equal(listedComment.authorName, "Remote Author");
+  assert.equal(listedComment.canEdit, false);
+  comments[0]!.createdBy = { id: "different-reference", uid: 101, display: "Owner" };
+  assert.equal(local.trackerKey, remote.key);
+  assert.equal((await issues.settings("owner", p.id)).trackerConnected, true);
+  assert.equal((await issues.settings("owner", p.id)).jiraConnected, false);
   assert.equal(local.fieldValues?.[reference.id], "Задача");
   assert.equal(local.fieldValues?.[number.id], 3);
   assert.equal(local.fieldValues?.[person.id], "owner");
@@ -394,6 +425,11 @@ test("database import/push, mappings, typed fields, permissions, repeat sync and
     JSON.stringify((await db.select().from(schema.issueComment))[0]!.body),
     /Comment-only update/,
   );
+  comments[0]!.text = "Script\n\n```bash\n  echo \"$body\"\n```";
+  comments[0]!.updatedAt = "comment-markdown-v3";
+  await tracker.run("owner", p.id, "import");
+  assert.deepEqual((await db.select().from(schema.issueComment))[0]!.body,
+    [{ type: "text", text: comments[0]!.text }]);
   remote.summary = "Remote edited";
   remote.updatedAt = "v2";
   await tracker.run("owner", p.id, "import");
@@ -406,12 +442,17 @@ test("database import/push, mappings, typed fields, permissions, repeat sync and
     title: "Local edited",
     fieldValues: { ...local.fieldValues, [number.id]: 8 },
   });
-  assert.deepEqual(await tracker.run("owner", p.id, "push"), {
+  assert.deepEqual(await tracker.run("owner", p.id, "push", false, { issueId: local.id }), {
     processed: 1,
     errors: [],
   });
   assert.equal(remote.summary, "Local edited");
   assert.equal(remote.estimate, 8);
+  assert.deepEqual(await tracker.run("owner", p.id, "push", false, { issueId: "missing-issue" }), {
+    processed: 0,
+    errors: [],
+  });
+  await assert.rejects(tracker.run("outsider", p.id, "push", false, { issueId: local.id }));
   await db.insert(schema.issueComment).values({
     projectId: p.id,
     issueId: local.id,
@@ -421,9 +462,14 @@ test("database import/push, mappings, typed fields, permissions, repeat sync and
   for (let i = 0; i < 2; i++)
     assert.deepEqual((await tracker.run("owner", p.id, "push")).errors, []);
   assert.equal(commentCreates, 1);
+  assert.equal(comments[1]!.text, "Local comment");
   const lc = (await db.select().from(schema.issueComment)).find(
     (c) => c.externalId === "2",
   );
+  await tracker.run("owner", p.id, "import");
+  const preservedAuthor = (await db.select().from(schema.issueComment)).find(c => c.id === lc!.id)!;
+  assert.equal(preservedAuthor.authorId, "owner");
+  assert.equal(preservedAuthor.externalAuthorId, null);
   await pool.query(
     "update issue_comments set body = $1::jsonb, updated_at = $2 where id = $3",
     [
@@ -433,7 +479,7 @@ test("database import/push, mappings, typed fields, permissions, repeat sync and
     ],
   );
   await tracker.run("owner", p.id, "push");
-  assert.match(comments[1]!.text, /Edited comment/);
+  assert.equal(comments[1]!.text, "Edited comment");
   assert.equal(commentCreates, 1);
   await db.insert(schema.issueComment).values({
     projectId: p.id,
@@ -445,7 +491,10 @@ test("database import/push, mappings, typed fields, permissions, repeat sync and
   assert.equal((await tracker.run("owner", p.id, "push")).errors.length, 1);
   assert.equal(commentCreates, 2);
   assert.deepEqual((await tracker.run("owner", p.id, "push")).errors, []);
-  assert.equal(commentCreates, 2);
+  assert.equal(commentCreates, 3);
+  assert.equal(comments.at(-1)!.text, "Retry this comment");
+  await tracker.run("owner", p.id, "push");
+  assert.equal(commentCreates, 3);
   await issues.create("owner", {
     projectId: p.id,
     title: "New local",

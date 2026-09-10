@@ -120,6 +120,20 @@
       "when": 1788902843844,
       "tag": "0016_flowery_baron_zemo",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1789002536948,
+      "tag": "0017_soft_omega_red",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1789005465797,
+      "tag": "0018_zippy_martin_li",
+      "breakpoints": true
     }
   ]
 }

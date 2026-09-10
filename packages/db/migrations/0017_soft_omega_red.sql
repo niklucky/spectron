@@ -1,0 +1,5 @@
+ALTER TABLE "external_identities" ALTER COLUMN "integration_id" DROP NOT NULL;--> statement-breakpoint
+ALTER TABLE "external_identities" ADD COLUMN "tracker_integration_id" text;--> statement-breakpoint
+ALTER TABLE "external_identities" ADD CONSTRAINT "external_identities_tracker_integration_id_project_integrations_id_fk" FOREIGN KEY ("tracker_integration_id") REFERENCES "public"."project_integrations"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+CREATE UNIQUE INDEX "external_identities_tracker_unique" ON "external_identities" USING btree ("tracker_integration_id","external_id");--> statement-breakpoint
+ALTER TABLE "external_identities" ADD CONSTRAINT "external_identities_one_source" CHECK (num_nonnulls("external_identities"."integration_id", "external_identities"."tracker_integration_id") = 1);

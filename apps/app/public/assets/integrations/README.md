@@ -7,3 +7,5 @@ Official, unmodified vendor assets, retrieved 2026-09-08.
 - GitHub: https://brand.github.com/foundations/logo — GitHub_Logos.zip, SVG/GitHub_Invertocat_Black.svg and GitHub_Invertocat_White.svg.
 
 Vendor trademarks remain the property of their respective owners. Use these assets only to identify their integrations; follow the linked brand guidelines.
+
+- `yandex.svg`: Yandex Tracker SVG supplied by the user (Seeklogo download).

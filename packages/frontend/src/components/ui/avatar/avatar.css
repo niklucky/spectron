@@ -48,3 +48,9 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+.avatar-named {
+  background: linear-gradient(145deg, hsl(var(--avatar-hue) 70% 91%), hsl(calc(var(--avatar-hue) + 25) 64% 78%));
+  color: hsl(var(--avatar-hue) 55% 24%);
+  box-shadow: inset 0 0 0 1px hsl(var(--avatar-hue) 45% 50% / 12%);
+}

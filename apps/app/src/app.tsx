@@ -196,6 +196,32 @@ function Workspace({
   const task = workspace.task;
   const issueActions = useMemo(
     () => ({
+      canCreateTag: (projectId: string) => projects.some(p => p.id === projectId && p.role === "owner"),
+      createTag: async (projectId: string, name: string) => {
+        const find = async () => (await trpc.issues.settings.query({ projectId })).tags?.find(tag => !tag.deletedAt && tag.name.toLowerCase() === name.toLowerCase());
+        let tag = await find();
+        if (!tag) {
+          try {
+            const created = await trpc.issues.saveOption.mutate({ projectId, kind: "tag", name, position: 0, color: "#6478b8" });
+            await workspace.refresh();
+            return created.id;
+          } catch (error) {
+            tag = await find();
+            if (!tag) throw error;
+          }
+        }
+        await workspace.refresh();
+        return tag.id;
+      },
+      canPublishTracker: (projectId: string) =>
+        projects.some((p) => p.id === projectId && p.role === "owner") &&
+        !!workspace.settings[projectId]?.trackerConnected,
+      pushTracker: async (projectId: string, id: string) => {
+        const result = await trpc.tracker.pushIssue.mutate({ projectId, id });
+        await workspace.refresh();
+        if (result.errors.length) throw new Error(result.errors.join("\n"));
+        if (!result.processed) throw new Error("Issue could not be synced. It may have been deleted.");
+      },
       canPublish: (projectId: string) =>
         projects.some((p) => p.id === projectId && p.role === "owner") &&
         !!workspace.settings[projectId]?.jiraConnected,

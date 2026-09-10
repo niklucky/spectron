@@ -294,7 +294,7 @@
 .task-filter-popover {
   position: fixed;
   margin: 0;
-  width: min(300px, calc(100vw - 16px));
+  width: min(420px, calc(100vw - 16px));
   max-height: calc(100dvh - 140px);
   overflow: auto;
   border: 1px solid var(--color-line);
@@ -685,3 +685,43 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+.message-markdown p { margin: 0 0 0.7em; white-space: pre-wrap; }
+.message-markdown > :last-child { margin-bottom: 0; }
+.message-markdown blockquote {
+  margin: 0.6em 0;
+  padding: 4px 12px;
+  border-left: 3px solid var(--color-text-muted);
+  color: var(--color-text-secondary);
+}
+.message-markdown pre {
+  max-width: 100%;
+  overflow-x: auto;
+  padding: 12px;
+  margin: 0.6em 0;
+  border-radius: 8px;
+  background: var(--color-hover);
+  white-space: pre;
+  overflow-wrap: normal;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.message-markdown pre code { padding: 0; background: none; border-radius: 0; }
+.message-markdown a { color: var(--color-accent); text-decoration: underline; }
+.message-markdown table { display: block; max-width: 100%; overflow-x: auto; border-collapse: collapse; margin: 0.6em 0; }
+.message-markdown th, .message-markdown td { padding: 6px 10px; border: 1px solid var(--color-line); }
+.message-markdown th { font-weight: 600; }
+.message-markdown h1, .message-markdown h2, .message-markdown h3,
+.message-markdown h4, .message-markdown h5, .message-markdown h6 { font-weight: 600; margin: 0.8em 0 0.4em; line-height: 1.3; }
+.message-markdown h1 { font-size: 1.5em; }
+.message-markdown h2 { font-size: 1.3em; }
+.message-markdown h3 { font-size: 1.15em; }
+.message-markdown input[type="checkbox"] { width: auto; margin-right: 6px; }
+
+.task-filter-dates { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--color-line); }
+.task-date-presets { display: flex; gap: 8px; margin: 12px 0; }
+.task-date-presets button { padding: 7px 10px; border-radius: 6px; background: var(--color-hover); }
+.task-date-presets button[aria-pressed="true"] { box-shadow: inset 0 0 0 1px var(--color-text-secondary); }
+.task-date-inputs { display: flex; gap: 12px; }
+.task-date-inputs label { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 6px; }
+.task-date-inputs input { width: 100%; min-width: 0; padding: 8px; border: 1px solid var(--color-line); border-radius: 6px; color: inherit; background: var(--color-surface); }

@@ -184,7 +184,9 @@ export function useWorkspace(
     .filter(
       (i) =>
         (route.isFlow || i.projectId === route.project) &&
+        (!route.isFlow || !filter.projectIds?.length || filter.projectIds.includes(i.projectId)) &&
         (filter.deleted ? !!i.deletedAt : !i.deletedAt) &&
+        matchesDatePeriod(i, filter) &&
         (!filter.typeIds?.length || filter.typeIds.includes(i.issueTypeId ?? "")) &&
         (!filter.values.length ||
           filter.values.includes(
@@ -323,4 +325,14 @@ export function useWorkspace(
           );
     },
   };
+}
+
+function matchesDatePeriod(issue: { updatedAt: string; createdAt: string; startAt?: string | null; finishAt?: string | null }, filter: { dateField?: "updatedAt" | "createdAt" | "startAt" | "finishAt"; dateFrom?: string; dateTo?: string }) {
+  if (!filter.dateFrom && !filter.dateTo) return true;
+  const raw = issue[filter.dateField ?? "updatedAt"];
+  if (!raw) return false;
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) return false;
+  const day = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+  return (!filter.dateFrom || day >= filter.dateFrom) && (!filter.dateTo || day <= filter.dateTo);
 }
