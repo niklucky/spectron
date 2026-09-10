@@ -54,13 +54,16 @@ async function trackerAuthor(tx: Tx, c: Config, person: YTComment["createdBy"] |
 // Older Tracker imports used the importing user as the author. The creation
 // history identifies imported issues without reattributing locally created ones.
 async function correctIssueAuthor(tx: Tx, c: Config, row: typeof issue.$inferSelect, remote: YTIssue) {
-  const [creation] = await tx.select().from(schema.issueHistory)
-    .where(and(eq(schema.issueHistory.issueId, row.id), eq(schema.issueHistory.entityType, "issue"), eq(schema.issueHistory.action, "created")))
-    .orderBy(asc(schema.issueHistory.createdAt)).limit(1);
   const [identity] = row.externalAuthorId ? await tx.select().from(schema.externalIdentity)
     .where(eq(schema.externalIdentity.id, row.externalAuthorId)) : [];
-  if (identity?.trackerIntegrationId !== c.id &&
-      (creation?.changes.externalId?.after !== remote.id || creation?.changes.externalKey?.after !== remote.key)) return;
+  if (identity?.trackerIntegrationId === c.id &&
+      identity.externalId === (trackerUserId(remote.createdBy) || "__unknown__")) return;
+  if (identity?.trackerIntegrationId !== c.id) {
+    const [creation] = await tx.select().from(schema.issueHistory)
+      .where(and(eq(schema.issueHistory.issueId, row.id), eq(schema.issueHistory.entityType, "issue"), eq(schema.issueHistory.action, "created")))
+      .orderBy(asc(schema.issueHistory.createdAt)).limit(1);
+    if (creation?.changes.externalId?.after !== remote.id || creation?.changes.externalKey?.after !== remote.key) return;
+  }
   const author = await trackerAuthor(tx, c, remote.createdBy);
   await tx.update(issue).set({ ...author, updatedAt: sql`${issue.updatedAt}` }).where(eq(issue.id, row.id));
 }

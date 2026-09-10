@@ -1,6 +1,8 @@
 import { firstMessageFields } from "@spectron/shared";
 import {
   defaultTaskFilters,
+  matchesDatePeriod,
+  resolveDatePeriod,
   type TaskFilters,
 } from "@spectron/frontend/components/feature/task";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -71,7 +73,14 @@ export function useWorkspace(
     }
   });
   const filterScope = route.isFlow ? "flow" : route.project;
-  const filter = filters[filterScope] ?? defaultTaskFilters;
+  const [filterClock, setFilterClock] = useState(() => new Date());
+  useEffect(() => {
+    const refresh = () => setFilterClock(new Date());
+    const timer = window.setInterval(refresh, 60_000);
+    window.addEventListener("focus", refresh);
+    return () => { window.clearInterval(timer); window.removeEventListener("focus", refresh); };
+  }, []);
+  const filter = resolveDatePeriod(filters[filterScope] ?? defaultTaskFilters, filterClock);
   const setFilter = (value: TaskFilters) =>
     setFilters((previous) => ({ ...previous, [filterScope]: value }));
   useEffect(() => {
@@ -186,7 +195,7 @@ export function useWorkspace(
         (route.isFlow || i.projectId === route.project) &&
         (!route.isFlow || !filter.projectIds?.length || filter.projectIds.includes(i.projectId)) &&
         (filter.deleted ? !!i.deletedAt : !i.deletedAt) &&
-        matchesDatePeriod(i, filter) &&
+        matchesDatePeriod(i, filter, filterClock) &&
         (!filter.typeIds?.length || filter.typeIds.includes(i.issueTypeId ?? "")) &&
         (!filter.values.length ||
           filter.values.includes(
@@ -325,14 +334,4 @@ export function useWorkspace(
           );
     },
   };
-}
-
-function matchesDatePeriod(issue: { updatedAt: string; createdAt: string; startAt?: string | null; finishAt?: string | null }, filter: { dateField?: "updatedAt" | "createdAt" | "startAt" | "finishAt"; dateFrom?: string; dateTo?: string }) {
-  if (!filter.dateFrom && !filter.dateTo) return true;
-  const raw = issue[filter.dateField ?? "updatedAt"];
-  if (!raw) return false;
-  const date = new Date(raw);
-  if (Number.isNaN(date.getTime())) return false;
-  const day = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-  return (!filter.dateFrom || day >= filter.dateFrom) && (!filter.dateTo || day <= filter.dateTo);
 }

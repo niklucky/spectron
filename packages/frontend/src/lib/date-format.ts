@@ -1,6 +1,7 @@
 /** Use a regional browser locale; English falls back to European conventions. */
 export function dateLocale(languages: readonly string[]): string {
-  return languages.find(language => !/^en(?:-US)?$/i.test(language)) ?? "en-GB";
+  const preferred = languages[0];
+  return !preferred || /^en(?:-US)?$/i.test(preferred) ? "en-GB" : preferred;
 }
 
 export function formatDateTime(value: string | Date): string {

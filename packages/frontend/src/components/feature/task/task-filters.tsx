@@ -1,6 +1,7 @@
 import { useId, useRef, useState } from "react";
 import { issueTriggers, type IssueSettings } from "@spectron/shared";
 import { Icon } from "../../ui/icon";
+import { resolveDatePeriod } from "./date-period";
 import type { Project } from "./types";
 
 export type TaskFilters = {
@@ -184,11 +185,7 @@ export function TaskFiltersSelect({
             {([['week', 'This week'], ['month', 'This month'], ['custom', 'Custom']] as const).map(([preset, label]) =>
               <button key={preset} aria-pressed={value.datePreset === preset} onClick={() => {
                 if (preset === 'custom') { onChange({ ...value, datePreset: preset }); return; }
-                const from = new Date(), to = new Date();
-                if (preset === 'week') { from.setDate(from.getDate() - (from.getDay() + 6) % 7); to.setFullYear(from.getFullYear(), from.getMonth(), from.getDate() + 6); }
-                else { from.setDate(1); to.setMonth(to.getMonth() + 1, 0); }
-                const day = (date: Date) => `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-                onChange({ ...value, datePreset: preset, dateFrom: day(from), dateTo: day(to) });
+                onChange(resolveDatePeriod({ ...value, datePreset: preset }));
               }}>{label}</button>)}
           </div>
           <div className="task-date-inputs">

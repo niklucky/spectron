@@ -388,6 +388,16 @@ test("database import/push, mappings, typed fields, permissions, repeat sync and
   assert.notEqual(local.authorId, "owner");
   assert.equal(local.author?.name, "Remote Author");
   const originalTimestamp = local.updatedAt;
+  const issueVersion = async () => (await pool.query("select xmin::text as version from issues where id=$1", [local.id])).rows[0].version;
+  const beforeRepeat = await issueVersion();
+  await tracker.run("owner", p.id, "import");
+  assert.equal(await issueVersion(), beforeRepeat, "unchanged imports must not rewrite the issue author");
+  const originalAuthor = remote.createdBy!;
+  remote.createdBy = { id: "changed-author", uid: 303, login: "changed-author", display: "Changed Author" };
+  await tracker.run("owner", p.id, "import");
+  assert.equal((await issues.list("owner", p.id))[0]!.author?.name, "Changed Author");
+  remote.createdBy = originalAuthor;
+  await tracker.run("owner", p.id, "import");
   // Simulate a legacy import and verify attribution-only repair preserves the
   // content version used by edits and sync checkpoints.
   await pool.query("update issues set author_id='owner', external_author_id=null where id=$1", [local.id]);
