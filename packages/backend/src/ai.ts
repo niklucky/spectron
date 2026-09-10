@@ -344,24 +344,43 @@ export function createAIService(
       });
     },
     async sharing(ownerId: string, id: string): Promise<AgentSharing[]> {
-      return db.transaction(async (tx) => {
-        await lockAgent(tx, ownerId, id);
-        const shares = await tx
-          .select()
-          .from(share)
-          .where(eq(share.agentId, id));
-        const grants = await tx
-          .select()
-          .from(grant)
-          .where(eq(grant.agentId, id));
-        return shares.map((s) => ({
-          projectId: s.projectId,
-          visibility: s.visibility,
-          memberIds: grants
-            .filter((g) => g.projectId === s.projectId)
-            .map((g) => g.userId),
-        }));
-      });
+      const [owned] = await db
+        .select({ id: agent.id })
+        .from(agent)
+        .where(activeOwned(ownerId, id));
+      if (!owned) throw new ProjectAccessError("Agent not found.");
+      // Read visibility and members in one snapshot without locking the agent.
+      const rows = await db
+        .select({
+          projectId: share.projectId,
+          visibility: share.visibility,
+          userId: grant.userId,
+        })
+        .from(share)
+        .innerJoin(agent, eq(agent.id, share.agentId))
+        .leftJoin(
+          grant,
+          and(
+            eq(grant.agentId, share.agentId),
+            eq(grant.projectId, share.projectId),
+          ),
+        )
+        .where(activeOwned(ownerId, id));
+      const shares = new Map<string, AgentSharing>();
+      for (const row of rows) {
+        const entry = shares.get(row.projectId) ?? {
+          projectId: row.projectId,
+          visibility: row.visibility,
+          memberIds: [],
+        };
+        if (row.userId) entry.memberIds.push(row.userId);
+        shares.set(row.projectId, entry);
+      }
+      // Membership deletion can remove the last selected grant. No effective
+      // grants means Private, represented by omission just like a new agent.
+      return [...shares.values()].filter(
+        (s) => s.visibility === "project" || s.memberIds.length > 0,
+      );
     },
     async setSharing(
       ownerId: string,

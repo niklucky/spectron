@@ -638,6 +638,41 @@ test("AI account endpoints, credential replacement and project-specific sharing"
     },
   );
   await t.test(
+    "reading sharing does not wait for an agent write lock",
+    async () => {
+      const client = await pool.connect();
+      let pending: Promise<AgentSharing[]> | undefined;
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await client.query("BEGIN");
+        await client.query("SELECT id FROM ai_agents WHERE id=$1 FOR UPDATE", [
+          a.id,
+        ]);
+        pending = createAIService(db, secret).sharing(owner.id, a.id);
+        const sharing = await Promise.race([
+          pending,
+          new Promise<never>((_, reject) => {
+            timeout = setTimeout(
+              () =>
+                reject(
+                  new Error("Sharing read waited for the agent write lock."),
+                ),
+              2000,
+            );
+          }),
+        ]);
+        assert.deepEqual(sharing, [
+          { projectId: p1.id, visibility: "selected", memberIds: [member.id] },
+        ]);
+      } finally {
+        clearTimeout(timeout);
+        await client.query("ROLLBACK");
+        client.release();
+        await pending?.catch(() => {});
+      }
+    },
+  );
+  await t.test(
     "membership removal revokes grants permanently; owner removal revokes project sharing",
     async () => {
       await pool.query(
@@ -645,11 +680,16 @@ test("AI account endpoints, credential replacement and project-specific sharing"
         [p1.id, member.id],
       );
       await call("available", member.cookie, { projectId: p1.id }, false, 404);
+      assert.deepEqual(await call("sharing", owner.cookie, { id: a.id }), []);
       await pool.query(
         "INSERT INTO project_members(project_id,user_id,role) VALUES ($1,$2,'member')",
         [p1.id, member.id],
       );
       assert.deepEqual(await available(member), []);
+      assert.deepEqual(await call("sharing", owner.cookie, { id: a.id }), []);
+      // The editor can save the effective Private state without selecting a replacement member.
+      await setShare("private", p1);
+      assert.deepEqual(await call("sharing", owner.cookie, { id: a.id }), []);
       await setShare("project", p1);
       assert.equal((await available(member)).length, 1);
       await pool.query(

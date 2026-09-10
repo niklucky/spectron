@@ -108,7 +108,6 @@ export function AISettingsPage({
     kind: "agent" | "connection";
     item: Revision & { name: string };
   } | null>(null);
-  const operation = useOperation();
   useEffect(() => {
     let current = true;
     setLoading(true);
@@ -126,10 +125,12 @@ export function AISettingsPage({
         }
       })
       .catch((e: unknown) => {
-        if (current)
+        if (current) {
+          setFeedback("");
           setLoadError(
             e instanceof Error ? e.message : "Could not load AI settings.",
           );
+        }
       })
       .finally(() => {
         if (current) setLoading(false);
@@ -138,6 +139,10 @@ export function AISettingsPage({
       current = false;
     };
   }, [actions, reload]);
+  const startAction = (action: () => void) => {
+    setFeedback("");
+    action();
+  };
   const changed = () => {
     setReload((v) => v + 1);
     setFeedback("Changes saved.");
@@ -161,21 +166,20 @@ export function AISettingsPage({
             key={id}
             variant="ghost"
             aria-current={tab === id ? "page" : undefined}
-            onClick={() => setTab(id!)}
+            onClick={() => startAction(() => setTab(id!))}
           >
             {name}
           </Button>
         ))}
       </nav>
       {feedback && <p role="status">{feedback}</p>}
-      {(loadError || operation.error) && (
+      {loadError && (
         <p className="ai-error" role="alert">
-          {loadError || operation.error}{" "}
+          {loadError}{" "}
           <Button
             variant="ghost"
-            disabled={operation.busy}
             onClick={() => {
-              operation.setError("");
+              setFeedback("");
               setReload((v) => v + 1);
             }}
           >
@@ -189,7 +193,7 @@ export function AISettingsPage({
         <section aria-label="AI connections">
           <div className="ai-section-heading">
             <h2>Your connections</h2>
-            <Button onClick={() => setConnectionEdit("new")}>
+            <Button onClick={() => startAction(() => setConnectionEdit("new"))}>
               Add connection
             </Button>
           </div>
@@ -204,65 +208,31 @@ export function AISettingsPage({
           )}
           <div className="ai-cards">
             {connections.map((c) => (
-              <article className="ai-card" key={c.id}>
-                <h3>{c.name}</h3>
-                <p>{catalog.find((p) => p.id === c.provider)?.name}</p>
-                <p>
-                  {c.checkStatus === "untested"
-                    ? "Key saved · Not checked"
-                    : c.checkStatus === "passed"
-                      ? "Connection check passed"
-                      : "Connection check failed"}
-                  {c.checkedAt &&
-                    ` · ${new Date(c.checkedAt).toLocaleString()}`}
-                </p>
-                <p>
-                  {agents.filter((a) => a.connectionId === c.id).length} agents
-                  · Key updated {new Date(c.keyUpdatedAt).toLocaleDateString()}
-                </p>
-                {c.provider === "zai" && (
-                  <p>
-                    Checking sends a small GLM-5.3-flash request and may use
-                    paid tokens.
-                  </p>
-                )}
-                <div className="ai-actions">
-                  <Button
-                    variant="ghost"
-                    disabled={operation.busy}
-                    onClick={() => setConnectionEdit(c)}
-                  >
-                    Edit
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    disabled={operation.busy}
-                    onClick={() =>
-                      void operation.run(async () => {
-                        const result = await actions.checkConnection({
-                          id: c.id,
-                          revision: c.revision,
-                        });
-                        setConnections((items) =>
-                          items.map((item) =>
-                            item.id === c.id ? result.connection : item,
-                          ),
-                        );
-                        setFeedback(result.message);
-                      })
-                    }
-                  >
-                    {operation.busy ? "Checking…" : "Check connection"}
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    disabled={operation.busy}
-                    onClick={() => setDeletion({ kind: "connection", item: c })}
-                  >
-                    Delete
-                  </Button>
-                </div>
-              </article>
+              <ConnectionCard
+                key={c.id}
+                connection={c}
+                providerName={
+                  catalog.find((p) => p.id === c.provider)?.name ?? c.provider
+                }
+                agentCount={
+                  agents.filter((a) => a.connectionId === c.id).length
+                }
+                checkConnection={actions.checkConnection}
+                onStart={() => setFeedback("")}
+                onChecked={(connection) =>
+                  setConnections((items) =>
+                    items.map((item) =>
+                      item.id === connection.id ? connection : item,
+                    ),
+                  )
+                }
+                onEdit={() => startAction(() => setConnectionEdit(c))}
+                onDelete={() =>
+                  startAction(() =>
+                    setDeletion({ kind: "connection", item: c }),
+                  )
+                }
+              />
             ))}
           </div>
         </section>
@@ -272,7 +242,7 @@ export function AISettingsPage({
             <h2>Your agents</h2>
             <Button
               disabled={!connections.length}
-              onClick={() => setAgentEdit("new")}
+              onClick={() => startAction(() => setAgentEdit("new"))}
             >
               Create agent
             </Button>
@@ -287,6 +257,7 @@ export function AISettingsPage({
               <Button
                 variant="ghost"
                 onClick={() => {
+                  setFeedback("");
                   setTab("connections");
                   setConnectionEdit("new");
                 }}
@@ -315,15 +286,23 @@ export function AISettingsPage({
                   {connections.find((c) => c.id === a.connectionId)?.name}
                 </p>
                 <div className="ai-actions">
-                  <Button variant="ghost" onClick={() => setAgentEdit(a)}>
+                  <Button
+                    variant="ghost"
+                    onClick={() => startAction(() => setAgentEdit(a))}
+                  >
                     Edit
                   </Button>
-                  <Button variant="ghost" onClick={() => setSharing(a)}>
+                  <Button
+                    variant="ghost"
+                    onClick={() => startAction(() => setSharing(a))}
+                  >
                     Sharing
                   </Button>
                   <Button
                     variant="ghost"
-                    onClick={() => setDeletion({ kind: "agent", item: a })}
+                    onClick={() =>
+                      startAction(() => setDeletion({ kind: "agent", item: a }))
+                    }
                   >
                     Delete
                   </Button>
@@ -387,6 +366,85 @@ export function AISettingsPage({
     </main>
   );
 }
+function ConnectionCard({
+  connection: c,
+  providerName,
+  agentCount,
+  checkConnection,
+  onStart,
+  onChecked,
+  onEdit,
+  onDelete,
+}: {
+  connection: AIConnectionSummary;
+  providerName: string;
+  agentCount: number;
+  checkConnection: AISettingsActions["checkConnection"];
+  onStart: () => void;
+  onChecked: (connection: AIConnectionSummary) => void;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
+  const operation = useOperation();
+  const [feedback, setFeedback] = useState("");
+  return (
+    <article className="ai-card">
+      <h3>{c.name}</h3>
+      <p>{providerName}</p>
+      <p>
+        {c.checkStatus === "untested"
+          ? "Key saved · Not checked"
+          : c.checkStatus === "passed"
+            ? "Connection check passed"
+            : "Connection check failed"}
+        {c.checkedAt && ` · ${new Date(c.checkedAt).toLocaleString()}`}
+      </p>
+      <p>
+        {agentCount} agents · Key updated{" "}
+        {new Date(c.keyUpdatedAt).toLocaleDateString()}
+      </p>
+      {c.provider === "zai" && (
+        <p>
+          Checking sends a small GLM-5.3-flash request and may use paid tokens.
+        </p>
+      )}
+      {feedback && <p role="status">{feedback}</p>}
+      {operation.error && (
+        <p className="ai-error" role="alert">
+          {operation.error}
+        </p>
+      )}
+      <div className="ai-actions">
+        <Button variant="ghost" disabled={operation.busy} onClick={onEdit}>
+          Edit
+        </Button>
+        <Button
+          variant="ghost"
+          disabled={operation.busy}
+          onClick={() => {
+            onStart();
+            setFeedback("");
+            void operation.run(async () => {
+              const result = await checkConnection({
+                id: c.id,
+                revision: c.revision,
+              });
+              onChecked(result.connection);
+              if (result.connection.checkStatus === "failed")
+                throw new Error(result.message);
+              setFeedback(result.message);
+            });
+          }}
+        >
+          {operation.busy ? "Checking…" : "Check connection"}
+        </Button>
+        <Button variant="ghost" disabled={operation.busy} onClick={onDelete}>
+          Delete
+        </Button>
+      </div>
+    </article>
+  );
+}
 function ConnectionEditor({
   initial,
   catalog,
@@ -418,15 +476,22 @@ function ConnectionEditor({
         onSubmit={(e) => {
           e.preventDefault();
           void op.run(async () => {
+            const normalizedName = name.trim();
+            if (!normalizedName) throw new Error("Enter a connection name.");
+            if (!initial && !key.trim()) throw new Error("Enter an API key.");
             if (initial)
               await actions.updateConnection({
                 id: initial.id,
                 revision: initial.revision,
-                name,
+                name: normalizedName,
                 ...(key ? { apiKey: key } : {}),
               });
             else
-              await actions.createConnection({ name, provider, apiKey: key });
+              await actions.createConnection({
+                name: normalizedName,
+                provider,
+                apiKey: key,
+              });
             setKey("");
             onSaved();
           });
@@ -575,13 +640,20 @@ function AgentEditor({
         onSubmit={(e) => {
           e.preventDefault();
           void op.run(async () => {
+            const normalized = {
+              ...input,
+              name: input.name.trim(),
+              role: input.role.trim(),
+            };
+            if (!normalized.name) throw new Error("Enter an agent name.");
+            if (!normalized.role) throw new Error("Enter a role or function.");
             if (initial)
               await actions.updateAgent({
-                ...input,
+                ...normalized,
                 id: initial.id,
                 revision: initial.revision,
               });
-            else await actions.createAgent(input);
+            else await actions.createAgent(normalized);
             onSaved();
           });
         }}
