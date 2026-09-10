@@ -6,6 +6,7 @@ import { createAuth, createGitService, IssueInputError, type GitAdapterFactory }
 import { createId, type GitConnectionSummary, type GitRepository, type GitRemoteRepository } from "@spectron/shared";
 import { createAPI } from "../src/index";
 import { encryptGitToken, decryptGitToken } from "../../backend/src/git/credentials";
+import { resolveDNSFamilies } from "../../backend/src/network/dns";
 import { createGitAdapterFactory, validateBranch } from "../../backend/src/git/provider";
 import { createGitTransport, normalizeGitBaseURL, gitStatusError } from "../../backend/src/git/transport";
 const secret = "git-test-only-encryption-secret-at-least-32-characters";
@@ -42,6 +43,46 @@ test("Git DNS mode handles VPN answers without allowing private destinations", a
   } });
   await assert.rejects(privateTransport(new URL("https://git.internal/api/v4/user"), {}), /could not be resolved/);
   assert.deepEqual(modes, ["cloudflare", "system"]);
+});
+test("Private origin configuration normalizes URLs and rejects invalid entries clearly", async () => {
+  for (const entry of ["https://GitLab.corp.local/", " https://gitlab.corp.local:443/gitlab/ "]) {
+    const modes: string[] = [];
+    const transport = createGitTransport([entry], { dns: "cloudflare", resolve: async (_host, _signal, mode) => {
+      modes.push(mode!); return [];
+    } });
+    await assert.rejects(transport(new URL("https://gitlab.corp.local/api/v4/user"), {}), /could not be resolved/);
+    assert.deepEqual(modes, ["system"]);
+  }
+  for (const entry of ["not a URL", "http://gitlab.local", "https://user:secret@gitlab.local", "https://gitlab.local?token=secret", "https://gitlab.local#fragment"]) {
+    assert.throws(() => createGitTransport([entry]), e => e instanceof Error && e.message.includes("GITLAB_ALLOWED_PRIVATE_ORIGINS") && !e.message.includes("secret"));
+  }
+});
+test("Encrypted DNS survives one failed/empty family and cancels stalled siblings", async () => {
+  const address = { address: "93.184.216.34", family: 4 };
+  for (const successfulFamily of [4, 6]) {
+    for (const failure of ["status", "socket", "empty"]) {
+      const result = await resolveDNSFamilies(async family => {
+        if (family === successfulFamily) return [address];
+        if (failure === "empty") return [];
+        throw new Error(failure === "status" ? "DNS Status 2" : "socket failure");
+      }, AbortSignal.timeout(1000));
+      assert.deepEqual(result, [address]);
+    }
+  }
+  let aborted = false;
+  const result = await resolveDNSFamilies(async (family, signal) => {
+    if (family === 4) return [address];
+    return new Promise((_, reject) => signal.addEventListener("abort", () => {
+      aborted = true; reject(signal.reason);
+    }, { once: true }));
+  }, AbortSignal.timeout(1000));
+  assert.deepEqual(result, [address]); assert.equal(aborted, true);
+  await assert.rejects(resolveDNSFamilies(async () => [], AbortSignal.timeout(1000)), /no usable addresses/);
+  await assert.rejects(resolveDNSFamilies(async () => { throw new Error("DNS failure"); }, AbortSignal.timeout(1000)), /no usable addresses/);
+  const controller = new AbortController();
+  await assert.rejects(resolveDNSFamilies(async () => {
+    controller.abort(new Error("Caller cancelled")); return [address];
+  }, controller.signal), /Caller cancelled/);
 });
 test("Both adapters use scoped authenticated endpoints, pagination and safe metadata", async () => {
   for (const provider of ["github", "gitlab"] as const) {
@@ -80,10 +121,10 @@ test("Git project API, identity, defaults, authorization and concurrency", async
   t.after(async () => { await pool.end(); await admin.pool.query(`DROP DATABASE "${databaseName}"`); await admin.pool.end(); });
   await migrateDatabase(db); await migrateDatabase(db);
   const origin = "http://localhost:5173", auth = createAuth(db, { appURL: origin, secret, sendResetEmail: async () => {} });
-  let calls = 0, expired = false, block: (() => Promise<void>) | null = null;
+  let calls = 0, expired = false, rateLimited = false, block: (() => Promise<void>) | null = null;
   const fakeFactory: GitAdapterFactory = (connection, token) => {
     const remote = (id: string): GitRemoteRepository => ({ externalId: id, fullName: `team/repo${id}`, defaultBranch: id === "99" ? null : "main", archived: false, webURL: `${connection.baseURL}/team/repo${id}`, cloneURL: `${connection.baseURL}/team/repo${id}.git` });
-    async function request() { calls++; if (expired) throw gitStatusError(401); if (block) await block(); }
+    async function request() { calls++; if (rateLimited) throw gitStatusError(429); if (expired) throw gitStatusError(401); if (block) await block(); }
     return {
       actor: async () => { await request(); return { id: token === "replacement" ? "2" : "1", login: token === "replacement" ? "replacement-user" : "provider-user", name: "Provider User", email: "provider@example.test" }; },
       repositories: async () => { await request(); return { items: [remote("1"), remote("2")], nextPage: null }; },
@@ -184,9 +225,19 @@ test("Git project API, identity, defaults, authorization and concurrency", async
     rows = await repositories(); assert.equal(rows.filter(r => r.isDefault).length, 1);
   });
   await t.test("expired credentials, replacement and delayed checks do not report stale identity", async () => {
+    const verifiedActor = gh.actor;
+    const authorName = gh.commitAuthorName;
+    rateLimited = true;
+    gh = await check(gh);
+    assert.equal(gh.checkStatus, "failed");
+    assert.deepEqual(gh.actor, verifiedActor);
+    assert.equal(gh.commitAuthorName, authorName);
+    rateLimited = false;
     expired = true;
     const failed = await call("checkConnection", owner.cookie, ref(gh), true) as { connection: GitConnectionSummary; message: string };
-    gh = failed.connection; assert.equal(gh.checkStatus, "failed"); assert.equal(gh.actor, null); assert.match(failed.message, /rejected/);
+    gh = failed.connection; assert.equal(gh.checkStatus, "failed"); assert.deepEqual(gh.actor, verifiedActor); assert.match(failed.message, /rejected/);
+    await call("browse", owner.cookie, { ...ref(gh), page: 1 }, false, 400);
+    await call("addRepository", owner.cookie, { ...ref(gh), fullName: "team/repo9", externalId: "9" }, true, 400);
     expired = false;
     let entered!: () => void, release!: () => void;
     const started = new Promise<void>(resolve => { entered = resolve; }), waiting = new Promise<void>(resolve => { release = resolve; });

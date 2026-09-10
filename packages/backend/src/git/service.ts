@@ -78,7 +78,7 @@ export function createGitService(db: Database, secret?: string, factory: GitAdap
       return db.transaction(async tx => {
         await connection(userId, ref, tx);
         const changedActor = actor && row.actor && actor.id !== row.actor.id;
-        const [saved] = await tx.update(c).set({ actor, checkStatus: status, checkedAt: new Date(), revision: row.revision + 1,
+        const [saved] = await tx.update(c).set({ ...(actor ? { actor } : {}), checkStatus: status, checkedAt: new Date(), revision: row.revision + 1,
           ...(actor ? { commitAuthorName: changedActor ? actor.name.replace(/[<>]/g, "").trim() : row.commitAuthorName || actor.name.replace(/[<>]/g, "").trim(),
             commitAuthorEmail: changedActor ? actor.email || "" : row.commitAuthorEmail || actor.email || "" } : {}),
         }).where(eq(c.id, row.id)).returning();

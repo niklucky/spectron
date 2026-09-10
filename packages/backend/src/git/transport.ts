@@ -32,7 +32,16 @@ export function createGitTransport(
     resolve?: typeof resolveHost;
   } = {},
 ): GitTransport {
-  const allowed = new Set(privateOrigins);
+  const allowed = new Set(privateOrigins.map(entry => entry.trim()).filter(Boolean).map(entry => {
+    try {
+      const url = new URL(entry);
+      if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash)
+        throw new Error();
+      return url.origin;
+    } catch {
+      throw new Error("GITLAB_ALLOWED_PRIVATE_ORIGINS must contain HTTPS URLs without credentials, query parameters, or fragments.");
+    }
+  }));
   const resolveHostRequest = resolve;
   return async (url, headers) => {
     const signal = AbortSignal.timeout(20_000);
