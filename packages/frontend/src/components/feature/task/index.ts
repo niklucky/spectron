@@ -10,4 +10,4 @@ export { defaultTaskFilters } from "./task-filters";
 export type { TaskFilters } from "./task-filters";
 export { NewIssueChat } from "./new-issue-chat";
 
-export { matchesDatePeriod, resolveDatePeriod } from "./date-period";
+export { matchesDatePeriod, matchesResolvedDatePeriod, resolveDatePeriod, refreshDateClock } from "./date-period";

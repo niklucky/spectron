@@ -6,6 +6,11 @@ export type DatePeriod = {
 };
 const localDay = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 
+/** Keep React state stable on same-day timer and focus events. */
+export function refreshDateClock(previous: Date, now = new Date()) {
+  return previous.toDateString() === now.toDateString() ? previous : now;
+}
+
 /** Presets stay relative, including when restored from older saved filters. */
 export function resolveDatePeriod<T extends DatePeriod>(filter: T, now = new Date()): T {
   if (filter.datePreset !== "week" && filter.datePreset !== "month") return filter;
@@ -21,7 +26,11 @@ export function resolveDatePeriod<T extends DatePeriod>(filter: T, now = new Dat
 }
 
 export function matchesDatePeriod(issue: { updatedAt: string; createdAt: string; startAt?: string | null; finishAt?: string | null }, period: DatePeriod, now = new Date()) {
-  const filter = resolveDatePeriod(period, now);
+  return matchesResolvedDatePeriod(issue, resolveDatePeriod(period, now));
+}
+
+/** The caller resolves relative presets once for the entire issue list. */
+export function matchesResolvedDatePeriod(issue: { updatedAt: string; createdAt: string; startAt?: string | null; finishAt?: string | null }, filter: DatePeriod) {
   if (!filter.dateFrom && !filter.dateTo) return true;
   const field = filter.dateField ?? "updatedAt";
   const raw = issue[field];

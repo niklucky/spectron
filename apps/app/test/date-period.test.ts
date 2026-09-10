@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { matchesDatePeriod, resolveDatePeriod } from "../../../packages/frontend/src/components/feature/task/date-period";
+import { matchesDatePeriod, resolveDatePeriod, refreshDateClock, matchesResolvedDatePeriod } from "../../../packages/frontend/src/components/feature/task/date-period";
 import { dateLocale } from "../../../packages/frontend/src/lib/date-format";
 
 test("UTC schedule dates and local activity dates agree with displayed days", () => {
@@ -37,4 +37,15 @@ test("locale uses first preference with the configured English fallback", () => 
   assert.equal(dateLocale(["ru", "en-US"]), "ru");
   assert.equal(dateLocale(["en-AU", "ru"]), "en-AU");
   assert.equal(dateLocale([]), "en-GB");
+});
+
+test("clock preserves state within the day and resolved ranges can be reused", () => {
+  const previous = new Date(2026, 8, 13, 12);
+  assert.equal(refreshDateClock(previous, new Date(2026, 8, 13, 23, 59)), previous);
+  const next = new Date(2026, 8, 14, 0, 1);
+  assert.equal(refreshDateClock(previous, next), next);
+  const resolved = resolveDatePeriod({ datePreset: "week" as const }, next);
+  const issue = { createdAt: next.toISOString(), updatedAt: next.toISOString() };
+  assert.equal(matchesResolvedDatePeriod(issue, resolved), true);
+  assert.equal(matchesResolvedDatePeriod({ ...issue, updatedAt: previous.toISOString() }, resolved), false);
 });

@@ -410,6 +410,13 @@ test("database import/push, mappings, typed fields, permissions, repeat sync and
   assert.ok(importedComment.externalAuthorId);
   const mappedIdentity = (await db.select().from(schema.externalIdentity)).find(identity => identity.id === importedComment.externalAuthorId)!;
   assert.equal(mappedIdentity.localUserId, "owner");
+  const commentVersions = async () => (await pool.query(
+    "select c.xmin::text as comment_version, e.xmin::text as identity_version from issue_comments c join external_identities e on e.id=c.external_author_id where c.id=$1", [importedComment.id])).rows[0];
+  const beforeCommentRepeat = await commentVersions();
+  await tracker.run("owner", p.id, "import");
+  assert.deepEqual(await commentVersions(), beforeCommentRepeat, "unchanged comment imports must not rewrite comments or identities");
+  await tracker.repairAuthors("owner", p.id, local.id);
+  assert.deepEqual(await commentVersions(), beforeCommentRepeat, "explicit repair must also skip settled authors");
   // Unchanged remote comments still repair legacy attribution and show unmapped
   // external authors instead of granting the importing account ownership.
   comments[0]!.createdBy = { id: "remote-author", uid: 202, display: "Remote Author" };
