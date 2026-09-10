@@ -1,0 +1,86 @@
+.agent-run-card {
+  border: 1px solid var(--color-line);
+  border-radius: 14px;
+  padding: 18px;
+  margin: 16px 0;
+  background: var(--color-surface);
+}
+.agent-run-card header,
+.agent-run-controls,
+.agent-composer-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.agent-run-card details {
+  margin-top: 10px;
+}
+.agent-run-card summary {
+  cursor: pointer;
+  font-weight: 500;
+}
+.agent-run-card textarea {
+  display: block;
+  width: 100%;
+  min-height: 80px;
+  margin: 8px 0;
+}
+.agent-badge,
+.agent-run-state {
+  font-size: 11px;
+  border-radius: 8px;
+  padding: 3px 7px;
+  background: #eef2ff;
+  color: #414b87;
+  text-transform: capitalize;
+}
+.agent-run-state.is-active::before {
+  content: "";
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border: 2px solid #99a1c8;
+  border-top-color: transparent;
+  border-radius: 50%;
+  margin-right: 6px;
+  animation: agent-spin 1s linear infinite;
+}
+@keyframes agent-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.agent-repo-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0;
+}
+.agent-repo-chips a,
+.agent-repo-chips label {
+  font-size: 12px;
+  padding: 4px 8px;
+  border: 1px solid var(--color-line);
+  border-radius: 12px;
+}
+.agent-composer-controls {
+  padding: 8px 12px 0;
+  font-size: 12px;
+}
+.agent-composer-controls select {
+  margin-left: 6px;
+  max-width: 220px;
+  border: 1px solid var(--color-line);
+  border-radius: 6px;
+  padding: 4px;
+  background: transparent;
+  color: inherit;
+}
+.agent-composer-controls .agent-repo-chips {
+  width: 100%;
+  margin: 0;
+}
+.agent-run-controls {
+  margin-top: 10px;
+}

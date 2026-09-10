@@ -1,9 +1,20 @@
+import {
+  agentCommands,
+  createId,
+  type AgentCommand,
+  type AgentIdentity,
+  type GitRepository,
+  type AgentRunActions,
+} from "@spectron/shared";
 import { formatDateTime } from "../../../lib/date-format";
 import { Menu } from "../../ui/menu";
 import { useAttachmentGallery } from "./attachment-gallery";
 import { UserInfo } from "../../ui/avatar";
 import { MessageComposer, MessageComposerActions } from "./message-composer";
-import { MessageMarkdown, type MarkdownMention } from "../../ui/message-markdown";
+import {
+  MessageMarkdown,
+  type MarkdownMention,
+} from "../../ui/message-markdown";
 import { Icon } from "../../ui/icon";
 import { useDictation } from "./use-dictation";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -221,9 +232,7 @@ export function CommentItem({
     >
       <header>
         {!hideAuthor && <UserInfo name={row.authorName} />}{" "}
-        <time dateTime={row.createdAt}>
-          {formatDateTime(row.createdAt)}
-        </time>
+        <time dateTime={row.createdAt}>{formatDateTime(row.createdAt)}</time>
         {row.updatedAt !== row.createdAt && !row.deletedAt && (
           <small> · edited</small>
         )}
@@ -242,21 +251,53 @@ export function CommentItem({
         />
       ) : (
         <>
-          {row.body.some(n => n.type !== "text" || n.text.trim()) && <div className="comment-body">
-            <AttachmentMarkdown files={row.attachments}
-              text={row.body.map((node, index) => node.type === "text" ? node.text : `[@${node.label.replace(/[\\`*_[\]<>]/g, "\\$&")}](#comment-mention-${index})`).join("")}
-              mentions={row.body.flatMap((node, index) => node.type === "mention" ? [{
-                href: `#comment-mention-${index}`, label: node.label,
-                title: context.members.find(member => member.id === node.userId)?.email ?? "Former project member",
-              }] : [])}
-            />
-          </div>}
-          <CommentMedia files={nonInlineFiles(row.body.map(n => n.type === "text" ? n.text : "").join(""), row.attachments)} />
+          {row.body.some((n) => n.type !== "text" || n.text.trim()) && (
+            <div className="comment-body">
+              <AttachmentMarkdown
+                files={row.attachments}
+                text={row.body
+                  .map((node, index) =>
+                    node.type === "text"
+                      ? node.text
+                      : `[@${node.label.replace(/[\\`*_[\]<>]/g, "\\$&")}](#comment-mention-${index})`,
+                  )
+                  .join("")}
+                mentions={row.body.flatMap((node, index) =>
+                  node.type === "mention"
+                    ? [
+                        {
+                          href: `#comment-mention-${index}`,
+                          label: node.label,
+                          title:
+                            context.members.find(
+                              (member) => member.id === node.userId,
+                            )?.email ?? "Former project member",
+                        },
+                      ]
+                    : [],
+                )}
+              />
+            </div>
+          )}
+          <CommentMedia
+            files={nonInlineFiles(
+              row.body.map((n) => (n.type === "text" ? n.text : "")).join(""),
+              row.attachments,
+            )}
+          />
         </>
       )}
       {jiraFeedback && <p role="status">{jiraFeedback}</p>}
       {!row.deletedAt && row.jiraSync && row.jiraSync !== "synced" && (
-        <p className="comment-sync-state" role="status">{row.jiraSync === "pending" ? "Waiting to sync with Jira" : row.jiraSync === "syncing" ? "Syncing with Jira…" : row.jiraSync === "failed" ? "Jira sync failed" : "Not synced with Jira"}</p>
+        <p className="comment-sync-state" role="status">
+          {row.jiraSync === "pending"
+            ? "Waiting to sync with Jira"
+            : row.jiraSync === "syncing"
+              ? "Syncing with Jira…"
+              : row.jiraSync === "failed"
+                ? "Jira sync failed"
+                : "Not synced with Jira"}
+        </p>
       )}
       <div className="comment-actions message-actions">
         {!row.deletedAt &&
@@ -267,7 +308,8 @@ export function CommentItem({
             <Button
               variant="ghost"
               disabled={busy}
-              aria-label="Send comment to Jira" title="Send comment to Jira"
+              aria-label="Send comment to Jira"
+              title="Send comment to Jira"
               onClick={async () => {
                 setBusy(true);
                 setError("");
@@ -291,34 +333,40 @@ export function CommentItem({
                 }
               }}
             >
-              <Icon name="jira" size={14} /> <span className="message-action-label">Send comment to Jira</span>
+              <Icon name="jira" size={14} />{" "}
+              <span className="message-action-label">Send comment to Jira</span>
             </Button>
           )}
         {!context.deleted && (
           <Button
             variant="ghost"
             disabled={busy || mode !== null}
-            aria-label="Reply" title="Reply"
+            aria-label="Reply"
+            title="Reply"
             onClick={() => setMode("reply")}
           >
-            <Icon name="reply" size={16} /> <span className="message-action-label">Reply</span>
+            <Icon name="reply" size={16} />{" "}
+            <span className="message-action-label">Reply</span>
           </Button>
         )}
         {row.canEdit && !context.deleted && (
           <Button
             variant="ghost"
             disabled={busy || mode !== null}
-            aria-label="Edit comment" title="Edit comment"
+            aria-label="Edit comment"
+            title="Edit comment"
             onClick={() => setMode("edit")}
           >
-            <Icon name="edit" size={14} /> <span className="message-action-label">Edit comment</span>
+            <Icon name="edit" size={14} />{" "}
+            <span className="message-action-label">Edit comment</span>
           </Button>
         )}
         {row.canDelete && !context.deleted && (
           <Button
             variant="ghost"
             disabled={busy || mode !== null}
-            aria-label="Delete comment" title="Delete comment"
+            aria-label="Delete comment"
+            title="Delete comment"
             onClick={async () => {
               setBusy(true);
               setError("");
@@ -340,7 +388,8 @@ export function CommentItem({
               }
             }}
           >
-            <Icon name="close" size={14} /> <span className="message-action-label">Delete comment</span>
+            <Icon name="close" size={14} />{" "}
+            <span className="message-action-label">Delete comment</span>
           </Button>
         )}
         {!flat && (row.replyCount > 0 || expanded) && (
@@ -405,22 +454,66 @@ export function CommentItem({
     </article>
   );
 }
-export function AttachmentMarkdown({ text, files, mentions }: { text: string; files: ProjectFileSummary[]; mentions?: MarkdownMention[] }) {
+export function AttachmentMarkdown({
+  text,
+  files,
+  mentions,
+}: {
+  text: string;
+  files: ProjectFileSummary[];
+  mentions?: MarkdownMention[];
+}) {
   const openGallery = useAttachmentGallery();
-  return <MessageMarkdown text={text} mentions={mentions ?? []} renderImage={image => {
-    const file = files.find(file => file.inlineExternalId === image.id && filePreviewKind(file.contentType) === "image");
-    if (!file) return null;
-    const url = projectFileURL(file.projectId, file.projectFileId);
-    return <a href={url} title={file.filename} target="_blank" rel="noreferrer"
-      onClick={event => { if (openGallery && !event.metaKey && !event.ctrlKey) { event.preventDefault(); openGallery(file); } }}>
-      <img src={url} alt={image.filename || file.filename} loading="lazy"
-        style={{ maxWidth: "100%", height: "auto", width: image.width || undefined, verticalAlign: "middle" }} />
-    </a>;
-  }} />;
+  return (
+    <MessageMarkdown
+      text={text}
+      mentions={mentions ?? []}
+      renderImage={(image) => {
+        const file = files.find(
+          (file) =>
+            file.inlineExternalId === image.id &&
+            filePreviewKind(file.contentType) === "image",
+        );
+        if (!file) return null;
+        const url = projectFileURL(file.projectId, file.projectFileId);
+        return (
+          <a
+            href={url}
+            title={file.filename}
+            target="_blank"
+            rel="noreferrer"
+            onClick={(event) => {
+              if (openGallery && !event.metaKey && !event.ctrlKey) {
+                event.preventDefault();
+                openGallery(file);
+              }
+            }}
+          >
+            <img
+              src={url}
+              alt={image.filename || file.filename}
+              loading="lazy"
+              style={{
+                maxWidth: "100%",
+                height: "auto",
+                width: image.width || undefined,
+                verticalAlign: "middle",
+              }}
+            />
+          </a>
+        );
+      }}
+    />
+  );
 }
 export function nonInlineFiles(text: string, files: ProjectFileSummary[]) {
-  const ids = new Set(trackerImages(text).map(image => image.id));
-  return files.filter(file => !file.inlineExternalId || !ids.has(file.inlineExternalId) || filePreviewKind(file.contentType) !== "image");
+  const ids = new Set(trackerImages(text).map((image) => image.id));
+  return files.filter(
+    (file) =>
+      !file.inlineExternalId ||
+      !ids.has(file.inlineExternalId) ||
+      filePreviewKind(file.contentType) !== "image",
+  );
 }
 export function CommentMedia({ files }: { files: ProjectFileSummary[] }) {
   const openGallery = useAttachmentGallery();
@@ -433,7 +526,18 @@ export function CommentMedia({ files }: { files: ProjectFileSummary[] }) {
         return (
           <li key={file.projectFileId}>
             {kind === "image" && (
-              <a href={url} onClick={event => { if (openGallery && !event.metaKey && !event.ctrlKey) { event.preventDefault(); openGallery(file); } }} target="_blank" rel="noreferrer" title={file.filename}>
+              <a
+                href={url}
+                onClick={(event) => {
+                  if (openGallery && !event.metaKey && !event.ctrlKey) {
+                    event.preventDefault();
+                    openGallery(file);
+                  }
+                }}
+                target="_blank"
+                rel="noreferrer"
+                title={file.filename}
+              >
                 <img
                   className="issue-file-image"
                   src={url}
@@ -458,10 +562,15 @@ export function CommentMedia({ files }: { files: ProjectFileSummary[] }) {
                 aria-label={file.filename}
               />
             )}
-            {kind !== "image" && <a className="message-file-download" href={projectFileURL(file.projectId, file.projectFileId, true)}>
-              <Icon name="file" size={16} />
-              <span>{file.filename}</span>
-            </a>}
+            {kind !== "image" && (
+              <a
+                className="message-file-download"
+                href={projectFileURL(file.projectId, file.projectFileId, true)}
+              >
+                <Icon name="file" size={16} />
+                <span>{file.filename}</span>
+              </a>
+            )}
           </li>
         );
       })}
@@ -474,13 +583,51 @@ export function CommentEditor({
   existing,
   onClose,
   chat = false,
+  agentActions,
 }: {
   context: CommentContext;
   parentId: string | null;
   existing?: CommentSummary;
   onClose: () => void;
   chat?: boolean;
+  agentActions?: AgentRunActions | undefined;
 }) {
+  const [agents, setAgents] = useState<AgentIdentity[]>([]),
+    [repositories, setRepositories] = useState<GitRepository[]>([]);
+  const [agentId, setAgentId] = useState(""),
+    [command, setCommand] = useState<AgentCommand>("discuss"),
+    [repositoryIds, setRepositoryIds] = useState<string[]>([]);
+  const [agentError, setAgentError] = useState("");
+  const requestId = useRef(createId());
+  useEffect(() => {
+    if (!agentActions || existing || parentId) return;
+    let alive = true;
+    void Promise.all([
+      agentActions.available(context.scope.projectId),
+      agentActions.repositories(context.scope.projectId),
+    ]).then(
+      ([a, repos]) => {
+        if (alive) {
+          setAgents(a);
+          setRepositories(repos);
+          setRepositoryIds(
+            repos
+              .filter((r) => repos.length === 1 || r.isDefault)
+              .map((r) => r.id),
+          );
+        }
+      },
+      (e) => {
+        if (alive)
+          setAgentError(
+            e instanceof Error ? e.message : "Agent settings could not load.",
+          );
+      },
+    );
+    return () => {
+      alive = false;
+    };
+  }, [agentActions, context.scope.projectId, existing, parentId]);
   const baseline = useRef(existing);
   const [draft, setDraft] = useState(() =>
       commentDraftText(existing?.body ?? []),
@@ -625,7 +772,21 @@ export function CommentEditor({
             })),
           };
           try {
-            if (existing)
+            if (agentActions && command !== "discuss" && !agentId)
+              throw new Error("Select an agent for this command.");
+            if (agentId && agentActions) {
+              if (!repositoryIds.length)
+                throw new Error("Select at least one project repository.");
+              await agentActions.invoke({
+                ...context.scope,
+                requestId: requestId.current,
+                agentId,
+                command,
+                repositoryIds,
+                message: draft.text,
+                fileIds: files.map((f) => f.projectFileId),
+              });
+            } else if (existing)
               await context.actions.update({
                 ...input,
                 id: existing.id,
@@ -650,6 +811,71 @@ export function CommentEditor({
       >
         {dragging && (
           <div className="new-issue-drop-hint">Drop files to attach</div>
+        )}
+        {agentActions && !existing && !parentId && (
+          <div className="agent-composer-controls">
+            <label>
+              Agent
+              <select
+                aria-label="Agent"
+                disabled={busy}
+                value={agentId}
+                onChange={(e) => setAgentId(e.target.value)}
+              >
+                <option value="">Human discussion</option>
+                {agents.map((agent) => (
+                  <option key={agent.id} value={agent.id}>
+                    @{agent.name} · AI
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Command
+              <select
+                aria-label="Agent command"
+                disabled={busy}
+                value={command}
+                onChange={(e) => setCommand(e.target.value as AgentCommand)}
+              >
+                {agentCommands.map((c) => (
+                  <option key={c} value={c}>
+                    {c === "discuss" ? "Discuss code" : `/${c}`}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {command !== "discuss" && !agentId && (
+              <small>Select an agent to run this command.</small>
+            )}
+            {agentId && (
+              <div className="agent-repo-chips">
+                {repositories.map((repo) => (
+                  <label key={repo.id}>
+                    <input
+                      type="checkbox"
+                      checked={repositoryIds.includes(repo.id)}
+                      disabled={busy}
+                      onChange={(e) =>
+                        setRepositoryIds((ids) =>
+                          e.target.checked
+                            ? [...ids, repo.id]
+                            : ids.filter((id) => id !== repo.id),
+                        )
+                      }
+                    />
+                    {repo.fullName}
+                  </label>
+                ))}
+                {!repositories.length && (
+                  <span>
+                    Add a repository in Project settings → Integrations.
+                  </span>
+                )}
+              </div>
+            )}
+            {agentError && <p role="alert">{agentError}</p>}
+          </div>
         )}
         {preview && (
           <div className="message-preview">
@@ -713,8 +939,68 @@ export function CommentEditor({
             }}
           />
         </label>
+        {agentActions &&
+          /(?:^|\s)\/[^\s]*$/.test(draft.text.slice(0, caret)) && (
+            <div className="mention-picker" aria-label="Agent commands">
+              {agentCommands
+                .filter((c) => c !== "discuss")
+                .map((c) => (
+                  <button
+                    type="button"
+                    key={c}
+                    onClick={() => {
+                      setCommand(c);
+                      const text =
+                        draft.text.slice(0, caret).replace(/\/[^\s]*$/, "") +
+                        draft.text.slice(caret);
+                      setDraft({
+                        text,
+                        mentions: moveMentionRanges(
+                          draft.text,
+                          text,
+                          draft.mentions,
+                        ),
+                      });
+                      area.current?.focus();
+                    }}
+                  >{`/${c}`}</button>
+                ))}
+            </div>
+          )}
         {match && (
-          <div className="mention-picker" aria-label="Mention project member">
+          <div
+            className="mention-picker"
+            aria-label="Mention a person or agent"
+          >
+            {agents
+              .filter((a) =>
+                a.name.toLowerCase().includes(match[1]!.toLowerCase()),
+              )
+              .map((agent) => (
+                <button
+                  type="button"
+                  key={agent.id}
+                  onClick={() => {
+                    setAgentId(agent.id);
+                    const start = caret - match[1]!.length - 1;
+                    const text =
+                      draft.text.slice(0, start) + draft.text.slice(caret);
+                    setDraft({
+                      text,
+                      mentions: moveMentionRanges(
+                        draft.text,
+                        text,
+                        draft.mentions,
+                      ),
+                    });
+                    setDismissed(true);
+                    area.current?.focus();
+                  }}
+                >
+                  @{agent.name}
+                  <small>AI · {agent.role}</small>
+                </button>
+              ))}
             {people.length ? (
               people.map((person) => (
                 <button
@@ -726,8 +1012,10 @@ export function CommentEditor({
                   <small>{person.email}</small>
                 </button>
               ))
-            ) : (
-              <p>No matching project members.</p>
+            ) : agents.some((a) =>
+                a.name.toLowerCase().includes(match[1]!.toLowerCase()),
+              ) ? null : (
+              <p>No matching people or agents.</p>
             )}
           </div>
         )}
@@ -765,7 +1053,10 @@ export function CommentEditor({
               disabled={busy || files.length >= 20}
               items={[
                 { label: "Upload", onSelect: () => upload.current?.click() },
-                { label: "Choose from gallery", onSelect: () => setPicker(true) },
+                {
+                  label: "Choose from gallery",
+                  onSelect: () => setPicker(true),
+                },
               ]}
             />
             <MessageComposerActions

@@ -30,7 +30,8 @@
     "test:exports": "pnpm --filter @spectron/api test:exports",
     "test:markdown": "pnpm --filter @spectron/api exec tsx --tsconfig ../../apps/app/tsconfig.json --test ../../apps/app/test/message-markdown.test.tsx",
     "test:dates": "pnpm --filter @spectron/api exec node --import tsx --test ../../apps/app/test/date-period.test.ts",
-    "test:git": "pnpm --filter @spectron/api test:git"
+    "test:git": "pnpm --filter @spectron/api test:git",
+    "test:agent-runs": "pnpm --filter @spectron/api test:agent-runs"
   },
   "devDependencies": {
     "turbo": "2.10.12",

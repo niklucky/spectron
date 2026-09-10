@@ -849,3 +849,41 @@ export const gitRepository = pgTable("git_repositories", {
   uniqueIndex("git_repositories_remote_unique").on(t.connectionId, t.externalId),
   uniqueIndex("git_repositories_default_unique").on(t.projectId).where(sql`${t.isDefault} = true`),
 ]);
+
+// Private context/configuration is never selected by the run presentation API.
+export const agentRun = pgTable('agent_runs', {
+  id: text('id').$defaultFn(createId).primaryKey(),
+  projectId: text('project_id').notNull(), issueId: text('issue_id').notNull(),
+  requesterId: text('requester_id').notNull().references(() => user.id, { onDelete: 'restrict' }),
+  requestId: text('request_id').notNull(), agentId: text('agent_id').notNull().references(() => aiAgent.id, { onDelete: 'restrict' }),
+  agent: jsonb('agent').$type<import('@spectron/shared').AgentIdentity>().notNull(),
+  requesterName: text('requester_name').notNull(),
+  command: text('command').$type<import('@spectron/shared').AgentCommand>().notNull(),
+  message: text('message').notNull(),
+  repositories: jsonb('repositories').$type<(import('@spectron/shared').GitRepository & { commit?: string })[]>().notNull(),
+  context: jsonb('context').$type<Record<string, unknown>>().notNull(),
+  instructions: text('instructions').notNull(), connectionId: text('connection_id').notNull(),
+  state: text('state').$type<import('@spectron/shared').AgentRunState>().default('queued').notNull(),
+  stopRequested: boolean('stop_requested').default(false).notNull(),
+  result: jsonb('result').$type<import('@spectron/shared').AgentResult>(), error: text('error'),
+  claim: text('claim'), leaseUntil: timestamp('lease_until', { withTimezone: true }),
+  containerRetained: boolean('container_retained').default(false).notNull(),
+  idleUntil: timestamp('idle_until', { withTimezone: true }),
+  appliedAt: timestamp('applied_at', { withTimezone: true }),
+  ...dates(),
+}, t => [
+  foreignKey({ columns: [t.projectId, t.issueId], foreignColumns: [issue.projectId, issue.id], name: 'agent_runs_issue_fk' }).onDelete('restrict'),
+  uniqueIndex('agent_runs_request_unique').on(t.requesterId, t.requestId),
+  index('agent_runs_issue_idx').on(t.issueId, t.createdAt), index('agent_runs_queue_idx').on(t.state, t.leaseUntil),
+  check('agent_runs_state_valid', sql`${t.state} IN ('queued','preparing','working','needs_input','completed','failed','stopped')`),
+]);
+export const agentRunInput = pgTable('agent_run_inputs', {
+  id: text('id').$defaultFn(createId).primaryKey(), runId: text('run_id').notNull().references(() => agentRun.id, { onDelete: 'cascade' }),
+  userId: text('user_id').notNull().references(() => user.id, { onDelete: 'restrict' }), requestId: text('request_id').notNull(),
+  message: text('message').notNull(), state: text('state').$type<'queued' | 'delivered'>().default('queued').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+}, t => [uniqueIndex('agent_run_inputs_request_unique').on(t.userId, t.requestId)]);
+export const agentRunEvent = pgTable('agent_run_events', {
+  id: text('id').$defaultFn(createId).primaryKey(), runId: text('run_id').notNull().references(() => agentRun.id, { onDelete: 'cascade' }),
+  message: text('message').notNull(), createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+}, t => [index('agent_run_events_run_idx').on(t.runId, t.createdAt)]);

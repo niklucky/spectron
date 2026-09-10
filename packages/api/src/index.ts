@@ -4,6 +4,7 @@ import { getConnInfo } from "@hono/node-server/conninfo";
 import type { HttpBindings } from "@hono/node-server";
 import {
   createProjectService,
+  createAgentRunService,
   createAIService,
   createGitService,
   createGitAdapterFactory,
@@ -67,6 +68,7 @@ export function createAPI(
   const worklogs = createWorklogService(db);
   const comments = createCommentService(db);
   const files = createFileService(db, fileStorage);
+  const runs = createAgentRunService(db, files);
   const tracker = createTrackerService(db, undefined, undefined, files);
   const issues = createIssueService(db);
   const fields = createFieldService(db);
@@ -131,6 +133,7 @@ export function createAPI(
           exports,
           ai,
           git,
+          runs,
         ),
     });
   });
