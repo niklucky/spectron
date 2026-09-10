@@ -1,4 +1,5 @@
 export const productName = "Spectron";
+export * from "./ai";
 export { normalizeProjectURL } from "./projects";
 export type {
   CreateProjectInput,

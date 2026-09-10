@@ -1,5 +1,6 @@
 import type {
   Auth,
+  AIService,
   ExportService,
   TrackerService,
   FieldService,
@@ -15,6 +16,7 @@ import type {
 
 export type Context = {
   userId: string | null;
+  ai: AIService;
   exports: ExportService;
   tracker: TrackerService;
   fields: FieldService;
@@ -41,10 +43,12 @@ export async function createContext(
   jira: JiraService,
   tracker: TrackerService,
   exports: ExportService,
+  ai: AIService,
 ): Promise<Context> {
   const session = await auth.api.getSession({ headers: request.headers });
   return {
     userId: session?.user.id || null,
+    ai,
     tracker,
     exports,
     projects,

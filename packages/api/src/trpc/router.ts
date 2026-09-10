@@ -14,6 +14,9 @@ import {
 } from "@spectron/backend";
 import {
   applicationIdPattern,
+  aiProviders,
+  aiEfforts,
+  aiCatalog,
   exportActions,
   issueTriggers,
   normalizeProjectURL,
@@ -104,6 +107,19 @@ const applicationId = z.union([
 ]);
 const projectId = z.object({ id: applicationId }).strict();
 
+const aiName = z.string().trim().min(1).max(80);
+const aiKey = z.string().min(1).max(4096).regex(/^[^\s\x00-\x1f\x7f]+$/, "Enter an API key without whitespace.");
+const aiRevision = z.object({ id: applicationId, revision: z.number().int().positive() }).strict();
+const agentInput = z.object({
+  name: aiName,
+  avatar: z.string().max(2_800_000).nullable(),
+  connectionId: applicationId,
+  model: z.string().min(1).max(128),
+  effort: z.enum(aiEfforts).nullable(),
+  role: z.string().trim().min(1).max(80),
+  instructions: z.string().max(32000),
+}).strict();
+
 const invitationToken = z
   .object({ token: z.string().regex(/^[a-f0-9]{64}$/) })
   .strict();
@@ -191,6 +207,24 @@ const trackerMapping = z.record(
 );
 const exportScope = z.object({ projectId: applicationId, provider: z.enum(["jira", "tracker"]) });
 export const appRouter = t.router({
+  ai: t.router({
+    catalog: authenticated.query(() => aiCatalog),
+    connections: authenticated.query(({ ctx }) => ctx.ai.connections(ctx.userId)),
+    createConnection: authenticated.input(z.object({ name: aiName, provider: z.enum(aiProviders), apiKey: aiKey }).strict())
+      .mutation(({ ctx, input }) => ctx.ai.createConnection(ctx.userId, input)),
+    updateConnection: authenticated.input(aiRevision.extend({ name: aiName, apiKey: aiKey.optional() }))
+      .mutation(({ ctx, input }) => ctx.ai.updateConnection(ctx.userId, input)),
+    deleteConnection: authenticated.input(aiRevision).mutation(({ ctx, input }) => ctx.ai.deleteConnection(ctx.userId, input)),
+    checkConnection: authenticated.input(aiRevision).mutation(({ ctx, input }) => ctx.ai.checkConnection(ctx.userId, input)),
+    agents: authenticated.query(({ ctx }) => ctx.ai.agents(ctx.userId)),
+    createAgent: authenticated.input(agentInput).mutation(({ ctx, input }) => ctx.ai.saveAgent(ctx.userId, input)),
+    updateAgent: authenticated.input(agentInput.extend(aiRevision.shape)).mutation(({ ctx, input }) => ctx.ai.saveAgent(ctx.userId, input)),
+    deleteAgent: authenticated.input(aiRevision).mutation(({ ctx, input }) => ctx.ai.deleteAgent(ctx.userId, input)),
+    sharing: authenticated.input(projectId).query(({ ctx, input }) => ctx.ai.sharing(ctx.userId, input.id)),
+    setSharing: authenticated.input(aiRevision.extend({ projectId: applicationId, visibility: z.enum(["private", "selected", "project"]), memberIds: z.array(z.string().min(1).max(128)).max(500) }))
+      .mutation(({ ctx, input }) => ctx.ai.setSharing(ctx.userId, input)),
+    available: authenticated.input(z.object({ projectId: applicationId }).strict()).query(({ ctx, input }) => ctx.ai.available(ctx.userId, input.projectId)),
+  }),
   exports: t.router({
     get: authenticated.input(exportScope).query(({ ctx, input }) => ctx.exports.get(ctx.userId, input.projectId, input.provider)),
     save: authenticated.input(exportScope.extend({ config: z.object({ mode: z.enum(["off", "on_save", "scheduled"]), intervalMinutes: z.union([z.literal(15), z.literal(60), z.literal(1440)]), actions: z.array(z.enum(exportActions)).max(6) }) })).mutation(({ ctx, input }) => ctx.exports.save(ctx.userId, input.projectId, input.provider, input.config)),

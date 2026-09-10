@@ -49,6 +49,7 @@ const apiOptions = {
   db,
   appURL: APP_URL,
   integrationSecret: process.env.INTEGRATION_SECRET || BETTER_AUTH_SECRET,
+  ...(process.env.AI_CREDENTIAL_SECRET ? { aiSecret: process.env.AI_CREDENTIAL_SECRET } : {}),
   trustProxy: process.env.TRUST_PROXY === "true",
   fileStorage: {
     root:

@@ -4,6 +4,8 @@ import { getConnInfo } from "@hono/node-server/conninfo";
 import type { HttpBindings } from "@hono/node-server";
 import {
   createProjectService,
+  createAIService,
+  type AICredentialCheck,
   createExportService,
   createTrackerService,
   createFieldService,
@@ -32,6 +34,8 @@ export function createAPI(
     trustProxy = false,
     fileStorage,
     integrationSecret,
+    aiSecret,
+    aiCredentialCheck,
     sendInvitationEmail = async () => {
       throw new Error("Invitation email is unavailable.");
     },
@@ -41,11 +45,14 @@ export function createAPI(
     trustProxy?: boolean;
     fileStorage?: FileStorageConfig;
     integrationSecret?: string;
+    aiSecret?: string;
+    aiCredentialCheck?: AICredentialCheck;
     sendInvitationEmail?: InvitationConfig["sendInvitationEmail"];
   },
 ) {
 
   const activity = createActivityService(db);
+  const ai = createAIService(db, aiSecret, aiCredentialCheck);
   const worklogs = createWorklogService(db);
   const comments = createCommentService(db);
   const files = createFileService(db, fileStorage);
@@ -111,6 +118,7 @@ export function createAPI(
           jira,
           tracker,
           exports,
+          ai,
         ),
     });
   });
