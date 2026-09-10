@@ -36,6 +36,8 @@
     "@types/react": "19.2.18"
   },
   "dependencies": {
-    "@spectron/shared": "workspace:*"
+    "@spectron/shared": "workspace:*",
+    "react-markdown": "10.1.0",
+    "remark-gfm": "4.0.1"
   }
 }

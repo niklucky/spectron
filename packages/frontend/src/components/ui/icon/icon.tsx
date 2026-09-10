@@ -72,7 +72,7 @@ export function Icon({
       className={className}
       aria-hidden="true"
     >
-      <path d={paths[name]} />
+      {name === "more" ? [5, 12, 19].map(cx => <circle key={cx} cx={cx} cy="12" r="1.5" fill="currentColor" stroke="none" />) : <path d={paths[name]} />}
     </svg>
   );
 }

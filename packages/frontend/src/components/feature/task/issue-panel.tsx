@@ -1,3 +1,5 @@
+import { formatDateTime } from "../../../lib/date-format";
+import { IssueHeaderTags } from "./issue-header-tags";
 import { AttachmentGallery } from "./attachment-gallery";
 import { ISSUE_TITLE_MAX_LENGTH, ISSUE_DESCRIPTION_MAX_LENGTH } from "@spectron/shared";
 import { UserInfo } from "../../ui/avatar";
@@ -23,6 +25,10 @@ import { commentText, type CommentBody } from "@spectron/shared";
 import { StatusDot } from "./status-dot";
 
 export type IssuePanelActions = {
+  canCreateTag?: (projectId: string) => boolean;
+  createTag?: (projectId: string, name: string) => Promise<string>;
+  canPublishTracker?: (projectId: string) => boolean;
+  pushTracker?: (projectId: string, id: string) => Promise<void>;
   canPublish?: (projectId: string) => boolean;
   pushJira?: (
     projectId: string,
@@ -72,6 +78,7 @@ export function IssuePanel({
   useEffect(() => setTitleDraft(issue.title), [issue.id, issue.title]);
   const issueType = settings.issueTypes?.find(type => type.id === issue.issueTypeId);
   const typeColor = issueType?.color ?? ({ epic: "#a855f7", story: "#22c55e", bug: "#ef4444", task: "#3b82f6" }[issueType?.name.toLowerCase() ?? ""] ?? "#64748b");
+  const [typeSaving, setTypeSaving] = useState(false);
   const [keyCopied, setKeyCopied] = useState(false);
   const [view, setView] = useState<"chat" | "all" | "issue" | "files">(() => {
     try {
@@ -218,7 +225,18 @@ export function IssuePanel({
             className="mobile-back"
             onClick={onBack}
           />
-          <span className="issue-type-badge" style={{ color: typeColor, background: `color-mix(in srgb, ${typeColor} 14%, transparent)`, borderColor: `color-mix(in srgb, ${typeColor} 35%, transparent)` }}>{settings.issueTypes?.find(type => type.id === issue.issueTypeId)?.name ?? "No type"}</span>
+          <select aria-label="Issue type" className="issue-type-badge" value={issue.issueTypeId ?? ""} disabled={!!issue.deletedAt || typeSaving}
+            style={{ color: typeColor, background: `color-mix(in srgb, ${typeColor} 14%, transparent)`, borderColor: `color-mix(in srgb, ${typeColor} 35%, transparent)` }}
+            onChange={async event => {
+              const issueTypeId = event.target.value || null;
+              setTypeSaving(true); setError("");
+              try { await actions.save(issue, { issueTypeId }); }
+              catch (cause) { setError(cause instanceof Error ? cause.message : "Could not update issue type."); }
+              finally { setTypeSaving(false); }
+            }}>
+            <option value="">No type</option>
+            {(settings.issueTypes ?? []).filter(type => !type.deletedAt || type.id === issue.issueTypeId).map(type => <option key={type.id} value={type.id} disabled={!!type.deletedAt}>{type.name}</option>)}
+          </select>
           <button type="button" className="chat-task-id issue-key-copy" title={keyCopied ? "Copied!" : "Click to copy key"} aria-label={keyCopied ? "Issue key copied" : `Copy issue key ${issue.key}`} onClick={async () => {
             try { await navigator.clipboard.writeText(issue.key); setKeyCopied(true); }
             catch { setError("Could not copy issue key."); }
@@ -264,6 +282,34 @@ export function IssuePanel({
             <IconButton icon="paperclip" label="Files" aria-pressed={view === "files"} onClick={() => selectView("files")} />
           </div>
           <div className="chat-actions">
+            {(issue.trackerKey || actions.canPublishTracker?.(issue.projectId)) && <div className="issue-integration-group" aria-label="Yandex Tracker">
+            {issue.trackerKey && (
+              <a className="issue-integration-link"
+                href={`https://tracker.yandex.ru/${encodeURIComponent(issue.trackerKey)}`}
+                target="_blank" rel="noreferrer" title={`Open ${issue.trackerKey} in Yandex Tracker`}>
+                <img src="/assets/integrations/yandex.svg" alt="Yandex Tracker" />
+                <span>{issue.trackerKey}</span>
+              </a>
+            )}
+            {!issue.deletedAt && actions.pushTracker && actions.canPublishTracker?.(issue.projectId) && (
+              <IconButton icon="check" label={issue.trackerKey ? "Sync issue to Yandex Tracker" : "Create in Yandex Tracker"}
+                disabled={busy} onClick={async () => {
+                  setBusy(true);
+                  setError("");
+                  setJiraFeedback("");
+                  try {
+                    await actions.pushTracker!(issue.projectId, issue.id);
+                    setJiraFeedback("Saved to Yandex Tracker.");
+                  } catch (e) {
+                    setError(e instanceof Error ? e.message : "Could not send to Yandex Tracker.");
+                    selectView("issue");
+                  } finally {
+                    setBusy(false);
+                  }
+                }} />
+            )}
+            </div>}
+            {(settings.jiraBaseUrl || actions.canPublish?.(issue.projectId)) && <div className="issue-integration-group" aria-label="Jira">
             {settings.jiraBaseUrl && issue.externalKey && (
               <a className="issue-integration-link"
                 href={`${settings.jiraBaseUrl.replace(/\/$/, "")}/browse/${encodeURIComponent(issue.externalKey)}`}
@@ -304,6 +350,7 @@ export function IssuePanel({
                   }}
                 />
               )}
+            </div>}
             <IconButton icon="copy" label="Copy issue link" onClick={onCopy} />
             {!issue.deletedAt && (
               <IconButton
@@ -317,6 +364,7 @@ export function IssuePanel({
             )}
             <Menu
               label="Conversation actions"
+              className="conversation-menu-button"
               items={[
                 {
                   label: "Refresh chat",
@@ -357,6 +405,9 @@ export function IssuePanel({
             image={issue.assignee?.image}
             label="Assignee"
           />
+          <IssueHeaderTags key={issue.id} tags={settings.tags ?? []} selected={issue.tagIds ?? []}
+            disabled={!!issue.deletedAt} onChange={tagIds => actions.save(issue, { tagIds })}
+            onCreate={actions.createTag && actions.canCreateTag?.(issue.projectId) ? name => actions.createTag!(issue.projectId, name) : undefined} />
         </div>
       </header>
       {titleError && <p role="alert" className="project-error">{titleError}</p>}
@@ -389,7 +440,7 @@ export function IssuePanel({
       <div className="issue-content" hidden={view !== "issue"}>
         {issue.deletedAt && (
           <div className="issue-deleted" role="status">
-            Deleted {new Date(issue.deletedAt).toLocaleString()}. History is
+            Deleted {formatDateTime(issue.deletedAt)}. History is
             retained.
           </div>
         )}
@@ -462,7 +513,7 @@ export function IssuePanel({
               </div>
               <div>
                 <dt>Created</dt>
-                <dd>{new Date(issue.createdAt).toLocaleString()}</dd>
+                <dd>{formatDateTime(issue.createdAt)}</dd>
               </div>
               <div>
                 <dt>Parent</dt>
@@ -560,7 +611,7 @@ export function IssuePanel({
                         : entry.entityType === "attachment"
                           ? "an attachment"
                           : "this issue"}{" "}
-                    <time>{new Date(entry.createdAt).toLocaleString()}</time>
+                    <time>{formatDateTime(entry.createdAt)}</time>
                   </div>
                   {entry.action === "created" &&
                   entry.entityType === "issue" ? (

@@ -3,7 +3,7 @@ import { ISSUE_TITLE_MAX_LENGTH, ISSUE_DESCRIPTION_MAX_LENGTH } from "@spectron/
 import { exportWorklog } from "./export-worklogs";
 import { stable } from "./jira";
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, isNull, sql } from "drizzle-orm";
 import { schema, type Database } from "@spectron/db";
 import { type CommentBody } from "@spectron/shared";
 import { issueAccess, IssueInputError, IssueConflictError } from "../issues";
@@ -12,6 +12,7 @@ import {
   YandexTrackerClient,
   trackerUserId,
   type YTIssue,
+  type YTComment,
   type YTIssueUpdate,
 } from "./yandex-client";
 const {
@@ -29,6 +30,49 @@ const {
 type Tx = Parameters<Parameters<Database["transaction"]>[0]>[0];
 type Config = typeof integration.$inferSelect;
 type Mappings = Config["mappings"];
+
+const trackerAuthorId = (person: YTComment["createdBy"] | undefined) => trackerUserId(person) || "__unknown__";
+async function hasTrackerAuthor(tx: Tx, c: Config, identityId: string | null, person: YTComment["createdBy"] | undefined) {
+  if (!identityId) return false;
+  const [identity] = await tx.select().from(schema.externalIdentity).where(eq(schema.externalIdentity.id, identityId));
+  return identity?.trackerIntegrationId === c.id && identity.externalId === trackerAuthorId(person);
+}
+
+async function trackerAuthor(tx: Tx, c: Config, person: YTComment["createdBy"] | undefined) {
+  const externalId = trackerAuthorId(person);
+  const localUserId = c.mappings.users[externalId] ?? null;
+  if (localUserId) {
+    const [member] = await tx.select().from(projectMember).where(and(
+      eq(projectMember.projectId, c.projectId), eq(projectMember.userId, localUserId),
+    ));
+    if (!member) throw new IssueInputError("A mapped author is no longer a project member. Update the Tracker user mapping.");
+  }
+  const displayName = person?.display || person?.login || "Unknown Tracker author";
+  const [identity] = await tx.insert(schema.externalIdentity).values({
+    projectId: c.projectId, trackerIntegrationId: c.id,
+    externalId, displayName, localUserId,
+  }).onConflictDoUpdate({
+    target: [schema.externalIdentity.trackerIntegrationId, schema.externalIdentity.externalId],
+    set: { displayName, localUserId },
+  }).returning();
+  return { authorId: null, externalAuthorId: identity!.id };
+}
+
+// Older Tracker imports used the importing user as the author. The creation
+// history identifies imported issues without reattributing locally created ones.
+async function correctIssueAuthor(tx: Tx, c: Config, row: typeof issue.$inferSelect, remote: YTIssue) {
+  if (await hasTrackerAuthor(tx, c, row.externalAuthorId, remote.createdBy)) return;
+  const [identity] = row.externalAuthorId ? await tx.select().from(schema.externalIdentity)
+    .where(eq(schema.externalIdentity.id, row.externalAuthorId)) : [];
+  if (identity?.trackerIntegrationId !== c.id) {
+    const [creation] = await tx.select().from(schema.issueHistory)
+      .where(and(eq(schema.issueHistory.issueId, row.id), eq(schema.issueHistory.entityType, "issue"), eq(schema.issueHistory.action, "created")))
+      .orderBy(asc(schema.issueHistory.createdAt)).limit(1);
+    if (creation?.changes.externalId?.after !== remote.id || creation?.changes.externalKey?.after !== remote.key) return;
+  }
+  const author = await trackerAuthor(tx, c, remote.createdBy);
+  await tx.update(issue).set({ ...author, updatedAt: sql`${issue.updatedAt}` }).where(eq(issue.id, row.id));
+}
 export type TrackerInput = {
   projectId: string;
   token?: string | undefined;
@@ -272,6 +316,7 @@ export function createTrackerService(
         ? await tx.select().from(issue).where(eq(issue.id, link.localId))
         : [];
       if (current?.deletedAt) return current.id;
+      if (current) await correctIssueAuthor(tx, c, current, remote);
       if (current && link) {
         if (!overwriteConflicts && link.remoteUpdatedAt === remote.updatedAt)
           return current.id;
@@ -373,8 +418,7 @@ export function createTrackerService(
             projectId: p.id,
             number: p.issueCounter + 1,
             createdAt: new Date(remote.createdAt),
-            authorId:
-              c.mappings.users[trackerUserId(remote.createdBy)] ?? actor,
+            ...await trackerAuthor(tx, c, remote.createdBy),
             updatedAt: now,
           })
           .returning()) as [typeof issue.$inferSelect];
@@ -471,6 +515,7 @@ export function createTrackerService(
               localId: pending.id,
               externalId,
               externalKey: String(comment.id),
+              preserveAuthor: true,
               localUpdatedAt: pending.updatedAt,
               remoteUpdatedAt: comment.updatedAt,
             });
@@ -490,6 +535,12 @@ export function createTrackerService(
               .from(issueComment)
               .where(eq(issueComment.id, link.localId))
           : [];
+        if (current && !current.deletedAt && !markerId && !link?.preserveAuthor &&
+            !await hasTrackerAuthor(tx, c, current.externalAuthorId, comment.createdBy)) {
+          await tx.update(issueComment).set({
+            ...await trackerAuthor(tx, c, comment.createdBy), updatedAt: sql`${issueComment.updatedAt}`,
+          }).where(eq(issueComment.id, current.id));
+        }
         if (
           current?.deletedAt ||
           (!overwriteConflicts && link?.remoteUpdatedAt === comment.updatedAt)
@@ -522,8 +573,7 @@ export function createTrackerService(
                 projectId: c.projectId,
                 issueId,
                 createdAt: new Date(comment.createdAt),
-                authorId:
-                  c.mappings.users[trackerUserId(comment.createdBy)] ?? actor,
+                ...await trackerAuthor(tx, c, comment.createdBy),
                 body,
                 externalId: String(comment.id),
               })
@@ -555,6 +605,34 @@ export function createTrackerService(
       });
   }
   return {
+    // Read-only at Tracker: repair local attribution without importing content
+    // or exporting changes. Used for repairing legacy imports explicitly.
+    async repairAuthors(actor: string, projectId: string, issueId: string) {
+      const c = await db.transaction(tx => config(tx, actor, projectId));
+      const [link] = await db.select().from(entity).where(and(
+        eq(entity.integrationId, c.id), eq(entity.entityType, "issue"), eq(entity.localId, issueId),
+      ));
+      if (!link?.externalKey) throw new IssueInputError("Issue is not linked to Tracker.");
+      const client = factory(c);
+      const remote = await client.getIssue(link.externalKey);
+      const comments = await client.getComments(remote.key);
+      await db.transaction(async tx => {
+        await lock(tx, projectId);
+        const currentConfig = await config(tx, actor, projectId);
+        const [row] = await tx.select().from(issue).where(and(eq(issue.id, issueId), eq(issue.projectId, projectId)));
+        if (!row || row.deletedAt) throw new IssueInputError("Issue is unavailable.");
+        await correctIssueAuthor(tx, currentConfig, row, remote);
+        for (const comment of comments) {
+          if (comment.text.includes("<!-- spectron-comment:")) continue;
+          const [linked] = await tx.select({ id: issueComment.id, externalAuthorId: issueComment.externalAuthorId, preserveAuthor: entity.preserveAuthor }).from(issueComment)
+            .innerJoin(entity, and(eq(entity.localId, issueComment.id), eq(entity.integrationId, c.id), eq(entity.entityType, "comment")))
+            .where(and(eq(issueComment.issueId, issueId), eq(entity.externalId, `${remote.id}:${comment.id}`)));
+          if (linked && !linked.preserveAuthor && !await hasTrackerAuthor(tx, currentConfig, linked.externalAuthorId, comment.createdBy)) await tx.update(issueComment).set({
+            ...await trackerAuthor(tx, currentConfig, comment.createdBy), updatedAt: sql`${issueComment.updatedAt}`,
+          }).where(eq(issueComment.id, linked.id));
+        }
+      });
+    },
     async get(actor: string, projectId: string) {
       return db.transaction(async (tx) => {
         await issueAccess(tx, actor, projectId, false, true);
@@ -609,6 +687,12 @@ export function createTrackerService(
           .insert(integration)
           .values(values)
           .onConflictDoUpdate({ target: integration.projectId, set: values });
+        if (old) {
+          const identities = await tx.select().from(schema.externalIdentity).where(eq(schema.externalIdentity.trackerIntegrationId, old.id));
+          for (const identity of identities) await tx.update(schema.externalIdentity)
+            .set({ localUserId: input.mappings.users[identity.externalId] ?? null })
+            .where(eq(schema.externalIdentity.id, identity.id));
+        }
         // Tracker option links live only in its own mappings; externalId belongs to Jira.
         // User identities are integration-scoped in mappings; never overwrite another organization's identity.
         for (const [remote, local] of Object.entries(input.mappings.users))
@@ -984,7 +1068,7 @@ export function createTrackerService(
                   throw new IssueConflictError(
                     `${remote.key}: comment changed in Tracker. Import before pushing.`,
                   );
-                const text = `${plain(comment.body)}\n${marker(comment.id)}`;
+                const text = plain(comment.body);
                 rc = rc
                   ? await client.updateComment(remote.key, String(rc.id), text)
                   : await client.createComment(remote.key, text);
@@ -995,6 +1079,7 @@ export function createTrackerService(
                     localId: comment.id,
                     externalId: `${remote!.id}:${rc!.id}`,
                     externalKey: String(rc!.id),
+                    preserveAuthor: true,
                     localUpdatedAt: comment.updatedAt,
                     remoteUpdatedAt: rc!.updatedAt,
                   };

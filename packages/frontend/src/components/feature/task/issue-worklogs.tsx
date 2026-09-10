@@ -1,3 +1,4 @@
+import { formatDateTime } from "../../../lib/date-format";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   formatWorklogDuration,
@@ -151,12 +152,12 @@ export function IssueWorklogs({
               {entry.deletedAt && <span>· Deleted</span>}
             </div>
             <time dateTime={entry.startedAt}>
-              Started {new Date(entry.startedAt).toLocaleString()}
+              Started {formatDateTime(entry.startedAt)}
             </time>
             {entry.description && <p>{entry.description}</p>}
             <small>
               Recorded by {entry.recorderName} ·{" "}
-              {new Date(entry.createdAt).toLocaleString()}
+              {formatDateTime(entry.createdAt)}
             </small>
             {!deleted && (
               <div className="comment-actions">

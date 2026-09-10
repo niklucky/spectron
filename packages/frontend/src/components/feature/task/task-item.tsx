@@ -1,3 +1,4 @@
+import { formatDateTime } from "../../../lib/date-format";
 import { messagePlainText } from "@spectron/shared";
 import { Avatar, UserInfo } from "../../ui/avatar";
 import { ProjectMark } from "../project";
@@ -83,7 +84,7 @@ export function TaskItem({
         </span>
         <StatusDot status={item.statusTrigger} color={item.stateColor} />
         <span>{item.deletedAt ? "Deleted" : item.status}</span>
-        <time dateTime={updatedAt} title={new Date(updatedAt).toLocaleString()}>
+        <time dateTime={updatedAt} title={formatDateTime(updatedAt)}>
           {formatIssueDate(updatedAt)}
         </time>
       </div>

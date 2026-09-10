@@ -22,6 +22,7 @@ export function UserInfo({
         <img src={image} alt="" onError={() => setFailed(image)} />
       ) : (
         <Avatar
+          name={name}
           initials={
             name
               .trim()

@@ -1,12 +1,18 @@
 import { useId, useRef, useState } from "react";
 import { issueTriggers, type IssueSettings } from "@spectron/shared";
 import { Icon } from "../../ui/icon";
+import { resolveDatePeriod } from "./date-period";
 import type { Project } from "./types";
 
 export type TaskFilters = {
   field: "trigger" | "state" | "type";
   values: string[];
   typeIds?: string[];
+  projectIds?: string[];
+  dateField?: "updatedAt" | "createdAt" | "startAt" | "finishAt";
+  dateFrom?: string;
+  dateTo?: string;
+  datePreset?: "week" | "month" | "custom";
   deleted: boolean;
 };
 export const defaultTaskFilters: TaskFilters = {
@@ -50,7 +56,7 @@ export function TaskFiltersSelect({
           const rect = button.current!.getBoundingClientRect();
           setPosition({
             top: rect.bottom + 8,
-            left: Math.max(8, Math.min(rect.left, window.innerWidth - 312)),
+            left: Math.max(8, Math.min(rect.left, window.innerWidth - 432)),
           });
           panel.current?.togglePopover();
         }}
@@ -61,6 +67,8 @@ export function TaskFiltersSelect({
             ? "Deleted issues"
             : "All issues"}
         {value.typeIds?.length ? ` · ${value.typeIds.length === 1 ? Object.values(settings).flatMap(s => s.issueTypes ?? []).find(t => t.id === value.typeIds![0])?.name ?? "Type" : `${value.typeIds.length} types`}` : ""}
+        {value.projectIds?.length ? ` · ${value.projectIds.length} projects` : ""}
+        {value.dateFrom || value.dateTo ? " · Date range" : ""}
         <Icon name="chevron" size={13} />
       </button>
       <div
@@ -77,6 +85,16 @@ export function TaskFiltersSelect({
           <strong>Filter issues</strong>
           <button onClick={() => onChange(defaultTaskFilters)}>Reset</button>
         </div>
+        {projects.length > 1 && <div className="task-filter-options" role="group" aria-label="Projects">
+          <strong>Projects</strong>
+          <p className="task-filter-hint">Leave empty for all projects.</p>
+          {projects.map(project => <label key={project.id}>
+            <input type="checkbox" checked={value.projectIds?.includes(project.id) ?? false}
+              onChange={() => onChange({ ...value, projectIds: value.projectIds?.includes(project.id)
+                ? value.projectIds.filter(id => id !== project.id) : [...(value.projectIds ?? []), project.id] })} />
+            {project.name}
+          </label>)}
+        </div>}
         <label className="task-filter-field">
           Filter by
           <select
@@ -155,6 +173,26 @@ export function TaskFiltersSelect({
               ))}
             </fieldset>
           ))}
+        </div>
+        <div className="task-filter-dates">
+          <label className="task-filter-field">Date period
+            <select aria-label="Date field" value={value.dateField ?? "updatedAt"} onChange={e => onChange({ ...value, dateField: e.target.value as NonNullable<TaskFilters["dateField"]> })}>
+              <option value="updatedAt">Last updated</option><option value="createdAt">Created</option>
+              <option value="startAt">Start date</option><option value="finishAt">Finish date</option>
+            </select>
+          </label>
+          <div className="task-date-presets">
+            {([['week', 'This week'], ['month', 'This month'], ['custom', 'Custom']] as const).map(([preset, label]) =>
+              <button key={preset} aria-pressed={value.datePreset === preset} onClick={() => {
+                if (preset === 'custom') { onChange({ ...value, datePreset: preset }); return; }
+                onChange(resolveDatePeriod({ ...value, datePreset: preset }));
+              }}>{label}</button>)}
+          </div>
+          <div className="task-date-inputs">
+            <label>From<input type="date" aria-label="Period start" value={value.dateFrom ?? ""} max={value.dateTo} onChange={e => onChange({ ...value, datePreset: 'custom', dateFrom: e.target.value })} /></label>
+            <label>To<input type="date" aria-label="Period finish" value={value.dateTo ?? ""} min={value.dateFrom} onChange={e => onChange({ ...value, datePreset: 'custom', dateTo: e.target.value })} /></label>
+          </div>
+          <p className="task-filter-hint">Includes both dates. Weeks start on Monday.</p>
         </div>
         <label className="task-filter-deleted">
           <input

@@ -1,3 +1,4 @@
+import { formatDateTime } from "../../../lib/date-format";
 import { AttachmentMarkdown, nonInlineFiles } from "./issue-comments";
 import { MessageMarkdown } from "../../ui/message-markdown";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
@@ -229,7 +230,7 @@ export function IssueChat({
               )}
               {descriptionFiles.length > 0 && <CommentMedia files={nonInlineFiles(issue.description, descriptionFiles)} />}
               <time dateTime={issue.createdAt}>
-                {new Date(issue.createdAt).toLocaleString()}
+                {formatDateTime(issue.createdAt)}
               </time>
             </div>
           </article>
@@ -281,7 +282,7 @@ export function IssueChat({
               <div className="chat-conversation-message initial-description">
                 <UserInfo name={valueLabel("authorId", file.uploadedBy)} />
                 <CommentMedia files={[file]} />
-                <time dateTime={file.attachedAt ?? file.createdAt}>{new Date(file.attachedAt ?? file.createdAt).toLocaleString()}</time>
+                <time dateTime={file.attachedAt ?? file.createdAt}>{formatDateTime(file.attachedAt ?? file.createdAt)}</time>
               </div>
             </article>
           );
@@ -337,7 +338,7 @@ export function IssueChat({
                     ? `logged ${valueLabel("durationSeconds", e.changes.durationSeconds.after)}`
                     : `${e.action} ${entity}`}
                 </span>
-                <time>{new Date(e.createdAt).toLocaleString()}</time>
+                <time>{formatDateTime(e.createdAt)}</time>
                 <IconButton
                   icon="history"
                   label={

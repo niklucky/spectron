@@ -26,7 +26,9 @@
     "test:activity": "pnpm --filter @spectron/api test:activity",
     "test:jira": "pnpm --filter @spectron/api test:jira",
     "test:integrations": "pnpm --filter @spectron/api test:integrations",
-    "test:exports": "pnpm --filter @spectron/api test:exports"
+    "test:exports": "pnpm --filter @spectron/api test:exports",
+    "test:markdown": "pnpm --filter @spectron/api exec tsx --tsconfig ../../apps/app/tsconfig.json --test ../../apps/app/test/message-markdown.test.tsx",
+    "test:dates": "pnpm --filter @spectron/api exec node --import tsx --test ../../apps/app/test/date-period.test.ts"
   },
   "devDependencies": {
     "turbo": "2.10.12",
