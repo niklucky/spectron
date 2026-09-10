@@ -32,11 +32,13 @@ export function ProjectSettingsPage({
   actions,
   onClose,
   yandexSettings,
+  gitSettings,
   externalBusy = false,
   loadIntegrations,
 }: {
   loadIntegrations: () => Promise<IntegrationSummary[]>;
   yandexSettings?: ReactNode;
+  gitSettings?: (provider: "github" | "gitlab") => ReactNode;
   externalBusy?: boolean;
   project: ProjectSummary;
   actions: ProjectSettingsActions;
@@ -120,7 +122,7 @@ export function ProjectSettingsPage({
               <>
                 <Button variant="ghost" className="navigation-button" disabled={busy || externalBusy} onClick={() => setProvider(null)}>← Integrations</Button>
                 
-                {provider === "jira" ? <JiraSettings actions={actions.jira} owner={project.role === "owner"} onBusyChange={setBusy} /> : yandexSettings}
+                {provider === "jira" ? <JiraSettings actions={actions.jira} owner={project.role === "owner"} onBusyChange={setBusy} /> : provider === "github" || provider === "gitlab" ? gitSettings?.(provider) : yandexSettings}
               </>
             ) : <IntegrationOverview owner={project.role === "owner"} load={loadIntegrations} onSelect={setProvider} />
           ) : ["states", "priorities", "types", "tags"].includes(tab) ? (

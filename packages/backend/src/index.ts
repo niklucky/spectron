@@ -36,3 +36,7 @@ export { createJiraScheduler } from "./integrations/jira-scheduler";
 export { createTrackerService, type TrackerService } from "./integrations/tracker";
 export { YTApiError as TrackerRequestError } from "./integrations/yandex-client";
 export { createExportService, type ExportService } from "./integrations/export-sync";
+
+export { createGitService, type GitService } from "./git/service";
+export { createGitAdapterFactory, type GitAdapterFactory, type GitAdapter } from "./git/provider";
+export { createGitTransport } from "./git/transport";

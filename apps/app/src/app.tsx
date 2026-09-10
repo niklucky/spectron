@@ -1,4 +1,5 @@
 import { exportActionsFor } from "./lib/export-actions";
+import { GitSettings } from "./git-settings";
 import { ProjectIntegrationSettings } from "./project-integration-settings";
 import type {
   WorklogFields,
@@ -367,11 +368,13 @@ function Workspace({
     ],
   );
   const loadIntegrations = useMemo(() => async () => {
-    const [jira, tracker] = await Promise.all([
+    const [jira, tracker, git] = await Promise.all([
       trpc.jira.get.query({ projectId: settingsId! }),
       trpc.tracker.get.query({ projectId: settingsId! }),
+      trpc.git.connections.query({ projectId: settingsId! }),
     ]);
     return [
+      ...git.map(c => ({ id: c.id, provider: c.provider, name: c.name, key: c.provider === "github" ? "GitHub" : "GitLab", url: c.baseURL, account: c.actor?.login ?? "Not verified", connectedAt: c.createdAt, lastSyncAt: null, status: c.checkStatus === "passed" ? "Identity verified" : c.checkStatus === "failed" ? "Check failed" : "Not checked" })),
       ...(jira ? [{ provider: "jira", name: "Jira Cloud", key: jira.projectKey, url: jira.baseUrl, account: jira.email, connectedAt: jira.createdAt, lastSyncAt: jira.lastImportedAt }] : []),
       ...(tracker ? [{ provider: "yandex", name: "Yandex Tracker", key: tracker.queue, url: `https://tracker.yandex.ru/${encodeURIComponent(tracker.queue)}`, account: tracker.organizationId, connectedAt: tracker.createdAt, lastSyncAt: null }] : []),
     ];
@@ -448,6 +451,7 @@ function Workspace({
           actions={settingsActions}
           externalBusy={integrationBusy}
           loadIntegrations={loadIntegrations}
+          gitSettings={provider => settingsProject.role === "owner" ? <GitSettings key={`${settingsProject.id}:${provider}`} projectId={settingsProject.id} provider={provider} onBusyChange={setIntegrationBusy} /> : <p className="muted">Only the project owner can manage Git connections.</p>}
           yandexSettings={
             settingsProject.role === "owner" ? (
               <ProjectIntegrationSettings
