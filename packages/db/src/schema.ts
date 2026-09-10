@@ -3,6 +3,8 @@ import {
   issueTriggers,
   type CommentBody,
   type HistoryChanges,
+  aiProviders,
+  aiEfforts,
 } from "@spectron/shared";
 import { sql } from "drizzle-orm";
 import {
@@ -166,6 +168,63 @@ export const projectMember = pgTable(
 
 export type Project = typeof project.$inferSelect;
 export type ProjectMember = typeof projectMember.$inferSelect;
+
+export const aiProvider = pgEnum("ai_provider", aiProviders);
+export const aiEffort = pgEnum("ai_effort", aiEfforts);
+export const aiConnection = pgTable("ai_connections", {
+  id: text("id").$defaultFn(createId).primaryKey(),
+  ownerId: text("owner_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  provider: aiProvider("provider").notNull(),
+  encryptedKey: text("encrypted_key").notNull(),
+  revision: integer("revision").default(1).notNull(),
+  keyUpdatedAt: timestamp("key_updated_at", { withTimezone: true }).defaultNow().notNull(),
+  checkedAt: timestamp("checked_at", { withTimezone: true }),
+  checkStatus: text("check_status").$type<"untested" | "passed" | "failed">().default("untested").notNull(),
+  ...dates(),
+}, (t) => [uniqueIndex("ai_connections_owner_id_unique").on(t.ownerId, t.id)]);
+
+export const aiAgent = pgTable("ai_agents", {
+  id: text("id").$defaultFn(createId).primaryKey(),
+  ownerId: text("owner_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+  connectionId: text("connection_id"),
+  name: text("name").notNull(),
+  avatar: text("avatar"),
+  model: text("model").notNull(),
+  effort: aiEffort("effort"),
+  role: text("role").notNull(),
+  instructions: text("instructions").default("").notNull(),
+  revision: integer("revision").default(1).notNull(),
+  ...dates(),
+  deletedAt: timestamp("deleted_at", { withTimezone: true }),
+}, (t) => [
+  uniqueIndex("ai_agents_owner_id_unique").on(t.ownerId, t.id),
+  index("ai_agents_connection_idx").on(t.connectionId),
+  foreignKey({ columns: [t.ownerId, t.connectionId], foreignColumns: [aiConnection.ownerId, aiConnection.id], name: "ai_agents_connection_owner_fk" }).onDelete("restrict"),
+  check("ai_agents_active_connection", sql`${t.deletedAt} IS NOT NULL OR ${t.connectionId} IS NOT NULL`),
+]);
+
+export const aiAgentShare = pgTable("ai_agent_shares", {
+  agentId: text("agent_id").notNull(),
+  ownerId: text("owner_id").notNull(),
+  projectId: text("project_id").notNull(),
+  visibility: text("visibility").$type<"selected" | "project">().notNull(),
+}, (t) => [
+  primaryKey({ columns: [t.agentId, t.projectId] }),
+  foreignKey({ columns: [t.ownerId, t.agentId], foreignColumns: [aiAgent.ownerId, aiAgent.id], name: "ai_agent_shares_agent_fk" }).onDelete("cascade"),
+  foreignKey({ columns: [t.projectId, t.ownerId], foreignColumns: [projectMember.projectId, projectMember.userId], name: "ai_agent_shares_owner_membership_fk" }).onDelete("cascade"),
+  check("ai_agent_shares_visibility", sql`${t.visibility} IN ('selected', 'project')`),
+]);
+
+export const aiAgentShareMember = pgTable("ai_agent_share_members", {
+  agentId: text("agent_id").notNull(),
+  projectId: text("project_id").notNull(),
+  userId: text("user_id").notNull(),
+}, (t) => [
+  primaryKey({ columns: [t.agentId, t.projectId, t.userId] }),
+  foreignKey({ columns: [t.agentId, t.projectId], foreignColumns: [aiAgentShare.agentId, aiAgentShare.projectId], name: "ai_agent_share_members_share_fk" }).onDelete("cascade"),
+  foreignKey({ columns: [t.projectId, t.userId], foreignColumns: [projectMember.projectId, projectMember.userId], name: "ai_agent_share_members_membership_fk" }).onDelete("cascade"),
+]);
 
 export const projectInvitation = pgTable(
   "project_invitations",

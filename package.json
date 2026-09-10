@@ -17,6 +17,7 @@
     "db:generate": "pnpm --filter @spectron/db generate",
     "db:migrate": "pnpm --filter @spectron/db migrate",
     "test:auth": "pnpm --filter @spectron/api test",
+    "test:ai": "pnpm --filter @spectron/api test:ai",
     "test:projects": "pnpm --filter @spectron/api test:projects",
     "test:issues": "pnpm --filter @spectron/api test:issues",
     "test:files": "pnpm --filter @spectron/api test:files",

@@ -120,6 +120,13 @@
       "when": 1788902843844,
       "tag": "0016_flowery_baron_zemo",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1789005842524,
+      "tag": "0017_milky_risque",
+      "breakpoints": true
     }
   ]
 }

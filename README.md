@@ -4,6 +4,8 @@ An open source workspace for development teams, designed for self-hosting.
 
 The planned scope includes tasks, AI agents, Jira and Yandex Tracker, GitHub issues/actions/pull requests, self-hosted GitLab, chats, and calls. These are product directions, not implemented features.
 
+The agreed AI agent workflow, GitHub/GitLab integration behavior, and staged implementation handoff are documented in the [AI agents v1 specification](docs/ai-agents-v1-spec.md). Stage 1 is implemented; see [AI connection setup and verification](docs/ai-agents-stage-1.md).
+
 ## Repository structure
 
 ```text

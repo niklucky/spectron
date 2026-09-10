@@ -11,7 +11,8 @@ import type {
   CommentDraft,
 } from "@spectron/shared";
 import { useEffect, useMemo, useState } from "react";
-import { AccountMenu } from "@spectron/frontend/components/feature/account";
+import { AccountMenu, AISettingsPage } from "@spectron/frontend/components/feature/account";
+import { aiActions } from "./lib/ai-actions";
 import {
   TaskList,
   NewIssueChat,
@@ -83,6 +84,7 @@ function Workspace({
   const workspace = useWorkspace(user.name, projects, user.id);
   const [integrationBusy, setIntegrationBusy] = useState(false);
   const [settingsId, setSettingsId] = useState<string | null>(null);
+  const [aiSettings, setAISettings] = useState(false);
   const settingsProject = projectState.projects.find(
     (item) => item.id === settingsId && item.state === "active",
   );
@@ -363,10 +365,10 @@ function Workspace({
         projects={projects}
         isFlow={workspace.isFlow}
         onToggleCollapse={() => workspace.setCollapsed((value) => !value)}
-        onSelectProject={(id) => { if (!integrationBusy) { setSettingsId(null); workspace.selectProject(id); } }}
-        onSelectFlow={() => { if (!integrationBusy) { setSettingsId(null); workspace.selectFlow(); } }}
+        onSelectProject={(id) => { if (!integrationBusy) { setAISettings(false); setSettingsId(null); workspace.selectProject(id); } }}
+        onSelectFlow={() => { if (!integrationBusy) { setAISettings(false); setSettingsId(null); workspace.selectFlow(); } }}
         onCreateProject={projectState.openCreate}
-        onProjectSettings={setSettingsId}
+        onProjectSettings={(id) => { setAISettings(false); setSettingsId(id); }}
         onArchiveProject={(id) => {
           void projectState
             .archive(id)
@@ -389,7 +391,9 @@ function Workspace({
             theme={workspace.theme}
             onThemeChange={workspace.setTheme}
             onAction={(action) => {
-              if (action === "signout") {
+              if (action === "ai") {
+                if (!integrationBusy) { setSettingsId(null); setAISettings(true); }
+              } else if (action === "signout") {
                 void authClient
                   .signOut()
                   .then(({ error }) => {
@@ -409,7 +413,9 @@ function Workspace({
           />
         }
       />
-      {settingsProject ? (
+      {aiSettings ? (
+        <AISettingsPage actions={aiActions} projects={projects} ownerId={user.id} onClose={() => setAISettings(false)} />
+      ) : settingsProject ? (
         <ProjectSettingsPage
           key={settingsProject.id}
           project={settingsProject}

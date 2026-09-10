@@ -3,7 +3,7 @@ import { Icon } from "../../ui/icon";
 import { Avatar } from "../../ui/avatar";
 import type { Theme } from "../../../hooks/use-theme";
 
-type AccountAction = "profile" | "language" | "signout";
+type AccountAction = "profile" | "language" | "signout" | "ai";
 export function AccountMenu({
   name,
   theme,
@@ -78,6 +78,10 @@ export function AccountMenu({
           >
             <Icon name="user" />
             <span>Profile</span>
+          </button>
+          <button onClick={() => openModal("ai")}>
+            <Icon name="user" />
+            <span>AI connections & agents</span>
           </button>
           <button onClick={() => openModal("language")}>
             <Icon name="globe" />

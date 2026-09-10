@@ -1,4 +1,6 @@
 export { createAuth } from "./auth";
+export { createAIService, type AIService } from "./ai";
+export type { AICredentialCheck } from "./ai-credentials";
 export type { Auth, AuthConfig, ResetEmail } from "./auth";
 export { createResetEmailSender, createInvitationEmailSender } from "./email";
 export { createProjectService, ProjectAccessError } from "./projects";
