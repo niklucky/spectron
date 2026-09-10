@@ -31,6 +31,7 @@ export type IssueSettings = {
   externalIdentities?: ExternalIdentitySummary[];
   jiraConnected?: boolean;
   jiraBaseUrl?: string | null;
+  trackerConnected?: boolean;
   fields?: ProjectField[];
   states: IssueState[];
   priorities: IssuePriority[];
@@ -58,6 +59,7 @@ export type IssueSummary = {
   finishAt?: string | null;
   externalId?: string | null;
   externalKey?: string | null;
+  trackerKey?: string | null;
   fieldValues?: FieldValues;
   id: string;
   projectId: string;

@@ -232,6 +232,11 @@ export const appRouter = t.router({
     reconcile: authenticated.input(exportScope.extend({ id: applicationId, remoteId: z.string().trim().min(1).max(200) })).mutation(({ ctx, input }) => ctx.exports.reconcile(ctx.userId, input.projectId, input.provider, input.id, input.remoteId)),
   }),
   tracker: t.router({
+    pushIssue: authenticated
+      .input(issueScope.extend({ id: applicationId }))
+      .mutation(({ ctx, input }) =>
+        ctx.tracker.run(ctx.userId, input.projectId, "push", false, { issueId: input.id }),
+      ),
     test: authenticated.input(issueScope.extend({
       token: z.string().trim().min(1).max(4096).optional(),
       organizationId: z.string().trim().regex(/^[a-zA-Z0-9_-]+$/).max(128),

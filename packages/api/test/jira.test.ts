@@ -1,3 +1,4 @@
+import { ISSUE_DESCRIPTION_MAX_LENGTH } from "@spectron/shared";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -398,8 +399,8 @@ test("Jira project fields, import, publishing, conflicts and retry safety", asyn
   await assert.rejects(jira.import("owner", p.id, "100"), /Jira title has 256 characters; Spectron allows 255/);
   remote.fields.summary = "T".repeat(153);
   const originalDescription = remote.fields.description;
-  remote.fields.description = textToAdf("D".repeat(100001));
-  await assert.rejects(jira.import("owner", p.id, "100"), /Jira description has 100001 characters; Spectron allows 100,000/);
+  remote.fields.description = textToAdf("D".repeat(ISSUE_DESCRIPTION_MAX_LENGTH + 1));
+  await assert.rejects(jira.import("owner", p.id, "100"), /Jira description has 1000001 characters; Spectron allows 1,000,000/);
   remote.fields.description = originalDescription;
   const autoImported = await jira.import("owner", p.id, "100");
   assert.equal((await issues.list("owner", p.id)).find(issue => issue.id === autoImported.id)?.title, remote.fields.summary);

@@ -1,0 +1,1 @@
+ALTER TABLE "integration_entities" ADD COLUMN "preserve_author" boolean DEFAULT false NOT NULL;

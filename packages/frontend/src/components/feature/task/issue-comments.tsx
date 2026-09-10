@@ -1,8 +1,9 @@
+import { formatDateTime } from "../../../lib/date-format";
 import { Menu } from "../../ui/menu";
 import { useAttachmentGallery } from "./attachment-gallery";
 import { UserInfo } from "../../ui/avatar";
 import { MessageComposer, MessageComposerActions } from "./message-composer";
-import { MessageMarkdown } from "../../ui/message-markdown";
+import { MessageMarkdown, type MarkdownMention } from "../../ui/message-markdown";
 import { Icon } from "../../ui/icon";
 import { useDictation } from "./use-dictation";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -221,7 +222,7 @@ export function CommentItem({
       <header>
         {!hideAuthor && <UserInfo name={row.authorName} />}{" "}
         <time dateTime={row.createdAt}>
-          {new Date(row.createdAt).toLocaleString()}
+          {formatDateTime(row.createdAt)}
         </time>
         {row.updatedAt !== row.createdAt && !row.deletedAt && (
           <small> · edited</small>
@@ -242,30 +243,13 @@ export function CommentItem({
       ) : (
         <>
           {row.body.some(n => n.type !== "text" || n.text.trim()) && <div className="comment-body">
-            {row.body.every((n) => n.type === "text") ? (
-              <AttachmentMarkdown files={row.attachments}
-                text={row.body
-                  .map((n) => (n.type === "text" ? n.text : ""))
-                  .join("").trim()}
-              />
-            ) : (
-              row.body.map((n, i) =>
-                n.type === "text" ? (
-                  <span key={i}>{n.text}</span>
-                ) : (
-                  <span
-                    key={i}
-                    className="comment-mention"
-                    title={
-                      context.members.find((m) => m.id === n.userId)?.email ??
-                      "Former project member"
-                    }
-                  >
-                    @{n.label}
-                  </span>
-                ),
-              )
-            )}
+            <AttachmentMarkdown files={row.attachments}
+              text={row.body.map((node, index) => node.type === "text" ? node.text : `[@${node.label.replace(/[\\`*_[\]<>]/g, "\\$&")}](#comment-mention-${index})`).join("")}
+              mentions={row.body.flatMap((node, index) => node.type === "mention" ? [{
+                href: `#comment-mention-${index}`, label: node.label,
+                title: context.members.find(member => member.id === node.userId)?.email ?? "Former project member",
+              }] : [])}
+            />
           </div>}
           <CommentMedia files={nonInlineFiles(row.body.map(n => n.type === "text" ? n.text : "").join(""), row.attachments)} />
         </>
@@ -283,6 +267,7 @@ export function CommentItem({
             <Button
               variant="ghost"
               disabled={busy}
+              aria-label="Send comment to Jira" title="Send comment to Jira"
               onClick={async () => {
                 setBusy(true);
                 setError("");
@@ -306,31 +291,34 @@ export function CommentItem({
                 }
               }}
             >
-              <Icon name="jira" size={14} /> Send comment to Jira
+              <Icon name="jira" size={14} /> <span className="message-action-label">Send comment to Jira</span>
             </Button>
           )}
         {!context.deleted && (
           <Button
             variant="ghost"
             disabled={busy || mode !== null}
+            aria-label="Reply" title="Reply"
             onClick={() => setMode("reply")}
           >
-            <Icon name="reply" size={16} /> Reply
+            <Icon name="reply" size={16} /> <span className="message-action-label">Reply</span>
           </Button>
         )}
         {row.canEdit && !context.deleted && (
           <Button
             variant="ghost"
             disabled={busy || mode !== null}
+            aria-label="Edit comment" title="Edit comment"
             onClick={() => setMode("edit")}
           >
-            <Icon name="edit" size={14} /> Edit comment
+            <Icon name="edit" size={14} /> <span className="message-action-label">Edit comment</span>
           </Button>
         )}
         {row.canDelete && !context.deleted && (
           <Button
             variant="ghost"
             disabled={busy || mode !== null}
+            aria-label="Delete comment" title="Delete comment"
             onClick={async () => {
               setBusy(true);
               setError("");
@@ -352,7 +340,7 @@ export function CommentItem({
               }
             }}
           >
-            <Icon name="close" size={14} /> Delete comment
+            <Icon name="close" size={14} /> <span className="message-action-label">Delete comment</span>
           </Button>
         )}
         {!flat && (row.replyCount > 0 || expanded) && (
@@ -417,9 +405,9 @@ export function CommentItem({
     </article>
   );
 }
-export function AttachmentMarkdown({ text, files }: { text: string; files: ProjectFileSummary[] }) {
+export function AttachmentMarkdown({ text, files, mentions }: { text: string; files: ProjectFileSummary[]; mentions?: MarkdownMention[] }) {
   const openGallery = useAttachmentGallery();
-  return <MessageMarkdown text={text} renderImage={image => {
+  return <MessageMarkdown text={text} mentions={mentions ?? []} renderImage={image => {
     const file = files.find(file => file.inlineExternalId === image.id && filePreviewKind(file.contentType) === "image");
     if (!file) return null;
     const url = projectFileURL(file.projectId, file.projectFileId);

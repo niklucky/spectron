@@ -285,10 +285,13 @@ export function createIssueService(db: Database) {
           .from(issue)
           .where(eq(issue.projectId, projectId))
           .orderBy(desc(issue.updatedAt), desc(issue.number));
+        const external = await tx
+          .select()
+          .from(schema.externalIdentity)
+          .where(eq(schema.externalIdentity.projectId, projectId));
         const userIds = [
           ...new Set(
-            rows
-              .flatMap((row) => [row.authorId, row.assigneeId])
+            [...rows.flatMap((row) => [row.authorId, row.assigneeId]), ...external.map(person => person.localUserId)]
               .filter((id): id is string => !!id),
           ),
         ];
@@ -298,10 +301,6 @@ export function createIssueService(db: Database) {
               .from(user)
               .where(inArray(user.id, userIds))
           : [];
-        const external = await tx
-          .select()
-          .from(schema.externalIdentity)
-          .where(eq(schema.externalIdentity.projectId, projectId));
         const identities = new Map<
           string,
           { name: string; image: string | null }
@@ -314,7 +313,7 @@ export function createIssueService(db: Database) {
             (person) =>
               [
                 person.id,
-                { name: person.displayName, image: person.avatarUrl },
+                { name: people.find(user => user.id === person.localUserId)?.name ?? person.displayName, image: people.find(user => user.id === person.localUserId)?.image ?? person.avatarUrl },
               ] as const,
           ),
         ]);
@@ -345,9 +344,17 @@ export function createIssueService(db: Database) {
           ]),
         );
         const links = await tx.select().from(issueTag).where(eq(issueTag.projectId, projectId));
+        const trackerLinks = await tx
+          .select({ localId: schema.integrationEntity.localId, key: schema.integrationEntity.externalKey })
+          .from(schema.integrationEntity)
+          .innerJoin(schema.projectIntegration, eq(schema.projectIntegration.id, schema.integrationEntity.integrationId))
+          .where(and(eq(schema.projectIntegration.projectId, projectId), eq(schema.integrationEntity.entityType, "issue")));
+        const trackerKeys = new Map(trackerLinks.map(link => [link.localId, link.key]));
         return rows.map((row) => ({
           tagIds: links.filter(link => link.issueId === row.id).map(link => link.tagId).sort(),
           ...summary(row, p.key),
+          authorId: row.authorId ?? external.find(person => person.id === row.externalAuthorId)?.localUserId ?? row.externalAuthorId!,
+          trackerKey: trackerKeys.get(row.id) ?? null,
           lastActivity: activity.get(row.id) ?? null,
           author:
             identities.get(row.authorId ?? row.externalAuthorId ?? "") ?? null,
@@ -384,10 +391,13 @@ export function createIssueService(db: Database) {
           .select({ id: schema.jiraIntegration.id, baseUrl: schema.jiraIntegration.baseUrl })
           .from(schema.jiraIntegration)
           .where(eq(schema.jiraIntegration.projectId, projectId));
+        const [tracker] = await tx.select({ id: schema.projectIntegration.id })
+          .from(schema.projectIntegration).where(eq(schema.projectIntegration.projectId, projectId));
         return {
           issueTypes: (await tx.select().from(issueType).where(eq(issueType.projectId, projectId)).orderBy(asc(issueType.position))).map(t => ({ ...t, deletedAt: t.deletedAt?.toISOString() ?? null })),
           tags: (await tx.select().from(tag).where(eq(tag.projectId, projectId)).orderBy(asc(tag.name))).map(t => ({ ...t, deletedAt: t.deletedAt?.toISOString() ?? null })),
           jiraConnected: !!integration,
+          trackerConnected: !!tracker,
           jiraBaseUrl: integration?.baseUrl ?? null,
           externalIdentities: await tx
             .select({

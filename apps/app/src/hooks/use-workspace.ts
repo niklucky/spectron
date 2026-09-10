@@ -1,6 +1,9 @@
 import { firstMessageFields } from "@spectron/shared";
 import {
   defaultTaskFilters,
+  matchesResolvedDatePeriod,
+  refreshDateClock,
+  resolveDatePeriod,
   type TaskFilters,
 } from "@spectron/frontend/components/feature/task";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -71,7 +74,14 @@ export function useWorkspace(
     }
   });
   const filterScope = route.isFlow ? "flow" : route.project;
-  const filter = filters[filterScope] ?? defaultTaskFilters;
+  const [filterClock, setFilterClock] = useState(() => new Date());
+  useEffect(() => {
+    const refresh = () => setFilterClock(previous => refreshDateClock(previous));
+    const timer = window.setInterval(refresh, 60_000);
+    window.addEventListener("focus", refresh);
+    return () => { window.clearInterval(timer); window.removeEventListener("focus", refresh); };
+  }, []);
+  const filter = resolveDatePeriod(filters[filterScope] ?? defaultTaskFilters, filterClock);
   const setFilter = (value: TaskFilters) =>
     setFilters((previous) => ({ ...previous, [filterScope]: value }));
   useEffect(() => {
@@ -184,7 +194,9 @@ export function useWorkspace(
     .filter(
       (i) =>
         (route.isFlow || i.projectId === route.project) &&
+        (!route.isFlow || !filter.projectIds?.length || filter.projectIds.includes(i.projectId)) &&
         (filter.deleted ? !!i.deletedAt : !i.deletedAt) &&
+        matchesResolvedDatePeriod(i, filter) &&
         (!filter.typeIds?.length || filter.typeIds.includes(i.issueTypeId ?? "")) &&
         (!filter.values.length ||
           filter.values.includes(

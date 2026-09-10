@@ -303,8 +303,9 @@ export const externalIdentity = pgTable(
       .notNull()
       .references(() => project.id, { onDelete: "restrict" }),
     integrationId: text("integration_id")
-      .notNull()
       .references(() => jiraIntegration.id, { onDelete: "restrict" }),
+    trackerIntegrationId: text("tracker_integration_id")
+      .references(() => projectIntegration.id, { onDelete: "restrict" }),
     externalId: text("external_id").notNull(),
     displayName: text("display_name").notNull(),
     avatarUrl: text("avatar_url"),
@@ -318,6 +319,8 @@ export const externalIdentity = pgTable(
       t.integrationId,
       t.externalId,
     ),
+    uniqueIndex("external_identities_tracker_unique").on(t.trackerIntegrationId, t.externalId),
+    check("external_identities_one_source", sql`num_nonnulls(${t.integrationId}, ${t.trackerIntegrationId}) = 1`),
   ],
 );
 
@@ -759,6 +762,7 @@ export const integrationEntity = pgTable(
     localId: text("local_id").notNull(),
     externalId: text("external_id").notNull(),
     externalKey: text("external_key"),
+    preserveAuthor: boolean("preserve_author").notNull().default(false),
     localUpdatedAt: timestamp("local_updated_at", {
       withTimezone: true,
     }).notNull(),

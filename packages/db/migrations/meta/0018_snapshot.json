@@ -1,6 +1,6 @@
 {
-  "id": "e6d2a7c5-53c7-4ca6-8047-9514c24736c5",
-  "prevId": "e19e92d8-9fa2-44bc-9cf3-426bfc702b78",
+  "id": "6b87aba3-0d15-4f38-827f-cd62e6ae465d",
+  "prevId": "e6d2a7c5-53c7-4ca6-8047-9514c24736c5",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -976,6 +976,13 @@
           "type": "text",
           "primaryKey": false,
           "notNull": false
+        },
+        "preserve_author": {
+          "name": "preserve_author",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
         },
         "local_updated_at": {
           "name": "local_updated_at",

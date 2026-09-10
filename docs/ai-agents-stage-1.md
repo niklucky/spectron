@@ -5,8 +5,10 @@ Implemented 2026-09-10. Open **account menu → AI connections & agents**.
 ## Setup
 
 1. Set `AI_CREDENTIAL_SECRET` in the API environment to a stable random secret of at least 32 characters, for example generated with `openssl rand -base64 32`. `.env.example` and `compose.yaml` include the setting. Keep it backed up separately from the database. AI credential creation fails clearly if it is absent; unrelated features remain available.
-2. Run `pnpm db:migrate` against the intended application database and restart the API. Migration `0017_milky_risque.sql` adds the four AI tables and enums. It has been applied to isolated test databases; this session did not migrate the existing development/application database.
+2. Run `pnpm db:migrate` against the intended application database and restart the API. Migration `0019_ai_agents.sql` adds the four AI tables and enums. Fresh database setup and upgrades from main have been verified, including repeated migration runs.
 3. Add a connection, then create agents from it. Use **Check connection** to test the saved key. Keys cannot be displayed again; leave the replacement field blank to retain the current key.
+
+The AI migration was renumbered from `0017_milky_risque.sql` to `0019_ai_agents.sql` when merging main, keeping its SQL and timestamp unchanged. Development databases that already applied the old AI migration must also apply main's missing `0017_soft_omega_red` and `0018_zippy_martin_li` migrations and record them in the migration ledger; the normal migrator skips their earlier timestamps. The local testing database was caught up transactionally with saved AI connections and agents preserved.
 
 ## Delivered behavior
 
@@ -60,4 +62,4 @@ API key rotation is an owner action in the connection editor. It replaces a sing
 - Live checks for Z.ai, DeepSeek, and Anthropic remain untested. Generation and tool use remain **untested for every provider/model/effort combination**. OpenCode is not installed or pinned in Stage 1. Stage 3 must pin its version, map the catalog to provider/model identifiers and effort options, and run controlled smoke checks before claiming execution compatibility.
 - Stage 2 is next: owner-managed GitHub and self-hosted GitLab connections, repositories, provider actor identity, and default branches. Do not add agent invocation or containers until Stage 3.
 
-Key files: `packages/backend/src/ai.ts`, `ai-credentials.ts`; `packages/shared/src/ai.ts`; `packages/api/src/trpc/router.ts`; `packages/frontend/src/components/feature/account/ai-settings.tsx`; `apps/app/src/lib/ai-actions.ts`; migration `0017_milky_risque.sql`; tests `packages/api/test/ai.test.ts`.
+Key files: `packages/backend/src/ai.ts`, `ai-credentials.ts`; `packages/shared/src/ai.ts`; `packages/api/src/trpc/router.ts`; `packages/frontend/src/components/feature/account/ai-settings.tsx`; `apps/app/src/lib/ai-actions.ts`; migration `0019_ai_agents.sql`; tests `packages/api/test/ai.test.ts`.

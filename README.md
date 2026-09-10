@@ -239,6 +239,10 @@ Human duration input reads numeric groups: one means minutes, two mean hours/min
 
 ## Chat and Issue views
 
+Comments and descriptions render Markdown, including fenced code blocks, quotes, links, lists and tables. Imported Tracker Markdown is preserved in storage and rendered on display; existing comments do not need reimporting. Chat message actions appear as icon buttons beside the bubble on desktop hover or keyboard focus, and remain visible below the message on smaller or touch screens. Run `pnpm test:markdown` for renderer regressions.
+
+Connected Yandex Tracker issues show their external key and link in the issue header. Project owners can use **Sync issue to Yandex Tracker** (or **Create in Yandex Tracker**) to publish the selected issue and its comments using the existing conflict checks.
+
 The issue header offers **Chat | Issue**. Issue retains the existing details, attachments, worklogs, threaded comments and history. Chat presents the same data as a conversation and chronological activity messages; it creates no duplicate comment or worklog records. Switching views preserves open drafts for the current issue and remembers the selection for the browser session. A new session defaults to Chat.
 
 Chat includes a current issue summary, issue changes, editable comment cards, reply previews, file previews/downloads, and worklog events. Deleted comments remain placeholders; their original content remains in audit messages, as in Issue history. Comment cards show current content once at creation; edits/deletion appear as separate events. Use Files for issue attachments, Log work for a manual entry, and Edit issue to open the existing editor. The new worklog duration field starts empty.

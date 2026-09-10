@@ -64,6 +64,6 @@ export function IntegrationOverview({ owner, load, onSelect }: {
 export function IntegrationLogo({ provider }: { provider: string }) {
   if (provider === "github") return <span className="integration-logo" aria-hidden="true"><img className="integration-logo-light" src="/assets/integrations/github-black.svg" alt="" /><img className="integration-logo-dark" src="/assets/integrations/github-white.svg" alt="" /></span>;
   if (provider === "gitlab") return <span className="integration-logo integration-logo-gitlab" aria-hidden="true"><img src="/assets/integrations/gitlab.svg" alt="" /></span>;
-  if (provider === "jira") return <img className="integration-logo" src={`/assets/integrations/${provider}.svg`} alt="" />;
+  if (provider === "jira" || provider === "yandex") return <img className="integration-logo" src={`/assets/integrations/${provider}.svg`} alt="" />;
   return <span className="integration-mark" aria-hidden="true">Y</span>;
 }
