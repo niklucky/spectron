@@ -241,6 +241,16 @@ function Workspace({
         await workspace.refresh();
         return result;
       },
+      runs: {
+        available: (projectId: string) => trpc.ai.available.query({ projectId }),
+        repositories: (projectId: string) => trpc.git.repositories.query({ projectId }),
+        list: (input: import('@spectron/shared').AgentRunScope) => trpc.runs.list.query(input),
+        invoke: (input: import('@spectron/shared').AgentInvocation) => trpc.runs.invoke.mutate(input),
+        stop: (input: import('@spectron/shared').AgentRunScope & { id: string }) => trpc.runs.stop.mutate(input),
+        instruct: (input: import('@spectron/shared').AgentRunScope & { id: string; requestId: string; message: string }) => trpc.runs.instruct.mutate(input),
+        previewRewrite: (input: import('@spectron/shared').AgentRunScope & { id: string }) => trpc.runs.previewRewrite.query(input),
+        apply: async (input: import('@spectron/shared').AgentRunScope & { id: string; expectedUpdatedAt?: string }) => { await trpc.runs.applyRewrite.mutate(input); await workspace.refresh(); },
+      },
       activity: (input: {
         projectId: string;
         issueId: string;

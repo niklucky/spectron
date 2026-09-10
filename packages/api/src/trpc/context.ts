@@ -1,5 +1,6 @@
 import type {
   Auth,
+  AgentRunService,
   AIService,
   GitService,
   ExportService,
@@ -17,6 +18,7 @@ import type {
 
 export type Context = {
   userId: string | null;
+  runs: AgentRunService;
   ai: AIService;
   git: GitService;
   exports: ExportService;
@@ -47,11 +49,13 @@ export async function createContext(
   exports: ExportService,
   ai: AIService,
   git: GitService,
+  runs: AgentRunService,
 ): Promise<Context> {
   const session = await auth.api.getSession({ headers: request.headers });
   return {
     userId: session?.user.id || null,
     ai,
+    runs,
     git,
     tracker,
     exports,

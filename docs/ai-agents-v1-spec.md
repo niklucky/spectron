@@ -1,6 +1,6 @@
 # AI agents and Git workflow — v1 specification
 
-Status: Stages 1–2 implemented; Stages 3–5 not started. See [Stage 1 notes](ai-agents-stage-1.md) and [Stage 2 notes](ai-agents-stage-2.md).
+Status: Stages 1–3 implemented; Stages 4–5 not started. See [Stage 1 notes](ai-agents-stage-1.md), [Stage 2 notes](ai-agents-stage-2.md), and [Stage 3 notes](ai-agents-stage-3.md).
 Last updated: 2026-09-10.
 
 This document captures the decisions made with the project owner and is the handoff for future implementation sessions. The stages below are ordered, independently reviewable increments. Update their status and continuation notes as work lands. Technical suggestions are identified separately from agreed behavior.
@@ -293,7 +293,7 @@ Useful official references, to recheck at implementation time:
 
 ## 12. Implementation stages and acceptance criteria
 
-**Stages 1–2 are implemented**; Stages 3–5 are **not started**. Each stage should include appropriate migrations, browser-safe contracts, UI, authorization, error states, and focused verification. Do not implement later stages merely to make an earlier stage look complete.
+**Stages 1–3 are implemented**; Stages 4–5 are **not started**. Each stage should include appropriate migrations, browser-safe contracts, UI, authorization, error states, and focused verification. Do not implement later stages merely to make an earlier stage look complete.
 
 ### Stage 1 — AI connections and agents
 
@@ -321,12 +321,12 @@ Acceptance: connect each provider, list/select only repositories available throu
 
 Depends on Stages 1–2. First end-to-end deliverable: mention an agent, inspect code, and receive a planning/discussion result in chat.
 
-- [ ] Agent/command pickers and repository chips in the existing composer.
-- [ ] Durable runs, context snapshots, worker, simple container provisioning, and temporary configuration.
-- [ ] Read-only discussion, review-issue, rewrite-issue with Apply, and create-plan.
-- [ ] Run cards, brief streamed updates, expandable results/logs, and Needs input/resume.
-- [ ] Result/workspace persistence, idle cleanup, Stop, and issue cancellation/closure cleanup.
-- [ ] Explicit same-agent steering, with queued/delivered state based on verified OpenCode behavior.
+- [x] Agent/command pickers and repository chips in the existing composer.
+- [x] Durable runs, context snapshots, worker, simple container provisioning, and temporary configuration.
+- [x] Read-only discussion, review-issue, rewrite-issue with Apply, and create-plan.
+- [x] Run cards, brief streamed updates, expandable results/logs, and Needs input/resume.
+- [x] Result/workspace persistence, idle cleanup, Stop, and issue cancellation/closure cleanup.
+- [x] Explicit same-agent steering, with queued/delivered state based on verified OpenCode behavior.
 
 Acceptance: a repository-backed discussion survives page reloads; only explicit agent actions invoke work; required context is supplied; unsupported attachments are disclosed; read-only sources remain unchanged; cancelled/closed issues cannot launch queued work; active work is not killed by the idle policy. Demonstrate continuation after container removal and truthful partial-failure results. No environment configuration UI is required.
 
@@ -375,13 +375,13 @@ Do not resolve these by adding autonomous babysitting or a repository environmen
 
 ## 14. Next-session handoff
 
-Current state: Stages 1–2 are implemented. Account AI connections/agents and project GitHub/self-hosted GitLab connections/repositories are available. See [Stage 1 notes](ai-agents-stage-1.md) and [Stage 2 notes](ai-agents-stage-2.md) for setup, verification, and live-integration limits.
+Current state: Stages 1–3 are implemented. Account agents, project Git integrations, repository-backed chat commands, durable runs, OpenCode containers, results, rewrite Apply, and stop/resume/continuation are available. See [Stage 3 notes](ai-agents-stage-3.md) for setup, verified behavior, and live-provider limits. The local server/worker is enabled, and the project owner confirmed that a live issue review succeeded.
 
-Recommended next action: **implement Stage 3 — Chat invocation, context, and basic execution**. Read this specification and both implementation notes, inspect current chat/composer and authorization patterns, and implement that stage end to end. Keep PR/MR writes and later-stage scope in this document.
+Recommended next action after acceptance/review: **implement Stage 4 — Implementation and draft PR/MR creation**. Keep reviews, provider discussions, takeover, and merge controls in Stage 5.
 
 Suggested continuation request:
 
-> Read `docs/ai-agents-v1-spec.md` and the Stage 1/2 implementation notes, then implement Stage 3. Preserve the agreed v1 scope. Inspect the current repository, verify the implementation, and update the stage checkboxes and continuation notes with completed work and remaining limits.
+> Read `docs/ai-agents-v1-spec.md` and the Stage 3 implementation notes, then implement Stage 4. Preserve the agreed v1 scope. Add writable recoverable workspaces, attributed branches/commits, pushes, automatic draft PR/MR creation and continuation, and durable reconciliation. Verify both provider boundaries and update the handoff notes.
 
 After each implementation session, record:
 
@@ -401,3 +401,7 @@ After each implementation session, record:
 - 2026-09-10: Implemented Stage 2: owner-managed encrypted GitHub/self-hosted GitLab connections, identity checks, explicit commit author fields, provider repository discovery and branch validation, mixed-provider selection, project/default-target settings, scoped metadata/authorization, and provider adapter boundaries. Migration `0020_git_connections.sql` applied locally. Isolated-database regressions, typechecks, builds, and browser settings checks passed. Real provider tokens, clone/push operations, and self-hosted connectivity remain untested. Next: Stage 3. Details: [Stage 2 notes](ai-agents-stage-2.md).
 
 - Stage 2 follow-up: local VPN DNS substituted proxy addresses for GitHub and GitLab. Added `GIT_PROVIDER_DNS=cloudflare` with shared encrypted DNS resolution, preserved network/TLS restrictions, and enabled it locally. Identity checks now pass for GitHub and both configured self-hosted GitLab instances. Repository operations and remote writes remain separately unverified.
+
+- 2026-09-10: Implemented Stage 3 end to end. Migration `0021_agent_runs.sql`; agent/command composer controls and repository chips; durable snapshots, inputs and run cards; OpenCode 1.18.30 Docker worker with read-only source, host-side AI credential proxy, results, rewrite Apply, queued steering, stop/closure cleanup, idle retention and restored continuation. Isolated database/API tests, real Docker/OpenCode tests with local provider fixtures, browser component walkthroughs, and a real selected GitLab clone were exercised. A live OpenCode connection test succeeded after fixing POST forwarding in the credential proxy; the project owner also confirmed a successful issue review. Next: PR review, then Stage 4. Details: [Stage 3 notes](ai-agents-stage-3.md).
+
+- Stage 3 PR review follow-up: guarded unacknowledged steering and capped consecutive turns; preserved successful results during closure cleanup (migration `0022_agent_run_closure.sql`); bounded history and model-specific prompt capacity; isolated run containers with networking disabled and a loopback gateway over Docker process I/O; added rewrite comparison/revision recovery; reduced idle polling and authorization frequency; distinguished interruptions from user stops. All 22 Stage 3 tests, workspace typechecks, and production builds passed; isolated live model generation and browser comparison/Apply were verified.

@@ -1,3 +1,5 @@
+import { AgentRunCard } from "./agent-run-card";
+import { agentRunPollDelay, type AgentRunView } from "@spectron/shared";
 import { formatDateTime } from "../../../lib/date-format";
 import { AttachmentMarkdown, nonInlineFiles } from "./issue-comments";
 import { MessageMarkdown } from "../../ui/message-markdown";
@@ -50,6 +52,8 @@ export function IssueChat({
   onSelect: (id: string, projectId: string) => void;
   valueLabel: (field: string, value: unknown) => string;
 }) {
+  const [runs, setRuns] = useState<AgentRunView[]>([]);
+  const [runError, setRunError] = useState("");
   const [events, setEvents] = useState<IssueActivityEvent[]>([]),
     [cursor, setCursor] = useState<string | null>(null),
     [loading, setLoading] = useState(true),
@@ -57,6 +61,49 @@ export function IssueChat({
     [reload, setReload] = useState(0),
     [composing, setComposing] = useState(true),
     [composerKey, setComposerKey] = useState(0);
+  useEffect(() => {
+    if (!active || !actions.runs) return;
+    let alive = true;
+    let timer: number | undefined;
+    let refreshing = false;
+    const refresh = async () => {
+      if (refreshing) return;
+      refreshing = true;
+      try {
+        const rows = await actions.runs!.list({
+          projectId: issue.projectId,
+          issueId: issue.id,
+        });
+        if (alive) {
+          setRuns(rows);
+          setRunError("");
+          const delay = agentRunPollDelay(rows);
+          if (delay !== null)
+            timer = window.setTimeout(() => void refresh(), delay);
+        }
+      } catch (e) {
+        if (alive) {
+          setRunError(
+            e instanceof Error ? e.message : "Could not load agent runs.",
+          );
+          timer = window.setTimeout(() => void refresh(), 30000);
+        }
+      } finally {
+        refreshing = false;
+      }
+    };
+    void refresh();
+    const refocus = () => {
+      window.clearTimeout(timer);
+      void refresh();
+    };
+    window.addEventListener("focus", refocus);
+    return () => {
+      alive = false;
+      window.clearTimeout(timer);
+      window.removeEventListener("focus", refocus);
+    };
+  }, [active, actions.runs, issue.id, issue.projectId, revision, reload]);
   const [expandedHistory, setExpandedHistory] = useState<Set<string>>(
     new Set(),
   );
@@ -68,15 +115,30 @@ export function IssueChat({
     setAttachments([]);
     setAttachmentError("");
     void actions.files.list(issue.projectId, issue.id).then(
-      (files) => { if (alive) setAttachments(files); },
+      (files) => {
+        if (alive) setAttachments(files);
+      },
       (cause) => {
-        if (alive) setAttachmentError(
-          cause instanceof Error ? cause.message : "Could not load attachments.",
-        );
+        if (alive)
+          setAttachmentError(
+            cause instanceof Error
+              ? cause.message
+              : "Could not load attachments.",
+          );
       },
     );
-    return () => { alive = false; };
-  }, [actions.files, issue.projectId, issue.id, issue.updatedAt, active, revision, reload]);
+    return () => {
+      alive = false;
+    };
+  }, [
+    actions.files,
+    issue.projectId,
+    issue.id,
+    issue.updatedAt,
+    active,
+    revision,
+    reload,
+  ]);
   const composer = useRef<HTMLDivElement>(null);
   const stream = useRef<HTMLDivElement>(null),
     generation = useRef(0),
@@ -139,8 +201,16 @@ export function IssueChat({
     reload,
   ]);
   useEffect(() => {
-    if (!active || !events.some(e => e.comment?.jiraSync === "pending" || e.comment?.jiraSync === "syncing")) return;
-    const timer = window.setTimeout(() => setReload(n => n + 1), 3000);
+    if (
+      !active ||
+      !events.some(
+        (e) =>
+          e.comment?.jiraSync === "pending" ||
+          e.comment?.jiraSync === "syncing",
+      )
+    )
+      return;
+    const timer = window.setTimeout(() => setReload((n) => n + 1), 3000);
     return () => window.clearTimeout(timer);
   }, [active, events]);
   useLayoutEffect(() => {
@@ -148,7 +218,10 @@ export function IssueChat({
     const messages = stream.current;
     if (!element || !messages) return;
     const resize = () => {
-      messages.style.setProperty("--composer-height", `${element.getBoundingClientRect().height}px`);
+      messages.style.setProperty(
+        "--composer-height",
+        `${element.getBoundingClientRect().height}px`,
+      );
     };
     resize();
     const observer = new ResizeObserver(resize);
@@ -182,9 +255,26 @@ export function IssueChat({
   };
   const descriptionFiles = attachments.filter((f) => f.inDescription);
   const timeline = [
-    ...events.map((event) => ({ event, file: null as IssueAttachmentSummary | null, date: event.comment?.createdAt ?? event.entry.createdAt })),
-    ...attachments.filter((f) => !f.inDescription && !f.commentIds?.length)
-      .map((file) => ({ event: null, file, date: file.attachedAt ?? file.createdAt })),
+    ...events.map((event) => ({
+      run: null as AgentRunView | null,
+      event,
+      file: null as IssueAttachmentSummary | null,
+      date: event.comment?.createdAt ?? event.entry.createdAt,
+    })),
+    ...attachments
+      .filter((f) => !f.inDescription && !f.commentIds?.length)
+      .map((file) => ({
+        run: null as AgentRunView | null,
+        event: null,
+        file,
+        date: file.attachedAt ?? file.createdAt,
+      })),
+    ...runs.map((run) => ({
+      run,
+      event: null,
+      file: null,
+      date: run.createdAt,
+    })),
   ].sort((a, b) => a.date.localeCompare(b.date));
   const names: Record<string, string> = {
     key: "Issue",
@@ -226,9 +316,16 @@ export function IssueChat({
                 />
               )}
               {issue.description.trim() && (
-                <AttachmentMarkdown text={issue.description.trim()} files={descriptionFiles} />
+                <AttachmentMarkdown
+                  text={issue.description.trim()}
+                  files={descriptionFiles}
+                />
               )}
-              {descriptionFiles.length > 0 && <CommentMedia files={nonInlineFiles(issue.description, descriptionFiles)} />}
+              {descriptionFiles.length > 0 && (
+                <CommentMedia
+                  files={nonInlineFiles(issue.description, descriptionFiles)}
+                />
+              )}
               <time dateTime={issue.createdAt}>
                 {formatDateTime(issue.createdAt)}
               </time>
@@ -276,16 +373,43 @@ export function IssueChat({
             Load earlier activity
           </Button>
         )}
-        {timeline.map(({ event, file }) => {
-          if (file) return (
-            <article className="chat-message-row" key={`file-${file.attachmentId}`}>
-              <div className="chat-conversation-message initial-description">
-                <UserInfo name={valueLabel("authorId", file.uploadedBy)} />
-                <CommentMedia files={[file]} />
-                <time dateTime={file.attachedAt ?? file.createdAt}>{formatDateTime(file.attachedAt ?? file.createdAt)}</time>
-              </div>
-            </article>
-          );
+        {runError && <p role="alert">{runError}</p>}
+        {timeline.map(({ event, file, run }) => {
+          if (run && actions.runs)
+            return (
+              <AgentRunCard
+                key={run.id}
+                run={run}
+                actions={actions.runs}
+                changed={() => {
+                  setReload((n) => n + 1);
+                  changed();
+                }}
+                closed={
+                  !!issue.deletedAt ||
+                  settings.states.some(
+                    (s) =>
+                      s.id === issue.stateId &&
+                      ["finished", "cancelled"].includes(s.trigger),
+                  )
+                }
+              />
+            );
+          if (file)
+            return (
+              <article
+                className="chat-message-row"
+                key={`file-${file.attachmentId}`}
+              >
+                <div className="chat-conversation-message initial-description">
+                  <UserInfo name={valueLabel("authorId", file.uploadedBy)} />
+                  <CommentMedia files={[file]} />
+                  <time dateTime={file.attachedAt ?? file.createdAt}>
+                    {formatDateTime(file.attachedAt ?? file.createdAt)}
+                  </time>
+                </div>
+              </article>
+            );
           if (!event) return null;
           const e = event.entry;
           if (event.comment)
@@ -303,10 +427,20 @@ export function IssueChat({
                   )}
                   <CommentItem
                     context={context}
-                    row={{ ...event.comment, attachments: [
-                      ...event.comment.attachments,
-                      ...attachments.filter((f) => !event.comment!.deletedAt && f.commentIds?.includes(event.comment!.id) && !event.comment!.attachments.some((a) => a.projectFileId === f.projectFileId)),
-                    ] }}
+                    row={{
+                      ...event.comment,
+                      attachments: [
+                        ...event.comment.attachments,
+                        ...attachments.filter(
+                          (f) =>
+                            !event.comment!.deletedAt &&
+                            f.commentIds?.includes(event.comment!.id) &&
+                            !event.comment!.attachments.some(
+                              (a) => a.projectFileId === f.projectFileId,
+                            ),
+                        ),
+                      ],
+                    }}
                     depth={0}
                     flat
                     hideAuthor={
@@ -449,6 +583,7 @@ export function IssueChat({
               }}
               parentId={null}
               chat
+              agentActions={actions.runs}
               onClose={() => {
                 setComposing(true);
                 setComposerKey((n) => n + 1);

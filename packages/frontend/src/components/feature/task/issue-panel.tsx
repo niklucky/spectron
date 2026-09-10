@@ -25,6 +25,7 @@ import { commentText, type CommentBody } from "@spectron/shared";
 import { StatusDot } from "./status-dot";
 
 export type IssuePanelActions = {
+  runs?: import('@spectron/shared').AgentRunActions;
   canCreateTag?: (projectId: string) => boolean;
   createTag?: (projectId: string, name: string) => Promise<string>;
   canPublishTracker?: (projectId: string) => boolean;

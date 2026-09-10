@@ -4,6 +4,7 @@ import { serve } from "@hono/node-server";
 import { createDatabase, getDatabaseURL } from "@spectron/db";
 import {
   createAuth,
+  createAgentWorker, createDockerAgentRuntime, createGitAdapterFactory, createGitTransport,
   createExportService,
   createTrackerService,
   createFileService,
@@ -68,6 +69,14 @@ const apiOptions = {
   sendInvitationEmail: createInvitationEmailSender(RESEND_API_KEY, EMAIL_FROM),
 };
 const api = createAPI(auth, apiOptions);
+const stopAgents = process.env.AGENT_RUNNER_ENABLED === 'true'
+  ? createAgentWorker(db, createFileService(db, apiOptions.fileStorage), createDockerAgentRuntime({
+      root: process.env.AGENT_WORKSPACES_ROOT || fileURLToPath(new URL('../../../data/agent-workspaces', import.meta.url)),
+      image: process.env.AGENT_RUNNER_IMAGE || 'spectron-agent:1.18.30', dns: apiOptions.gitProviderDNS,
+      privateOrigins: apiOptions.gitlabAllowedPrivateOrigins,
+    }), { ...apiOptions, gitFactory: createGitAdapterFactory(createGitTransport(apiOptions.gitlabAllowedPrivateOrigins, { dns: apiOptions.gitProviderDNS })), idleHours: Number(process.env.AGENT_IDLE_HOURS || 3) }).start()
+  : async () => {};
+
 const stopScheduler = createJiraScheduler(
   db,
   createJiraService(
@@ -86,7 +95,7 @@ const server = serve(
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.once(signal, () => {
     server.close(() => {
-      void Promise.all([stopScheduler(), stopExports()])
+      void Promise.all([stopScheduler(), stopExports(), stopAgents()])
         .then(() => pool.end())
         .then(() => process.exit(0));
     });
