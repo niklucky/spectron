@@ -15,6 +15,7 @@ import {
 import {
   applicationIdPattern,
   aiProviders,
+  gitProviders,
   aiEfforts,
   aiCatalog,
   exportActions,
@@ -107,6 +108,10 @@ const applicationId = z.union([
 ]);
 const projectId = z.object({ id: applicationId }).strict();
 
+const gitProject = z.object({ projectId: applicationId }).strict();
+const gitRef = gitProject.extend({ id: applicationId, revision: z.number().int().positive() });
+const gitName = z.string().trim().min(1).max(255);
+const gitToken = z.string().min(1).max(4096).regex(/^[^\s\x00-\x1f\x7f]+$/, "Enter a token without whitespace.");
 const aiName = z.string().trim().min(1).max(80);
 const aiKey = z.string().min(1).max(4096).regex(/^[^\s\x00-\x1f\x7f]+$/, "Enter an API key without whitespace.");
 const aiRevision = z.object({ id: applicationId, revision: z.number().int().positive() }).strict();
@@ -207,6 +212,22 @@ const trackerMapping = z.record(
 );
 const exportScope = z.object({ projectId: applicationId, provider: z.enum(["jira", "tracker"]) });
 export const appRouter = t.router({
+  git: t.router({
+    connections: authenticated.input(gitProject).query(({ ctx, input }) => ctx.git.connections(ctx.userId, input.projectId)),
+    createConnection: authenticated.input(gitProject.extend({ name: gitName, provider: z.enum(gitProviders), baseURL: z.string().trim().min(1).max(2048), token: gitToken }))
+      .mutation(({ ctx, input }) => ctx.git.createConnection(ctx.userId, input.projectId, input)),
+    updateConnection: authenticated.input(gitRef.extend({ name: gitName, token: gitToken.optional(), commitAuthorName: z.string().trim().max(255), commitAuthorEmail: z.string().trim().max(254) }))
+      .mutation(({ ctx, input }) => ctx.git.updateConnection(ctx.userId, input)),
+    checkConnection: authenticated.input(gitRef).mutation(({ ctx, input }) => ctx.git.checkConnection(ctx.userId, input)),
+    deleteConnection: authenticated.input(gitRef).mutation(({ ctx, input }) => ctx.git.deleteConnection(ctx.userId, input)),
+    browse: authenticated.input(gitRef.extend({ page: z.number().int().min(1).max(10000).default(1) })).query(({ ctx, input }) => ctx.git.browse(ctx.userId, input)),
+    repositories: authenticated.input(gitProject).query(({ ctx, input }) => ctx.git.repositories(ctx.userId, input.projectId)),
+    addRepository: authenticated.input(gitRef.extend({ fullName: z.string().min(1).max(1024), externalId: z.string().regex(/^[1-9]\d{0,19}$/) }))
+      .mutation(({ ctx, input }) => ctx.git.addRepository(ctx.userId, input)),
+    updateRepository: authenticated.input(gitRef.extend({ targetBranch: z.string().min(1).max(255), isDefault: z.boolean() }))
+      .mutation(({ ctx, input }) => ctx.git.updateRepository(ctx.userId, input)),
+    removeRepository: authenticated.input(gitRef).mutation(({ ctx, input }) => ctx.git.removeRepository(ctx.userId, input)),
+  }),
   ai: t.router({
     catalog: authenticated.query(() => aiCatalog),
     connections: authenticated.query(({ ctx }) => ctx.ai.connections(ctx.userId)),

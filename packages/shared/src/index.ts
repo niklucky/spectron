@@ -22,3 +22,4 @@ export { matchTrackerMappings, trackerFieldType } from "./tracker-mappings";
 export * from "./export-sync";
 
 export { trackerImages } from "./tracker-images";
+export * from "./git";

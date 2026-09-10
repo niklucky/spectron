@@ -5,6 +5,10 @@ import type { HttpBindings } from "@hono/node-server";
 import {
   createProjectService,
   createAIService,
+  createGitService,
+  createGitAdapterFactory,
+  createGitTransport,
+  type GitAdapterFactory,
   type AICredentialCheck,
   createExportService,
   createTrackerService,
@@ -36,6 +40,9 @@ export function createAPI(
     integrationSecret,
     aiSecret,
     aiCredentialCheck,
+    gitAdapterFactory,
+    gitlabAllowedPrivateOrigins = [],
+    gitProviderDNS = "system",
     sendInvitationEmail = async () => {
       throw new Error("Invitation email is unavailable.");
     },
@@ -47,12 +54,16 @@ export function createAPI(
     integrationSecret?: string;
     aiSecret?: string;
     aiCredentialCheck?: AICredentialCheck;
+    gitAdapterFactory?: GitAdapterFactory;
+    gitlabAllowedPrivateOrigins?: string[];
+    gitProviderDNS?: "system" | "cloudflare";
     sendInvitationEmail?: InvitationConfig["sendInvitationEmail"];
   },
 ) {
 
   const activity = createActivityService(db);
   const ai = createAIService(db, aiSecret, aiCredentialCheck);
+  const git = createGitService(db, integrationSecret, gitAdapterFactory ?? createGitAdapterFactory(createGitTransport(gitlabAllowedPrivateOrigins, { dns: gitProviderDNS })));
   const worklogs = createWorklogService(db);
   const comments = createCommentService(db);
   const files = createFileService(db, fileStorage);
@@ -119,6 +130,7 @@ export function createAPI(
           tracker,
           exports,
           ai,
+          git,
         ),
     });
   });

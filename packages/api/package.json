@@ -21,7 +21,8 @@
     "test:activity": "tsx --test test/activity.test.ts",
     "test:jira": "tsx --test test/jira.test.ts",
     "test:integrations": "node --import tsx --test test/tracker.test.ts test/jira.test.ts test/export-sync.test.ts",
-    "test:exports": "node --import tsx --test test/export-sync.test.ts"
+    "test:exports": "node --import tsx --test test/export-sync.test.ts",
+    "test:git": "tsx --test test/git.test.ts"
   },
   "dependencies": {
     "@spectron/backend": "workspace:*",

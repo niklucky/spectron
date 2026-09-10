@@ -810,3 +810,42 @@ export const exportWorklog = pgTable("export_worklogs", {
   pendingCreate: boolean("pending_create").default(false).notNull(),
   ...dates(),
 }, t => [uniqueIndex("export_worklogs_local").on(t.projectId, t.provider, t.localId), uniqueIndex("export_worklogs_remote").on(t.projectId, t.provider, t.externalId)]);
+
+// Git connections are project scoped; Tracker's project_integrations is separate.
+export const gitConnection = pgTable("git_connections", {
+  id: text("id").$defaultFn(createId).primaryKey(),
+  projectId: text("project_id").notNull().references(() => project.id, { onDelete: "cascade" }),
+  creatorId: text("creator_id").notNull().references(() => user.id, { onDelete: "restrict" }),
+  name: text("name").notNull(),
+  provider: text("provider").$type<import("@spectron/shared").GitProvider>().notNull(),
+  baseURL: text("base_url").notNull(),
+  encryptedToken: text("encrypted_token").notNull(),
+  revision: integer("revision").default(1).notNull(),
+  actor: jsonb("actor").$type<import("@spectron/shared").GitActor>(),
+  commitAuthorName: text("commit_author_name").default("").notNull(),
+  commitAuthorEmail: text("commit_author_email").default("").notNull(),
+  checkStatus: text("check_status").$type<"untested" | "passed" | "failed">().default("untested").notNull(),
+  checkedAt: timestamp("checked_at", { withTimezone: true }),
+  ...dates(),
+}, t => [uniqueIndex("git_connections_project_id_unique").on(t.projectId, t.id),
+  check("git_connections_provider", sql`${t.provider} IN ('github', 'gitlab')`)]);
+
+export const gitRepository = pgTable("git_repositories", {
+  id: text("id").$defaultFn(createId).primaryKey(),
+  projectId: text("project_id").notNull().references(() => project.id, { onDelete: "cascade" }),
+  connectionId: text("connection_id").notNull(),
+  externalId: text("external_id").notNull(),
+  fullName: text("full_name").notNull(),
+  webURL: text("web_url").notNull(),
+  cloneURL: text("clone_url").notNull(),
+  defaultBranch: text("default_branch"),
+  targetBranch: text("target_branch").notNull(),
+  archived: boolean("archived").default(false).notNull(),
+  isDefault: boolean("is_default").default(false).notNull(),
+  revision: integer("revision").default(1).notNull(),
+  ...dates(),
+}, t => [
+  foreignKey({ columns: [t.projectId, t.connectionId], foreignColumns: [gitConnection.projectId, gitConnection.id], name: "git_repositories_connection_project_fk" }).onDelete("restrict"),
+  uniqueIndex("git_repositories_remote_unique").on(t.connectionId, t.externalId),
+  uniqueIndex("git_repositories_default_unique").on(t.projectId).where(sql`${t.isDefault} = true`),
+]);

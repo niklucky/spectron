@@ -1,6 +1,6 @@
 # AI agents and Git workflow — v1 specification
 
-Status: Stage 1 implemented; Stages 2–5 not started. See [Stage 1 implementation notes](ai-agents-stage-1.md).
+Status: Stages 1–2 implemented; Stages 3–5 not started. See [Stage 1 notes](ai-agents-stage-1.md) and [Stage 2 notes](ai-agents-stage-2.md).
 Last updated: 2026-09-10.
 
 This document captures the decisions made with the project owner and is the handoff for future implementation sessions. The stages below are ordered, independently reviewable increments. Update their status and continuation notes as work lands. Technical suggestions are identified separately from agreed behavior.
@@ -293,7 +293,7 @@ Useful official references, to recheck at implementation time:
 
 ## 12. Implementation stages and acceptance criteria
 
-**Stage 1 is implemented**; Stages 2–5 are **not started**. Each stage should include appropriate migrations, browser-safe contracts, UI, authorization, error states, and focused verification. Do not implement later stages merely to make an earlier stage look complete.
+**Stages 1–2 are implemented**; Stages 3–5 are **not started**. Each stage should include appropriate migrations, browser-safe contracts, UI, authorization, error states, and focused verification. Do not implement later stages merely to make an earlier stage look complete.
 
 ### Stage 1 — AI connections and agents
 
@@ -309,11 +309,11 @@ Acceptance: create several agents from one connection; rotate its key once; owne
 
 Depends on existing project membership; can build on Stage 1's credential patterns.
 
-- [ ] Owner-managed GitHub and self-hosted GitLab token connections, connection tests, and repository selection.
-- [ ] Multiple repositories and mixed providers per project; project default repository and per-repository target branch.
-- [ ] Provider actor identity and explicit commit author configuration.
-- [ ] Repository authorization and browser-safe metadata contracts.
-- [ ] Provider adapter boundaries for later branches, PR/MR actions, and synchronization.
+- [x] Owner-managed GitHub and self-hosted GitLab token connections, connection tests, and repository selection.
+- [x] Multiple repositories and mixed providers per project; project default repository and per-repository target branch.
+- [x] Provider actor identity and explicit commit author configuration.
+- [x] Repository authorization and browser-safe metadata contracts.
+- [x] Provider adapter boundaries for later branches, PR/MR actions, and synchronization.
 
 Acceptance: connect each provider, list/select only repositories available through the connection, persist defaults, and prevent non-owner configuration changes and cross-project selection. Handle expired tokens and unreachable GitLab instances. Do not expose tokens in clone URLs shown to users or in logs.
 
@@ -375,13 +375,13 @@ Do not resolve these by adding autonomous babysitting or a repository environmen
 
 ## 14. Next-session handoff
 
-Current state: Stage 1 is implemented with account UI, encrypted credentials, agent identities, sharing, provider configuration, migration, and focused tests. See [Stage 1 implementation notes](ai-agents-stage-1.md) for setup, verification, and live-integration limits.
+Current state: Stages 1–2 are implemented. Account AI connections/agents and project GitHub/self-hosted GitLab connections/repositories are available. See [Stage 1 notes](ai-agents-stage-1.md) and [Stage 2 notes](ai-agents-stage-2.md) for setup, verification, and live-integration limits.
 
-Recommended next action: **implement Stage 2 — Git connections and project repositories**. Read this specification and Stage 1 notes, inspect current project UI and authorization/credential patterns, and implement that stage end to end. Keep later-stage scope in this document rather than adding placeholder execution behavior.
+Recommended next action: **implement Stage 3 — Chat invocation, context, and basic execution**. Read this specification and both implementation notes, inspect current chat/composer and authorization patterns, and implement that stage end to end. Keep PR/MR writes and later-stage scope in this document.
 
 Suggested continuation request:
 
-> Read `docs/ai-agents-v1-spec.md` and `docs/ai-agents-stage-1.md` and implement Stage 2. Preserve the agreed v1 scope. Inspect the current repository before changing it, verify the implementation, and update the stage checkboxes and continuation notes with what was completed and what remains.
+> Read `docs/ai-agents-v1-spec.md` and the Stage 1/2 implementation notes, then implement Stage 3. Preserve the agreed v1 scope. Inspect the current repository, verify the implementation, and update the stage checkboxes and continuation notes with completed work and remaining limits.
 
 After each implementation session, record:
 
@@ -397,3 +397,7 @@ After each implementation session, record:
 - 2026-09-10: Created this specification from the product discussion. All implementation stages remain not started. Environment configuration and autonomous babysitting remain deferred.
 
 - 2026-09-10: Implemented Stage 1 end to end. Migration `0019_ai_agents.sql`; account menu → AI connections & agents; encrypted personal connections, owner-managed agents with avatar/model/effort/instructions, per-project sharing and safe discovery. Focused isolated-PostgreSQL tests, all workspace typechecks, production builds, and a browser create/share/member-discovery walkthrough passed. Set `AI_CREDENTIAL_SECRET` and apply the migration to use this in an existing environment. All real provider/model/effort combinations and OpenCode execution remain untested; no paid calls were made. Next: Stage 2. Details: [Stage 1 notes](ai-agents-stage-1.md).
+
+- 2026-09-10: Implemented Stage 2: owner-managed encrypted GitHub/self-hosted GitLab connections, identity checks, explicit commit author fields, provider repository discovery and branch validation, mixed-provider selection, project/default-target settings, scoped metadata/authorization, and provider adapter boundaries. Migration `0020_git_connections.sql` applied locally. Isolated-database regressions, typechecks, builds, and browser settings checks passed. Real provider tokens, clone/push operations, and self-hosted connectivity remain untested. Next: Stage 3. Details: [Stage 2 notes](ai-agents-stage-2.md).
+
+- Stage 2 follow-up: local VPN DNS substituted proxy addresses for GitHub and GitLab. Added `GIT_PROVIDER_DNS=cloudflare` with shared encrypted DNS resolution, preserved network/TLS restrictions, and enabled it locally. Identity checks now pass for GitHub and both configured self-hosted GitLab instances. Repository operations and remote writes remain separately unverified.

@@ -49,6 +49,8 @@ const apiOptions = {
   db,
   appURL: APP_URL,
   integrationSecret: process.env.INTEGRATION_SECRET || BETTER_AUTH_SECRET,
+  gitProviderDNS: process.env.GIT_PROVIDER_DNS === "cloudflare" ? "cloudflare" as const : "system" as const,
+  gitlabAllowedPrivateOrigins: (process.env.GITLAB_ALLOWED_PRIVATE_ORIGINS || "").split(",").map(v => v.trim()).filter(Boolean),
   ...(process.env.AI_CREDENTIAL_SECRET ? { aiSecret: process.env.AI_CREDENTIAL_SECRET } : {}),
   trustProxy: process.env.TRUST_PROXY === "true",
   fileStorage: {
