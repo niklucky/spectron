@@ -42,7 +42,7 @@ export function createImplementation(
   ) {
     signal.throwIfAborted();
     return db.transaction(async (tx) => {
-      // Serialize remote-write starts with Stop, closure and ownership changes.
+      // Keep access checks and checkpoints short; never hold these locks during I/O.
       await runAccess(tx, run.requesterId, run, true);
       const [currentRun] = await tx
         .select()
@@ -105,6 +105,15 @@ export function createImplementation(
       return result;
     });
   }
+  async function operation<T>(workspace: Workspace, action: () => Promise<T>) {
+    await guard(workspace, async () => {});
+    signal.throwIfAborted();
+    const result = await action();
+    // Remote effects may already exist after cancellation. Keep pending state so
+    // a later continuation can reconcile them before attempting another write.
+    await guard(workspace, async () => {});
+    return result;
+  }
   async function saveOutcome(
     workspace: Workspace,
     patch: Partial<ImplementationOutcome>,
@@ -166,14 +175,10 @@ export function createImplementation(
       status: "publishing",
       commit: pending.commit,
     });
+    await operation(workspace, () =>
+      git.push(workspace, c, pending.commit, pending.expectedRemote, signal),
+    );
     await guard(workspace, async (tx) => {
-      await git.push(
-        workspace,
-        c,
-        pending.commit,
-        pending.expectedRemote,
-        signal,
-      );
       await tx
         .update(w)
         .set({ remoteCommit: pending.commit, updatedAt: new Date() })
@@ -192,7 +197,7 @@ export function createImplementation(
       );
     const linked =
       existing ??
-      (await guard(workspace, async () =>
+      (await operation(workspace, async () =>
         a.create(
           a.repo,
           {
@@ -232,7 +237,7 @@ export function createImplementation(
       for (const workspace of workspaces) {
         try {
           await reconcile(workspace);
-          const prepared = await guard(workspace, () =>
+          const prepared = await operation(workspace, () =>
             git.prepare(workspace, credential(workspace), signal),
           );
           await guard(workspace, async (tx) => {
@@ -308,7 +313,7 @@ export function createImplementation(
                 .join("\n");
           }
           // A crash after commit but before this DB checkpoint is recovered from the protected local branch HEAD.
-          const commit = await guard(workspace, () =>
+          const commit = await operation(workspace, () =>
             git.commit(workspace, c, note.message, signal),
           );
           if (commit === (workspace.remoteCommit ?? workspace.baseCommit)) {

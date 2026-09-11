@@ -12,6 +12,7 @@ import {
   providerRequestError,
 } from "./credential-proxy";
 import { spawn } from "node:child_process";
+import { StringDecoder } from "node:string_decoder";
 import {
   mkdir,
   writeFile,
@@ -96,6 +97,7 @@ export function processCommand(
     lines?: (line: string) => void;
     maxBytes?: number;
     failureMessage?: string;
+    acceptedExitCodes?: number[];
   } = {},
 ): Promise<string> {
   return new Promise((resolvePromise, reject) => {
@@ -105,6 +107,8 @@ export function processCommand(
       signal: options.signal,
       stdio: ["pipe", "pipe", "pipe"],
     });
+    const decoder = new StringDecoder("utf8");
+    let startError = false;
     let output = "",
       bytes = 0,
       overflow = false;
@@ -113,17 +117,23 @@ export function processCommand(
       if (bytes > (options.maxBytes ?? 2_000_000)) {
         overflow = true;
         child.kill("SIGKILL");
-      } else output += chunk.toString();
+      } else output += decoder.write(chunk);
     });
     child.stderr.on("data", () => {});
     if (options.lines)
       createInterface({ input: child.stdout }).on("line", options.lines);
-    child.on("error", () =>
-      reject(new Error(`${command} could not start or was cancelled.`)),
-    );
+    // Wait for close even on cancellation so callers cannot release a workspace
+    // while its Git process is still exiting.
+    child.on("error", () => {
+      startError = true;
+    });
     child.on("close", (code) =>
-      code === 0 && !overflow
-        ? resolvePromise(output)
+      !startError &&
+      !options.signal?.aborted &&
+      !overflow &&
+      code !== null &&
+      (options.acceptedExitCodes ?? [0]).includes(code)
+        ? resolvePromise(output + decoder.end())
         : reject(
             new Error(
               options.failureMessage ??

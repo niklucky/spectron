@@ -268,7 +268,7 @@ export function AgentRunCard({
                       command: "implement",
                       repositoryIds: run.repositories.map((r) => r.id),
                       message: run.retryMessage ?? run.message,
-                      fileIds: run.attachments.map((f) => f.id),
+                      fileIds: [],
                       continuationId: run.id,
                     }),
                   )

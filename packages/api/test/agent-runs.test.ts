@@ -782,21 +782,19 @@ test("durable agent runs, permissions, snapshots, steering, cancellation and rec
         .from(schema.agentRun)
         .where(eq(schema.agentRun.id, preparationFailed.id));
       const legacyId = createId();
-      await db
-        .insert(schema.agentRun)
-        .values({
-          ...original!,
-          id: legacyId,
-          requestId: createId(),
-          state: "completed",
-          error: null,
-          message: "Retry publishing saved implementation changes.",
-          context: {
-            ...original!.context,
-            publicationOnly: true,
-            continuationId: original!.id,
-          },
-        });
+      await db.insert(schema.agentRun).values({
+        ...original!,
+        id: legacyId,
+        requestId: createId(),
+        state: "completed",
+        error: null,
+        message: "Retry publishing saved implementation changes.",
+        context: {
+          ...original!.context,
+          publicationOnly: true,
+          continuationId: original!.id,
+        },
+      });
       await db
         .update(schema.agentWorkspace)
         .set({ lastRunId: legacyId })
@@ -928,6 +926,87 @@ test("durable agent runs, permissions, snapshots, steering, cancellation and rec
       assert.equal(
         (await db.select().from(schema.agentWorkspace))[0]!.ownerRunId,
         null,
+      );
+
+      await t.test(
+        "queued implementation Stop releases ownership without a worker",
+        async () => {
+          const queued = await runs.invoke(owner, implement());
+          await runs.stop(owner, { ...scope, id: queued.id });
+          assert.equal((await view(queued.id)).state, "stopped");
+          assert.equal(
+            (await db.select().from(schema.agentWorkspace))[0]!.ownerRunId,
+            null,
+          );
+          const replacement = await runs.invoke(owner, implement());
+          await runs.stop(owner, { ...scope, id: replacement.id });
+        },
+      );
+      await t.test(
+        "blocked Git preparation allows heartbeat and Stop before any later writes",
+        async () => {
+          const originalPrepare = runtime.writableGit!.prepare;
+          let entered!: () => void;
+          const ready = new Promise<void>((resolve) => {
+            entered = resolve;
+          });
+          let wasAborted = false;
+          runtime.writableGit!.prepare = async (_w, _c, signal) => {
+            entered();
+            await new Promise<void>((resolve, reject) => {
+              const timeout = setTimeout(resolve, 6000);
+              signal.addEventListener(
+                "abort",
+                () => {
+                  wasAborted = true;
+                  clearTimeout(timeout);
+                  reject(signal.reason);
+                },
+                { once: true },
+              );
+            });
+            throw new Error("Git operation timed out without cancellation");
+          };
+          try {
+            const blocked = await runs.invoke(owner, implement());
+            const beforeCommits = commits,
+              beforeModel = modelCalls;
+            await worker.tick();
+            await ready;
+            const lease = async () =>
+              (
+                await db
+                  .select()
+                  .from(schema.agentRun)
+                  .where(eq(schema.agentRun.id, blocked.id))
+              )[0]!.leaseUntil!.getTime();
+            const firstLease = await lease();
+            await new Promise((resolve) => setTimeout(resolve, 1500));
+            assert.ok(
+              (await lease()) > firstLease,
+              "heartbeat must advance while Git is blocked",
+            );
+            const start = Date.now();
+            await runs.stop(owner, { ...scope, id: blocked.id });
+            assert.ok(
+              Date.now() - start < 1000,
+              "Stop must not wait for the Git request",
+            );
+            await worker.settle();
+            assert.equal(wasAborted, true);
+            assert.equal((await view(blocked.id)).state, "stopped");
+            assert.equal(commits, beforeCommits);
+            assert.equal(modelCalls, beforeModel);
+            assert.equal(pushes, before);
+            assert.equal(
+              (await db.select().from(schema.agentWorkspace))[0]!.ownerRunId,
+              null,
+            );
+          } finally {
+            runtime.writableGit!.prepare = originalPrepare;
+            await worker.settle();
+          }
+        },
       );
 
       // A second provider/repository allows a lost creation response and an empty result independently.

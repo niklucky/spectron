@@ -13,6 +13,16 @@ import {
 import type { Workspace } from "../../backend/src/agent-runs/workspaces";
 import type { Run } from "../../backend/src/agent-runs/service";
 
+test("command output preserves UTF-8 across stream chunks", async () => {
+  assert.equal(
+    await processCommand(process.execPath, [
+      "-e",
+      "process.stdout.write(Buffer.from([0xf0,0x9f])); setTimeout(() => process.stdout.write(Buffer.from([0x98,0x80])), 50)",
+    ]),
+    "😀",
+  );
+});
+
 test("both providers find existing requests and create authenticated drafts with trusted links", async () => {
   for (const provider of ["github", "gitlab"] as const) {
     const github = provider === "github",
@@ -190,6 +200,49 @@ test("protected Git workspaces preserve unfinished edits and push attributed com
     await readFile(join(p.tree, "file.txt"), "utf8"),
     "Unfinished edit\n",
   );
+  // A cumulative target diff larger than the stdout budget must remain usable,
+  // including non-ASCII text, without resetting unfinished implementation edits.
+  const targetText = "Обновление 😀\n".repeat(100000);
+  await writeFile(join(seed, "large.txt"), targetText);
+  await processCommand("git", ["-C", seed, "add", "."], { env });
+  await processCommand("git", ["-C", seed, "commit", "-m", "Advance target"], {
+    env,
+  });
+  await processCommand("git", ["-C", seed, "push", remote, "main"], { env });
+  const advanced = await git.prepare(w, credential, signal);
+  assert.notEqual(advanced.target, prepared.base);
+  const patch = await readFile(join(p.root, "target.patch"), "utf8");
+  assert.ok(Buffer.byteLength(patch) > 2_000_000);
+  assert.ok(patch.endsWith("+Обновление 😀\n"));
+  assert.equal(patch.includes("�"), false);
+  assert.equal(
+    await readFile(join(p.tree, "file.txt"), "utf8"),
+    "Unfinished edit\n",
+  );
+  await writeFile(join(p.tree, ".gitignore"), "node_modules/\n");
+  await mkdir(join(p.tree, "node_modules", "dependency", ".git"), {
+    recursive: true,
+  });
+  await writeFile(
+    join(p.tree, "node_modules", "tracked.txt"),
+    "Tracked dependency\n",
+  );
+  await processCommand(
+    "git",
+    [
+      `--git-dir=${p.git}`,
+      `--work-tree=${p.tree}`,
+      "add",
+      "-f",
+      "--",
+      "node_modules/tracked.txt",
+    ],
+    { env, cwd: p.tree },
+  );
+  await writeFile(
+    join(p.tree, "node_modules", "tracked.txt"),
+    "Updated tracked dependency\n",
+  );
   await mkdir(join(p.tree, "nested", ".git"), { recursive: true });
   await assert.rejects(
     git.commit(w, credential, "Change", signal),
@@ -200,6 +253,29 @@ test("protected Git workspaces preserve unfinished edits and push attributed com
     "Implement fixture\n\nSpectron-Agent: Dev senior\nSpectron-Requested-By: Nik\nSpectron-Issue: TEST-1\nSpectron-Run: fixture\n";
   const commit = await git.commit(w, credential, message, signal);
   assert.notEqual(commit, prepared.base);
+  assert.equal(
+    await processCommand(
+      "git",
+      [`--git-dir=${p.git}`, "show", `${commit}:node_modules/tracked.txt`],
+      { env },
+    ),
+    "Updated tracked dependency\n",
+  );
+  assert.equal(
+    await processCommand(
+      "git",
+      [
+        `--git-dir=${p.git}`,
+        "ls-tree",
+        "-r",
+        "--name-only",
+        commit,
+        "node_modules/dependency",
+      ],
+      { env },
+    ),
+    "",
+  );
   const log = await processCommand(
     "git",
     [`--git-dir=${p.git}`, "log", "-1", "--format=%an <%ae>%n%cn <%ce>%n%B"],
@@ -241,6 +317,25 @@ test("protected Git workspaces preserve unfinished edits and push attributed com
     await readFile(join(p.tree, "file.txt"), "utf8"),
     "Further edit\n",
   );
+  // The saved expected remote can also be a known, divergent commit. This is
+  // a reconciliation problem, not an authentication failure.
+  await processCommand(
+    "git",
+    [
+      `--git-dir=${remote}`,
+      "update-ref",
+      `refs/heads/${w.branch}`,
+      advanced.target,
+    ],
+    { env },
+  );
+  pushedArgs = [];
+  await assert.rejects(
+    git.push(w, credential, newer, advanced.target, signal),
+    /diverged.*reconcile/,
+  );
+  assert.deepEqual(pushedArgs, []);
+  assert.equal(await git.remote(w, credential, signal), advanced.target);
 });
 
 test(

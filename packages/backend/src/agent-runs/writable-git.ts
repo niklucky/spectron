@@ -7,7 +7,7 @@ import {
   stat,
   readdir,
 } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { relative, join, resolve } from "node:path";
 import type { GitRepository } from "@spectron/shared";
 import { resolveHost } from "../network/dns";
 import { isPublicAddress } from "../project-logo/safe-fetch";
@@ -103,12 +103,14 @@ export function createWritableGit(
     signal: AbortSignal,
     network = false,
     stdin?: string,
+    overrides: { failureMessage?: string; acceptedExitCodes?: number[] } = {},
   ) {
     const p = paths(w.id);
     return command(
       "git",
       [
-        "--literal-pathspecs",
+        // check-ignore takes literal paths already and rejects pathspec magic.
+        ...(args[0] === "check-ignore" ? [] : ["--literal-pathspecs"]),
         `--git-dir=${p.git}`,
         `--work-tree=${p.tree}`,
         ...args,
@@ -120,6 +122,7 @@ export function createWritableGit(
         ...(stdin === undefined ? {} : { stdin }),
         failureMessage:
           "Git operation failed. Check repository write permissions and branch rules; saved changes are retained.",
+        ...overrides,
       },
     );
   }
@@ -226,24 +229,26 @@ export function createWritableGit(
       const target = revision(
         await git(w, c, ["rev-parse", "FETCH_HEAD"], signal),
       );
+      const patch = join(p.root, "target.patch");
       await writeFile(
-        join(p.root, "target.patch"),
-        target === base
-          ? "Target branch unchanged.\n"
-          : await git(
-              w,
-              c,
-              [
-                "diff",
-                "--no-ext-diff",
-                "--no-textconv",
-                `${base}..${target}`,
-                "--",
-              ],
-              signal,
-            ),
+        patch,
+        target === base ? "Target branch unchanged.\n" : "",
         { mode: 0o600 },
       );
+      if (target !== base)
+        await git(
+          w,
+          c,
+          [
+            "diff",
+            "--no-ext-diff",
+            "--no-textconv",
+            `--output=${patch}`,
+            `${base}..${target}`,
+            "--",
+          ],
+          signal,
+        );
       return { base, head, target };
     },
     async commit(
@@ -253,18 +258,54 @@ export function createWritableGit(
       signal: AbortSignal,
     ) {
       const before = revision(await git(w, c, ["rev-parse", "HEAD"], signal));
-      const directories = [paths(w.id).tree];
+      const root = paths(w.id).tree;
+      // Ignored dependency/build trees are not publication inputs. Still inspect
+      // ancestors of tracked files, including files force-added under an ignore rule.
+      const directories = [root];
       let entries = 0;
       while (directories.length) {
+        signal.throwIfAborted();
         const directory = directories.pop()!;
-        for (const entry of await readdir(directory, { withFileTypes: true })) {
-          if (++entries > 500000)
-            throw new Error(
-              "Workspace exceeds the file limit; remove generated files before publishing.",
-            );
+        const children = await readdir(directory, { withFileTypes: true });
+        const candidates = children.map((entry) =>
+          relative(root, join(directory, entry.name)),
+        );
+        const ignored = new Set(
+          children.length
+            ? (
+                await git(
+                  w,
+                  c,
+                  ["check-ignore", "-z", "--stdin"],
+                  signal,
+                  false,
+                  candidates.join("\0") + "\0",
+                  { acceptedExitCodes: [0, 1] },
+                )
+              ).split("\0")
+            : [],
+        );
+        for (const entry of children) {
+          const path = relative(root, join(directory, entry.name));
           if (entry.name.toLowerCase() === ".git")
             throw new Error(
               "Repository contains agent-created Git metadata. Remove nested .git entries before publishing.",
+            );
+          if (ignored.has(path)) {
+            if (!entry.isDirectory()) continue;
+            // Empty format emits only one NUL per tracked entry, avoiding a
+            // whole-repository filename snapshot just to test directory membership.
+            const tracked = await git(
+              w,
+              c,
+              ["ls-files", "--cached", "--format=", "-z", "--", path],
+              signal,
+            );
+            if (!tracked.length) continue;
+          }
+          if (++entries > 500000)
+            throw new Error(
+              "Workspace exceeds the file limit; remove generated files before publishing.",
             );
           if (entry.isDirectory())
             directories.push(join(directory, entry.name));
@@ -316,6 +357,12 @@ export function createWritableGit(
           c,
           ["merge-base", "--is-ancestor", actual, commit],
           signal,
+          false,
+          undefined,
+          {
+            failureMessage:
+              "The remote working branch has diverged from the saved implementation. Refusing to overwrite remote work; reconcile the branch before continuing.",
+          },
         );
       signal.throwIfAborted();
       // Explicit lease closes the race after ls-remote; ancestry above disallows destructive rewrites.

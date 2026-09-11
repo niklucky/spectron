@@ -1,4 +1,4 @@
-import { reserveWorkspaces } from "./workspaces";
+import { releaseWorkspaces, reserveWorkspaces } from "./workspaces";
 import { modelLimits, promptByteBudget } from "./model-limits";
 import { runPrompt } from "./prompt";
 import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
@@ -471,10 +471,13 @@ export function createAgentRunService(db: Database, files: FileService) {
     async stop(userId: string, args: AgentRunScope & { id: string }) {
       await db.transaction(async (tx) => {
         const row = await controlled(tx, userId, args, false);
+        const unclaimed =
+          row.state === "queued" && !row.claim && !row.containerRetained;
         await tx
           .update(r)
           .set({
             stopRequested: true,
+            ...(unclaimed ? { state: "stopped" as const } : {}),
             ...(["queued", "preparing", "working", "needs_input"].includes(
               row.state,
             )
@@ -483,6 +486,7 @@ export function createAgentRunService(db: Database, files: FileService) {
             updatedAt: new Date(),
           })
           .where(eq(r.id, row.id));
+        if (unclaimed) await releaseWorkspaces(tx, row);
       });
     },
     async instruct(
