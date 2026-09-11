@@ -74,7 +74,7 @@ const stopAgents = process.env.AGENT_RUNNER_ENABLED === 'true'
       root: process.env.AGENT_WORKSPACES_ROOT || fileURLToPath(new URL('../../../data/agent-workspaces', import.meta.url)),
       image: process.env.AGENT_RUNNER_IMAGE || 'spectron-agent:1.18.30', dns: apiOptions.gitProviderDNS,
       privateOrigins: apiOptions.gitlabAllowedPrivateOrigins,
-    }), { ...apiOptions, gitFactory: createGitAdapterFactory(createGitTransport(apiOptions.gitlabAllowedPrivateOrigins, { dns: apiOptions.gitProviderDNS })), idleHours: Number(process.env.AGENT_IDLE_HOURS || 3) }).start()
+    }), { ...apiOptions, gitFactory: createGitAdapterFactory(createGitTransport(apiOptions.gitlabAllowedPrivateOrigins, { dns: apiOptions.gitProviderDNS })), appURL: APP_URL, idleHours: Number(process.env.AGENT_IDLE_HOURS || 3) }).start()
   : async () => {};
 
 const stopScheduler = createJiraScheduler(

@@ -1,3 +1,5 @@
+import { createImplementation } from "./implementation";
+import { releaseWorkspaces } from "./workspaces";
 import { and, asc, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import { schema, type Database } from "@spectron/db";
 import { createId } from "@spectron/shared";
@@ -22,6 +24,7 @@ export function createAgentWorker(
     integrationSecret?: string;
     gitFactory: GitAdapterFactory;
     idleHours?: number;
+    appURL?: string;
   },
 ) {
   const running = new Map<string, AbortController>();
@@ -66,40 +69,58 @@ export function createAgentWorker(
       options.aiSecret,
     );
     const repositories: RuntimePreparation["repositories"] = [];
+    const preparationErrors: Record<string, string> = {};
     for (const repository of row.repositories) {
-      const [c] = await db
-        .select()
-        .from(schema.gitConnection)
-        .where(
-          and(
-            eq(schema.gitConnection.id, repository.connectionId),
-            eq(schema.gitConnection.projectId, row.projectId),
-          ),
+      try {
+        const [c] = await db
+          .select()
+          .from(schema.gitConnection)
+          .where(
+            and(
+              eq(schema.gitConnection.id, repository.connectionId),
+              eq(schema.gitConnection.projectId, row.projectId),
+            ),
+          );
+        if (!c) throw new Error("Git connection is no longer available.");
+        const token = decryptGitToken(
+          c.encryptedToken,
+          JSON.stringify([
+            "git",
+            c.projectId,
+            c.id,
+            c.creatorId,
+            c.provider,
+            c.baseURL,
+          ]),
+          options.integrationSecret,
         );
-      if (!c) throw new Error("Git connection is no longer available.");
-      const token = decryptGitToken(
-        c.encryptedToken,
-        JSON.stringify([
-          "git",
-          c.projectId,
-          c.id,
-          c.creatorId,
-          c.provider,
-          c.baseURL,
-        ]),
-        options.integrationSecret,
-      );
-      const adapter = options.gitFactory(c, token);
-      const remote = await adapter.repository(
-        repository.fullName,
-        repository.externalId,
-      );
-      if (remote.cloneURL !== repository.cloneURL)
-        throw new Error(
-          "The repository moved. Start a new run with its current location.",
+        const adapter = options.gitFactory(c, token);
+        const remote = await adapter.repository(
+          repository.fullName,
+          repository.externalId,
         );
-      await adapter.branch(remote, repository.targetBranch);
-      repositories.push({ repository, token });
+        if (remote.cloneURL !== repository.cloneURL)
+          throw new Error(
+            "The repository moved. Start a new run with its current location.",
+          );
+        await adapter.branch(remote, repository.targetBranch);
+        repositories.push({
+          repository,
+          token,
+          author: { name: c.commitAuthorName, email: c.commitAuthorEmail },
+          connection: {
+            provider: c.provider,
+            baseURL: c.baseURL,
+            revision: c.revision,
+          },
+        });
+      } catch (error) {
+        if (row.command !== "implement") throw error;
+        preparationErrors[repository.id] =
+          error instanceof Error
+            ? error.message
+            : "Repository preparation failed.";
+      }
     }
     const attachments: RuntimePreparation["attachments"] = [];
     let size = 0;
@@ -115,7 +136,7 @@ export function createAgentWorker(
         path: file.path,
       });
     }
-    return { key, repositories, attachments };
+    return { key, repositories, attachments, preparationErrors };
   }
   async function record(row: Run, message: string) {
     // INSERT guarded by the lease prevents late callbacks from resurrecting stopped runs.
@@ -186,24 +207,42 @@ export function createAgentWorker(
       await record(row, "Preparing a repository-backed session.");
       const config = await preparation(row);
       controller.signal.throwIfAborted();
-      const repositories = await runtime.prepare(
-        row,
-        config,
-        controller.signal,
-        (message) => record(row, message),
-      );
+      const implementation =
+        row.command === "implement"
+          ? createImplementation(
+              db,
+              row,
+              config,
+              runtime.writableGit ??
+                (() => {
+                  throw new Error("Writable runtime unavailable.");
+                })(),
+              options.gitFactory,
+              controller.signal,
+              options.appURL ?? "http://localhost:5187",
+            )
+          : null;
+      if (implementation)
+        await implementation.prepare((message) => record(row, message));
+      const publicationOnly = row.context.publicationOnly === true;
+      const repositories = publicationOnly
+        ? row.repositories
+        : await runtime.prepare(row, config, controller.signal, (message) =>
+            record(row, message),
+          );
       const [prepared] = await db
         .update(r)
         .set({
           repositories,
-          containerRetained: true,
+          context: row.context,
+          containerRetained: !publicationOnly,
           state: "working",
           updatedAt: new Date(),
         })
         .where(fence(row))
         .returning();
       if (!prepared) throw new Error("Run cancelled during preparation.");
-      row = prepared;
+      Object.assign(row, prepared);
       // Resumption/steering is serial: a new CLI turn in the same session only after the previous invocation exits.
       for (let turnNumber = 1; ; turnNumber++) {
         controller.signal.throwIfAborted();
@@ -228,43 +267,91 @@ export function createAgentWorker(
             "Starting the next session turn with queued instructions.",
           );
         let accepted = false;
-        const result = await runtime.turn(
-          row,
-          runPrompt(
-            row,
-            pending.map((i) => i.message),
-          ),
-          controller.signal,
-          (message) => record(row, message),
-          async (text) => {
-            await db
-              .update(r)
-              .set({
-                result: { summary: "Partial response", details: text },
-                updatedAt: new Date(),
-              })
-              .where(fence(row));
-          },
-          async () => {
-            accepted = true;
-            if (pending.length)
-              await db
-                .update(input)
-                .set({ state: "delivered" })
-                .where(
-                  inArray(
-                    input.id,
-                    pending.map((i) => i.id),
-                  ),
-                );
-          },
-        );
+        const result: import("@spectron/shared").AgentResult = publicationOnly
+          ? ((row.context.publicationResult as
+              | import("@spectron/shared").AgentResult
+              | undefined) ?? {
+              summary: "Publish saved implementation changes",
+              details: "No new model execution or verification was performed.",
+            })
+          : await runtime.turn(
+              row,
+              runPrompt(
+                row,
+                pending.map((i) => i.message),
+              ),
+              controller.signal,
+              (message) => record(row, message),
+              async (text) => {
+                await db
+                  .update(r)
+                  .set({
+                    result: { summary: "Partial response", details: text },
+                    updatedAt: new Date(),
+                  })
+                  .where(fence(row));
+              },
+              async () => {
+                accepted = true;
+                if (pending.length)
+                  await db
+                    .update(input)
+                    .set({ state: "delivered" })
+                    .where(
+                      inArray(
+                        input.id,
+                        pending.map((i) => i.id),
+                      ),
+                    );
+              },
+            );
         row.result = result;
         if (pending.length && !accepted) {
           await db.update(r).set({ result }).where(fence(row));
           throw new Error(
             "OpenCode returned a response without confirming instruction delivery. The result was saved; continue explicitly to avoid repeating a paid request.",
           );
+        }
+        const shouldFinish = await db.transaction(async (tx) => {
+          const [current] = await tx
+            .select()
+            .from(r)
+            .where(fence(row))
+            .for("update");
+          if (!current) throw new Error("Run cancelled.");
+          const [queued] = await tx
+            .select({ id: input.id })
+            .from(input)
+            .where(and(eq(input.runId, row.id), eq(input.state, "queued")))
+            .limit(1);
+          if (queued && turnNumber >= 10)
+            result.question =
+              "This session reached its 10-turn limit. Reply to resume the remaining queued instructions.";
+          await tx
+            .update(r)
+            .set({ result, updatedAt: new Date() })
+            .where(fence(row));
+          return !queued || turnNumber >= 10;
+        });
+        if (!shouldFinish) continue;
+        let publicationFailed = false;
+        if (implementation) {
+          await record(
+            row,
+            "Stopping execution tools and preserving the implementation workspace.",
+          );
+          await runtime.cleanup(row.id);
+          await db
+            .update(r)
+            .set({ containerRetained: false })
+            .where(fence(row));
+          if (!result.question) {
+            await record(
+              row,
+              "Saving attributed commits and publishing draft PR/MRs.",
+            );
+            publicationFailed = await implementation.publish();
+          }
         }
         const done = await db.transaction(async (tx) => {
           const [current] = await tx
@@ -278,11 +365,11 @@ export function createAgentWorker(
             .from(input)
             .where(and(eq(input.runId, row.id), eq(input.state, "queued")))
             .limit(1);
-          const turnLimit = !!queued && turnNumber >= 10;
-          if (turnLimit)
+          // Instructions arriving while publication runs stay queued for an explicit restored session.
+          if (queued && implementation)
             result.question =
-              "This session reached its 10-turn limit. Reply to resume the remaining queued instructions.";
-          const continuing = queued && !turnLimit;
+              "Additional instructions arrived during publication. Reply to resume the saved workspace.";
+          const continuing = queued && !implementation && turnNumber < 10;
           await tx
             .update(r)
             .set({
@@ -291,17 +378,26 @@ export function createAgentWorker(
                 ? "working"
                 : result.question
                   ? "needs_input"
-                  : "completed",
+                  : publicationFailed
+                    ? "failed"
+                    : "completed",
+              error: publicationFailed
+                ? "Some repositories could not be published. See their outcomes; continue explicitly to retry."
+                : null,
               ...(continuing
                 ? {}
                 : {
                     claim: null,
                     leaseUntil: null,
-                    idleUntil: new Date(Date.now() + idleHours * 3600_000),
+                    idleUntil: implementation
+                      ? null
+                      : new Date(Date.now() + idleHours * 3600_000),
                   }),
               updatedAt: new Date(),
             })
             .where(fence(row));
+          if (implementation && !result.question)
+            await releaseWorkspaces(tx, row);
           return !continuing;
         });
         if (done) break;
@@ -314,6 +410,8 @@ export function createAgentWorker(
       } catch {
         cleanupError = true;
       }
+      if (!cleanupError && row.command === "implement")
+        await releaseWorkspaces(db, row);
       const [current] = await db
         .select({ stopRequested: r.stopRequested, error: r.error })
         .from(r)
@@ -399,6 +497,11 @@ export function createAgentWorker(
         try {
           await runtime.cleanup(row.id);
           const interrupted = ["preparing", "working"].includes(row.state);
+          if (
+            row.command === "implement" &&
+            (row.state !== "needs_input" || row.stopRequested)
+          )
+            await releaseWorkspaces(db, row);
           await db
             .update(r)
             .set({

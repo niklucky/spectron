@@ -9,6 +9,7 @@ import {
   agentRunPollDelay,
   type AgentInvocation,
   type AgentResult,
+  type GitPullRequest,
 } from "@spectron/shared";
 import {
   createAIService,
@@ -167,7 +168,29 @@ test("durable agent runs, permissions, snapshots, steering, cancellation and rec
     role: "Developer",
     instructions: "Private instructions",
   });
+  const pulls = new Map<string, GitPullRequest>();
+  let creates = 0,
+    loseCreateResponse = false;
   const factory: GitAdapterFactory = (c) => ({
+    findPull: async (_repo, source) => pulls.get(source) ?? null,
+    createDraft: async (repo, input) => {
+      creates++;
+      const pull: GitPullRequest = {
+        number: String(creates),
+        url: `${repo.webURL}/pull/${creates}`,
+        sourceBranch: input.source,
+        targetBranch: input.target,
+        state: "open",
+        draft: true,
+        head: "b".repeat(40),
+      };
+      pulls.set(input.source, pull);
+      if (loseCreateResponse) {
+        loseCreateResponse = false;
+        throw new Error("Lost create response");
+      }
+      return pull;
+    },
     actor: async () => ({ id: "1", login: "bot", name: "Bot", email: null }),
     repositories: async () => ({ items: [], nextPage: null }),
     repository: async (fullName, externalId) => ({
@@ -222,7 +245,11 @@ test("durable agent runs, permissions, snapshots, steering, cancellation and rec
     prepare: async (run, config) => {
       prepares++;
       assert.equal(config.key, "fake-test-key");
-      assert.equal(config.repositories[0]?.token, "fake-git-token");
+      assert.ok(
+        ["fake-git-token", "fake-gl-token"].includes(
+          config.repositories[0]?.token ?? "",
+        ),
+      );
       return run.repositories.map((r) => ({ ...r, commit: "a".repeat(40) }));
     },
     turn: async (...args) => {
@@ -324,7 +351,14 @@ test("durable agent runs, permissions, snapshots, steering, cancellation and rec
       assert.equal(stored!.instructions, "Private instructions");
       await runToEnd();
       const result = await view(created.id);
-      assert.equal(result.state, "completed");
+      assert.equal(
+        result.state,
+        "completed",
+        JSON.stringify({
+          error: result.error,
+          outcomes: result.implementation,
+        }),
+      );
       assert.equal(result.repositories[0]?.commit, "a".repeat(40));
       assert.ok(
         !JSON.stringify(await runs.list(member, scope)).includes(
@@ -649,6 +683,401 @@ test("durable agent runs, permissions, snapshots, steering, cancellation and rec
       const row = await view(created.id);
       assert.equal(row.state, "failed");
       assert.match(row.error!, /shutdown/);
+    },
+  );
+  await t.test(
+    "implementation drafts, one writer, interrupted publication and continuation",
+    async (t) => {
+      await db
+        .update(schema.gitConnection)
+        .set({ commitAuthorName: "Bot", commitAuthorEmail: "bot@example.test" })
+        .where(eq(schema.gitConnection.id, gc.id));
+      const remoteHeads = new Map<string, string>(),
+        localHeads = new Map<string, string>();
+      let changes = true,
+        commits = 0,
+        pushes = 0,
+        losePushResponse = false;
+      runtime.writableGit = {
+        paths: (id) => ({ root: id, git: id, tree: id }),
+        prepare: async (w) => {
+          assert.equal(remoteHeads.get(w.id) ?? null, w.remoteCommit);
+          return {
+            base: "a".repeat(40),
+            head: localHeads.get(w.id) ?? "a".repeat(40),
+            target: "a".repeat(40),
+          };
+        },
+        commit: async (w, c, message) => {
+          assert.ok(c.author.name && c.author.email);
+          assert.match(message, /Spectron-Agent: Senior/);
+          assert.match(message, /Spectron-Requested-By: Owner/);
+          assert.match(message, /Spectron-Issue: RUN-1/);
+          if (!changes) return localHeads.get(w.id) ?? "a".repeat(40);
+          const sha = (++commits).toString(16).padStart(40, "0");
+          localHeads.set(w.id, sha);
+          return sha;
+        },
+        remote: async (w) => remoteHeads.get(w.id) ?? null,
+        push: async (w, _c, commit, expected) => {
+          if (remoteHeads.get(w.id) === commit) return;
+          assert.equal(remoteHeads.get(w.id) ?? null, expected);
+          remoteHeads.set(w.id, commit);
+          pushes++;
+          if (losePushResponse) {
+            losePushResponse = false;
+            throw new Error("Lost push response");
+          }
+        },
+      };
+      const implement = () => ({ ...args(), command: "implement" as const });
+      turn = async () => ({
+        summary: "Implemented",
+        details: "Checks unavailable in the fixture.",
+        verification: [
+          { command: "test", outcome: "not_run", details: "Fixture" },
+        ],
+      });
+      const modelTurnBeforeRetry = turn;
+      let modelCalls = 0;
+      turn = async (...a) => {
+        modelCalls++;
+        return modelTurnBeforeRetry(...a);
+      };
+      await db
+        .update(schema.gitConnection)
+        .set({ commitAuthorEmail: "" })
+        .where(eq(schema.gitConnection.id, gc.id));
+      const originalRequest = "Implement input validation";
+      const preparationFailed = await runs.invoke(owner, {
+        ...implement(),
+        message: originalRequest,
+      });
+      await runToEnd();
+      assert.equal(modelCalls, 0);
+      const failedView = await view(preparationFailed.id);
+      assert.equal(failedView.state, "failed");
+      assert.equal(failedView.canRetryPublication, false);
+      assert.equal(failedView.retryMessage, originalRequest);
+      assert.match(failedView.implementation![0]!.error!, /commit author/);
+      await db
+        .update(schema.gitConnection)
+        .set({ commitAuthorEmail: "bot@example.test" })
+        .where(eq(schema.gitConnection.id, gc.id));
+      await assert.rejects(
+        runs.invoke(owner, {
+          ...implement(),
+          continuationId: preparationFailed.id,
+          publicationOnly: true,
+        }),
+        /no pending publication/,
+      );
+      assert.equal(
+        (await db.select().from(schema.agentWorkspace))[0]!.ownerRunId,
+        null,
+      );
+      // Simulate the completed no-op produced by the old retry button; recover its original request too.
+      const [original] = await db
+        .select()
+        .from(schema.agentRun)
+        .where(eq(schema.agentRun.id, preparationFailed.id));
+      const legacyId = createId();
+      await db.insert(schema.agentRun).values({
+        ...original!,
+        id: legacyId,
+        requestId: createId(),
+        state: "completed",
+        error: null,
+        message: "Retry publishing saved implementation changes.",
+        context: {
+          ...original!.context,
+          publicationOnly: true,
+          continuationId: original!.id,
+        },
+      });
+      await db
+        .update(schema.agentWorkspace)
+        .set({ lastRunId: legacyId })
+        .where(eq(schema.agentWorkspace.lastRunId, original!.id));
+      const legacyView = await view(legacyId);
+      assert.equal(legacyView.canRetryPublication, false);
+      assert.equal(legacyView.retryMessage, originalRequest);
+      const initial = await runs.invoke(owner, {
+        ...implement(),
+        message: legacyView.retryMessage!,
+        continuationId: legacyId,
+      });
+      await assert.rejects(runs.invoke(owner, implement()), /already owns/);
+      assert.equal(
+        (
+          await runs.invoke(owner, {
+            ...implement(),
+            requestId: (
+              await db
+                .select()
+                .from(schema.agentRun)
+                .where(eq(schema.agentRun.id, initial.id))
+            )[0]!.requestId,
+          })
+        ).id,
+        initial.id,
+      );
+      await runToEnd();
+      let result = await view(initial.id);
+      assert.equal(
+        result.state,
+        "completed",
+        JSON.stringify({
+          error: result.error,
+          outcomes: result.implementation,
+        }),
+      );
+      assert.equal(result.containerRetained, false);
+      assert.equal(modelCalls, 1);
+      assert.equal(result.message, originalRequest);
+      assert.equal(result.agent.id, agent.id);
+      assert.equal(result.implementation![0]!.status, "published");
+      assert.equal(creates, 1);
+      assert.equal(pushes, 1);
+      const workspaceId = result.implementation![0]!.workspaceId;
+      assert.equal(
+        (await db.select().from(schema.agentWorkspace))[0]!.ownerRunId,
+        null,
+      );
+      const follow = await runs.invoke(owner, {
+        ...implement(),
+        continuationId: initial.id,
+      });
+      await runToEnd();
+      assert.equal(
+        (await view(follow.id)).implementation![0]!.workspaceId,
+        workspaceId,
+      );
+      assert.equal(creates, 1);
+      assert.equal(pushes, 2);
+
+      losePushResponse = true;
+      const lost = await runs.invoke(owner, implement());
+      await runToEnd();
+      assert.equal((await view(lost.id)).state, "failed");
+      assert.ok((await db.select().from(schema.agentWorkspace))[0]!.pending);
+      assert.equal((await view(lost.id)).canRetryPublication, true);
+      const beforePushes = pushes;
+      changes = false;
+      const modelTurn = turn;
+      turn = async () => {
+        throw new Error("Publication retry must not call a model");
+      };
+      const retry = await runs.invoke(owner, {
+        ...implement(),
+        continuationId: lost.id,
+        publicationOnly: true,
+      });
+      await runToEnd();
+      assert.equal((await view(retry.id)).state, "completed");
+      assert.equal((await view(retry.id)).canRetryPublication, false);
+      assert.equal(pushes, beforePushes);
+      assert.equal(creates, 1);
+      turn = modelTurn;
+      await assert.rejects(
+        runs.invoke(owner, {
+          ...implement(),
+          continuationId: lost.id,
+          publicationOnly: true,
+        }),
+        /Newer work/,
+      );
+      assert.equal(
+        (await db.select().from(schema.agentWorkspace))[0]!.pending,
+        null,
+      );
+
+      turn = async () => ({
+        summary: "Need input",
+        details: "Unfinished edits saved",
+        question: "Which approach?",
+      });
+      const waiting = await runs.invoke(owner, implement());
+      await runToEnd();
+      assert.equal((await view(waiting.id)).state, "needs_input");
+      await assert.rejects(runs.invoke(owner, implement()), /already owns/);
+      await runs.instruct(owner, {
+        ...scope,
+        id: waiting.id,
+        requestId: createId(),
+        message: "Proceed",
+      });
+      turn = async () => ({
+        summary: "Resumed",
+        details: "Saved workspace restored",
+      });
+      await runToEnd();
+      assert.equal((await view(waiting.id)).state, "completed");
+
+      const stopped = await runs.invoke(owner, implement());
+      turn = async (row) => {
+        await runs.stop(owner, { ...scope, id: row.id });
+        return { summary: "Late", details: "Must not publish" };
+      };
+      const before = pushes;
+      await runToEnd();
+      assert.equal((await view(stopped.id)).state, "stopped");
+      assert.equal(pushes, before);
+      assert.equal(
+        (await db.select().from(schema.agentWorkspace))[0]!.ownerRunId,
+        null,
+      );
+
+      await t.test(
+        "queued implementation Stop releases ownership without a worker",
+        async () => {
+          const queued = await runs.invoke(owner, implement());
+          await runs.stop(owner, { ...scope, id: queued.id });
+          assert.equal((await view(queued.id)).state, "stopped");
+          assert.equal(
+            (await db.select().from(schema.agentWorkspace))[0]!.ownerRunId,
+            null,
+          );
+          const replacement = await runs.invoke(owner, implement());
+          await runs.stop(owner, { ...scope, id: replacement.id });
+        },
+      );
+      await t.test(
+        "blocked Git preparation allows heartbeat and Stop before any later writes",
+        async () => {
+          const originalPrepare = runtime.writableGit!.prepare;
+          let entered!: () => void;
+          const ready = new Promise<void>((resolve) => {
+            entered = resolve;
+          });
+          let wasAborted = false;
+          runtime.writableGit!.prepare = async (_w, _c, signal) => {
+            entered();
+            await new Promise<void>((resolve, reject) => {
+              const timeout = setTimeout(resolve, 6000);
+              signal.addEventListener(
+                "abort",
+                () => {
+                  wasAborted = true;
+                  clearTimeout(timeout);
+                  reject(signal.reason);
+                },
+                { once: true },
+              );
+            });
+            throw new Error("Git operation timed out without cancellation");
+          };
+          try {
+            const blocked = await runs.invoke(owner, implement());
+            const beforeCommits = commits,
+              beforeModel = modelCalls;
+            await worker.tick();
+            await ready;
+            const lease = async () =>
+              (
+                await db
+                  .select()
+                  .from(schema.agentRun)
+                  .where(eq(schema.agentRun.id, blocked.id))
+              )[0]!.leaseUntil!.getTime();
+            const firstLease = await lease();
+            await new Promise((resolve) => setTimeout(resolve, 1500));
+            assert.ok(
+              (await lease()) > firstLease,
+              "heartbeat must advance while Git is blocked",
+            );
+            const start = Date.now();
+            await runs.stop(owner, { ...scope, id: blocked.id });
+            assert.ok(
+              Date.now() - start < 1000,
+              "Stop must not wait for the Git request",
+            );
+            await worker.settle();
+            assert.equal(wasAborted, true);
+            assert.equal((await view(blocked.id)).state, "stopped");
+            assert.equal(commits, beforeCommits);
+            assert.equal(modelCalls, beforeModel);
+            assert.equal(pushes, before);
+            assert.equal(
+              (await db.select().from(schema.agentWorkspace))[0]!.ownerRunId,
+              null,
+            );
+          } finally {
+            runtime.writableGit!.prepare = originalPrepare;
+            await worker.settle();
+          }
+        },
+      );
+
+      // A second provider/repository allows a lost creation response and an empty result independently.
+      const gl = await git.createConnection(owner, projectId, {
+        name: "GitLab",
+        provider: "gitlab",
+        baseURL: "https://gitlab.example.test",
+        token: "fake-gl-token",
+      });
+      const glcheck = await git.checkConnection(owner, {
+        projectId,
+        id: gl.id,
+        revision: gl.revision,
+      });
+      await db
+        .update(schema.gitConnection)
+        .set({ commitAuthorName: "Bot", commitAuthorEmail: "bot@example.test" })
+        .where(eq(schema.gitConnection.id, gl.id));
+      const glrepo = await git.addRepository(owner, {
+        projectId,
+        id: gl.id,
+        revision: glcheck.connection.revision,
+        fullName: "group/repo",
+        externalId: "2",
+      });
+      const both = () => ({
+        ...implement(),
+        repositoryIds: [repo.id, glrepo.id],
+      });
+      const noChanges = await runs.invoke(owner, both());
+      turn = async () => ({
+        summary: "No changes",
+        details: "No implementation required",
+      });
+      await runToEnd();
+      assert.equal(
+        (await view(noChanges.id)).implementation!.find(
+          (o) => o.repositoryId === glrepo.id,
+        )!.status,
+        "unchanged",
+      );
+      assert.equal(creates, 1);
+      changes = true;
+      loseCreateResponse = true;
+      const mixed = await runs.invoke(owner, both());
+      await runToEnd();
+      result = await view(mixed.id);
+      assert.equal(result.state, "failed");
+      assert.equal(
+        result.implementation!.filter((o) => o.status === "failed").length,
+        1,
+      );
+      assert.equal(
+        result.implementation!.filter((o) => o.status === "published").length,
+        1,
+      );
+      assert.equal(creates, 2);
+      changes = false;
+      const recover = await runs.invoke(owner, {
+        ...both(),
+        continuationId: mixed.id,
+      });
+      await runToEnd();
+      assert.equal((await view(recover.id)).state, "completed");
+      assert.equal(creates, 2);
+      for (const pull of pulls.values()) pull.state = "merged";
+      const closed = await runs.invoke(owner, implement());
+      await runToEnd();
+      assert.equal((await view(closed.id)).state, "failed");
+      assert.equal(pushes, beforePushes + 2);
+      await assert.rejects(runs.invoke(owner, implement()), /closed or merged/);
     },
   );
   await t.test(

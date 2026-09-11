@@ -1,10 +1,12 @@
-import type { GitActor, GitPage, GitProvider, GitRemoteRepository } from "@spectron/shared";
+import type { GitActor, GitPage, GitProvider, GitRemoteRepository, GitPullRequest } from "@spectron/shared";
 import { IssueInputError } from "../issues";
 import { createGitTransport, normalizeGitBaseURL, type GitTransport } from "./transport";
 
 // The only provider boundary exposed to the service. Later branch/PR/sync
 // operations belong on this adapter; no provider requests belong in the UI.
 export interface GitAdapter {
+  findPull?(repository: GitRemoteRepository, source: string, target: string): Promise<GitPullRequest | null>;
+  createDraft?(repository: GitRemoteRepository, input: { source: string; target: string; title: string; body: string }, signal: AbortSignal): Promise<GitPullRequest>;
   actor(): Promise<GitActor>;
   repositories(page: number): Promise<GitPage<GitRemoteRepository>>;
   repository(fullName: string, externalId: string): Promise<GitRemoteRepository>;
@@ -36,10 +38,10 @@ export function createGitAdapterFactory(transport: GitTransport = createGitTrans
     const base = normalizeGitBaseURL(connection.provider, connection.baseURL);
     const github = connection.provider === "github";
     const api = github ? "https://api.github.com" : `${base}/api/v4`;
-    async function get(path: string) {
+    async function get(path: string, options?: Parameters<GitTransport>[2]) {
       return transport(new URL(api + path), github
         ? { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2026-03-10" }
-        : { "PRIVATE-TOKEN": token, Accept: "application/json" });
+        : { "PRIVATE-TOKEN": token, Accept: "application/json" }, options);
     }
     function repository(value: unknown): GitRemoteRepository {
       const r = record(value), fullName = text(github ? r.full_name : r.path_with_namespace);
@@ -55,7 +57,38 @@ export function createGitAdapterFactory(transport: GitTransport = createGitTrans
       try { return await action(); }
       catch (error) { if (error instanceof IssueInputError) throw error; throw new IssueInputError("The Git provider returned an invalid response or could not be reached. Retry the connection check."); }
     }
+    function pull(value: unknown, repo: GitRemoteRepository): GitPullRequest {
+      const r = record(value), number = remoteId(github ? r.number : r.iid);
+      const head = github ? record(r.head) : r;
+      const target = github ? record(r.base) : r;
+      const sha = text(github ? head.sha : r.sha, 64);
+      if (!/^[a-f0-9]{40,64}$/.test(sha)) throw new Error("Invalid revision");
+      return { number, url: `${base}/${validateRepositoryPath(repo.fullName, connection.provider)}/${github ? "pull" : "-/merge_requests"}/${number}`,
+        sourceBranch: validateBranch(text(github ? head.ref : r.source_branch)),
+        targetBranch: validateBranch(text(github ? target.ref : r.target_branch)), head: sha,
+        state: r.merged_at || r.state === "merged" ? "merged" : ["open", "opened"].includes(String(r.state)) ? "open" : "closed",
+        draft: r.draft === true || r.work_in_progress === true || /^(Draft:|WIP:)/i.test(String(r.title)),
+      };
+    }
     return {
+      findPull: (repo, source, target) => safe(async () => {
+        validateBranch(source); validateBranch(target);
+        const query = new URLSearchParams(github
+          ? { state: "all", head: `${repo.fullName.split("/")[0]}:${source}`, base: target, per_page: "100" }
+          : { scope: "all", source_branch: source, target_branch: target, per_page: "100" });
+        const rows = await get(`${repoPath(repo)}/${github ? "pulls" : "merge_requests"}?${query}`);
+        if (!Array.isArray(rows) || rows.length >= 100) throw new Error("Ambiguous pull request list");
+        const matches = rows.map(r => pull(r, repo)).filter(r => r.sourceBranch === source && r.targetBranch === target);
+        if (matches.length > 1) throw new IssueInputError("Multiple PRs/MRs use this branch. Resolve them on the provider before continuing.");
+        return matches[0] ?? null;
+      }),
+      createDraft: (repo, input, signal) => safe(async () => {
+        validateBranch(input.source); validateBranch(input.target); signal.throwIfAborted();
+        return pull(await get(`${repoPath(repo)}/${github ? "pulls" : "merge_requests"}`, { method: "POST", signal,
+          body: github ? { head: input.source, base: input.target, title: input.title, body: input.body, draft: true, maintainer_can_modify: false }
+            : { source_branch: input.source, target_branch: input.target, title: `Draft: ${input.title}`, description: input.body, remove_source_branch: false },
+        }), repo);
+      }),
       actor: () => safe(async () => {
         const r = record(await get("/user"));
         const id = remoteId(r.id), login = text(github ? r.login : r.username, 255);

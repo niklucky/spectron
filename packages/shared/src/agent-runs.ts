@@ -6,6 +6,7 @@ export const agentCommands = [
   "review-issue",
   "rewrite-issue",
   "create-plan",
+  "implement",
 ] as const;
 export type AgentCommand = (typeof agentCommands)[number];
 export const agentRunStates = [
@@ -27,12 +28,18 @@ export type AgentInvocation = AgentRunScope & {
   message: string;
   fileIds: string[];
   continuationId?: string | undefined;
+  publicationOnly?: boolean | undefined;
 };
 export type AgentResult = {
   summary: string;
   details: string;
   question?: string;
   rewrite?: Partial<IssueFields>;
+  verification?: {
+    command: string;
+    outcome: "passed" | "failed" | "not_run";
+    details: string;
+  }[];
 };
 export type AgentRunInput = {
   id: string;
@@ -49,6 +56,10 @@ export type AgentRunView = AgentRunScope & {
   command: AgentCommand;
   message: string;
   repositories: (GitRepository & { commit?: string })[];
+  implementation?: ImplementationOutcome[];
+  publicationOnly?: boolean;
+  canRetryPublication?: boolean;
+  retryMessage?: string;
   state: AgentRunState;
   stopRequested: boolean;
   attachments: { id: string; name: string }[];
@@ -94,4 +105,30 @@ export type AgentRunActions = {
   apply: (
     input: AgentRunScope & { id: string; expectedUpdatedAt?: string },
   ) => Promise<void>;
+};
+
+export type GitPullRequest = {
+  number: string;
+  url: string;
+  sourceBranch: string;
+  targetBranch: string;
+  state: "open" | "closed" | "merged";
+  draft: boolean;
+  head: string;
+};
+export type ImplementationOutcome = {
+  workspaceId: string;
+  repositoryId: string;
+  branch: string;
+  targetBranch: string;
+  status:
+    | "preparing"
+    | "saved"
+    | "publishing"
+    | "published"
+    | "unchanged"
+    | "failed";
+  commit?: string;
+  pull?: GitPullRequest;
+  error?: string | undefined;
 };

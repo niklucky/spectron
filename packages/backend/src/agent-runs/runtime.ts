@@ -1,3 +1,4 @@
+import { createWritableGit, type WritableGit } from "./writable-git";
 import {
   modelLimits,
   validateLimits,
@@ -11,6 +12,7 @@ import {
   providerRequestError,
 } from "./credential-proxy";
 import { spawn } from "node:child_process";
+import { StringDecoder } from "node:string_decoder";
 import {
   mkdir,
   writeFile,
@@ -30,10 +32,21 @@ import type {
 import { resolveHost } from "../network/dns";
 import { isPublicAddress } from "../project-logo/safe-fetch";
 import type { Run } from "./service";
-export type RepositoryCredential = { repository: GitRepository; token: string };
+export type RepositoryCredential = {
+  repository: GitRepository;
+  token: string;
+  author?: { name: string; email: string };
+  connection?: {
+    provider: GitRepository["provider"];
+    baseURL: string;
+    revision: number;
+  };
+};
 export type RuntimePreparation = {
   key: string;
   repositories: RepositoryCredential[];
+  preparationErrors?: Record<string, string>;
+  writable?: { repositoryId: string; workspaceId: string }[];
   attachments: {
     id: string;
     filename: string;
@@ -42,6 +55,7 @@ export type RuntimePreparation = {
   }[];
 };
 export interface AgentRuntime {
+  writableGit?: WritableGit;
   prepare(
     run: Run,
     config: RuntimePreparation,
@@ -83,6 +97,7 @@ export function processCommand(
     lines?: (line: string) => void;
     maxBytes?: number;
     failureMessage?: string;
+    acceptedExitCodes?: number[];
   } = {},
 ): Promise<string> {
   return new Promise((resolvePromise, reject) => {
@@ -92,6 +107,8 @@ export function processCommand(
       signal: options.signal,
       stdio: ["pipe", "pipe", "pipe"],
     });
+    const decoder = new StringDecoder("utf8");
+    let startError = false;
     let output = "",
       bytes = 0,
       overflow = false;
@@ -100,17 +117,23 @@ export function processCommand(
       if (bytes > (options.maxBytes ?? 2_000_000)) {
         overflow = true;
         child.kill("SIGKILL");
-      } else output += chunk.toString();
+      } else output += decoder.write(chunk);
     });
     child.stderr.on("data", () => {});
     if (options.lines)
       createInterface({ input: child.stdout }).on("line", options.lines);
-    child.on("error", () =>
-      reject(new Error(`${command} could not start or was cancelled.`)),
-    );
+    // Wait for close even on cancellation so callers cannot release a workspace
+    // while its Git process is still exiting.
+    child.on("error", () => {
+      startError = true;
+    });
     child.on("close", (code) =>
-      code === 0 && !overflow
-        ? resolvePromise(output)
+      !startError &&
+      !options.signal?.aborted &&
+      !overflow &&
+      code !== null &&
+      (options.acceptedExitCodes ?? [0]).includes(code)
+        ? resolvePromise(output + decoder.end())
         : reject(
             new Error(
               options.failureMessage ??
@@ -239,6 +262,26 @@ export function parseResult(text: string): AgentResult {
       value.question.length <= 10000
     )
       result.question = value.question;
+    if (Array.isArray(value.verification))
+      result.verification = value.verification
+        .slice(0, 100)
+        .flatMap((v: unknown) => {
+          if (!v || typeof v !== "object") return [];
+          const check = v as Record<string, unknown>;
+          return typeof check.command === "string" &&
+            check.command.length <= 2000 &&
+            typeof check.details === "string" &&
+            check.details.length <= 10000 &&
+            ["passed", "failed", "not_run"].includes(String(check.outcome))
+            ? [
+                {
+                  command: check.command,
+                  details: check.details,
+                  outcome: check.outcome as "passed" | "failed" | "not_run",
+                },
+              ]
+            : [];
+        });
     if (value.rewrite && typeof value.rewrite === "object") {
       const rw = value.rewrite as Record<string, unknown>;
       // Only explicitly supported issue fields; never spread untrusted model objects into a mutation.
@@ -318,6 +361,7 @@ export function createDockerAgentRuntime(options: {
   dns?: "system" | "cloudflare";
   privateOrigins?: string[];
 }): AgentRuntime {
+  const writableGit = createWritableGit(options);
   const root = resolve(options.root),
     image = options.image ?? "spectron-agent:1.18.30";
   const bridges = new Map<
@@ -338,6 +382,7 @@ export function createDockerAgentRuntime(options: {
     (options.privateOrigins ?? []).map((url) => new URL(url).origin),
   );
   return {
+    writableGit,
     async prepare(run, config, signal, activity) {
       const dir = directory(run.id);
       secrets.set(run.id, [
@@ -362,10 +407,18 @@ export function createDockerAgentRuntime(options: {
             throw new Error("Could not restore previous workspace notes.");
         });
       }
-      const repositories: Run["repositories"] = [];
+      const repositories: Run["repositories"] =
+        run.command === "implement" ? [...run.repositories] : [];
       for (const { repository: repo, token } of config.repositories) {
         signal.throwIfAborted();
         await activity(`Preparing ${repo.fullName} at ${repo.targetBranch}.`);
+        if (run.command === "implement") {
+          const workspace = config.writable?.find(
+            (w) => w.repositoryId === repo.id,
+          );
+          if (!workspace) throw new Error("Writable workspace unavailable.");
+          continue;
+        }
         const path = join(dir, "repos", repo.id);
         const existing = await readFile(
           join(dir, `${repo.id}.revision`),
@@ -494,6 +547,12 @@ export function createDockerAgentRuntime(options: {
           ? validateLimits(run.context.modelLimits)
           : modelLimits(run.agent),
       );
+      if (run.command === "implement")
+        Object.assign(modelConfig.permission, {
+          edit: "allow",
+          write: "allow",
+          apply_patch: "allow",
+        });
       modelConfig.provider.spectron.options.baseURL =
         "http://127.0.0.1:4780/v1";
       await writeFile(
@@ -505,7 +564,9 @@ export function createDockerAgentRuntime(options: {
               ...modelConfig.agent.spectron,
               prompt:
                 run.instructions +
-                "\nRead-only repository assistant. Return the requested JSON result; never disclose credentials.",
+                (run.command === "implement"
+                  ? "\nWritable repository assistant. Implement and verify requested code changes. Spectron handles commits and draft PR/MR publication; do not alter Git metadata or attempt remote writes. Return requested JSON; never disclose credentials."
+                  : "\nRead-only repository assistant. Return the requested JSON result; never disclose credentials."),
             },
           },
         }),
@@ -534,11 +595,22 @@ export function createDockerAgentRuntime(options: {
           "--memory=2g",
           "--cpus=2",
           "--user",
-          "0:0",
+          run.command === "implement"
+            ? `${process.getuid?.() ?? 0}:${process.getgid?.() ?? 0}`
+            : "0:0",
           "--tmpfs",
           "/tmp:rw,nosuid,nodev,size=256m",
-          "--mount",
-          `type=bind,src=${join(dir, "repos")},dst=/repos,readonly`,
+          ...(run.command === "implement"
+            ? (config.writable ?? []).flatMap((w) => [
+                "--mount",
+                `type=bind,src=${writableGit.paths(w.workspaceId).tree},dst=/repos/${w.repositoryId}`,
+                "--mount",
+                `type=bind,src=${join(writableGit.paths(w.workspaceId).root, "target.patch")},dst=/targets/${w.repositoryId}.patch,readonly`,
+              ])
+            : [
+                "--mount",
+                `type=bind,src=${join(dir, "repos")},dst=/repos,readonly`,
+              ]),
           "--mount",
           `type=bind,src=${join(dir, "attachments")},dst=/attachments,readonly`,
           "--mount",

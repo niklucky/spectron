@@ -84,3 +84,43 @@
 .agent-run-controls {
   margin-top: 10px;
 }
+
+.agent-implementation {
+  display: grid;
+  gap: 0.65rem;
+  margin-block: 0.8rem;
+}
+.agent-pull-card {
+  border: 1px solid var(--color-line);
+  border-radius: 0.5rem;
+  padding: 0.75rem;
+  overflow-wrap: anywhere;
+}
+.agent-pull-card p {
+  margin-block: 0.4rem;
+}
+.agent-branch-icon {
+  color: #8b8b93;
+  font-size: 1.2rem;
+}
+.agent-branch-icon.is-open {
+  color: #2a9d65;
+}
+.agent-branch-icon.is-merged {
+  color: #9566d4;
+}
+.agent-branch-icon.is-closed,
+.agent-check-failed {
+  color: #d44a55;
+}
+.agent-check-passed {
+  color: #2a9d65;
+}
+.agent-check-not_run {
+  color: var(--color-muted);
+}
+.agent-verification code,
+.agent-pull-card code {
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
