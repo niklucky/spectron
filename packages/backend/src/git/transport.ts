@@ -14,7 +14,7 @@ export function normalizeGitBaseURL(provider: GitProvider, input: string) {
     return url.href.replace(/\/+$/, "");
   } catch { throw new IssueInputError(provider === "github" ? "Use https://github.com for GitHub." : "Enter your GitLab HTTPS instance URL without credentials, query parameters, or fragments."); }
 }
-export type GitTransport = (url: URL, headers: Record<string, string>) => Promise<unknown>;
+export type GitTransport = (url: URL, headers: Record<string, string>, options?: { method: "POST"; body: unknown; signal?: AbortSignal }) => Promise<unknown>;
 export function gitStatusError(status: number) {
   return new IssueInputError(status === 401 || status === 403
     ? "The provider rejected this token or its permissions. Check expiry, repository access, and organization approval."
@@ -43,8 +43,9 @@ export function createGitTransport(
     }
   }));
   const resolveHostRequest = resolve;
-  return async (url, headers) => {
-    const signal = AbortSignal.timeout(20_000);
+  return async (url, headers, options) => {
+    const signal = AbortSignal.any([AbortSignal.timeout(20_000), ...(options?.signal ? [options.signal] : [])]);
+    const body = options ? JSON.stringify(options.body) : undefined;
     try {
       const hostname = url.hostname.replace(/^\[|\]$/g, "");
       const addresses = await new Promise<{ address: string; family: number }[]>((resolve, reject) => {
@@ -60,15 +61,15 @@ export function createGitTransport(
       const address = addresses.find(a => a.family === 4) ?? addresses[0]!;
       return await new Promise((resolve, reject) => {
         const req = request({ protocol: "https:", hostname: address.address, servername: isIP(hostname) ? "" : hostname, port: url.port || 443,
-          path: url.pathname + url.search, agent: false, signal,
-          headers: { ...headers, Host: url.host, "Accept-Encoding": "identity", "User-Agent": "Spectron" } }, res => {
+          path: url.pathname + url.search, agent: false, signal, method: options?.method ?? "GET",
+          headers: { ...headers, ...(body ? { "Content-Type": "application/json", "Content-Length": String(Buffer.byteLength(body)) } : {}), Host: url.host, "Accept-Encoding": "identity", "User-Agent": "Spectron" } }, res => {
           res.on("error", reject);
-          if (res.statusCode !== 200) { res.destroy(); reject(gitStatusError(res.statusCode ?? 500)); return; }
+          if (res.statusCode !== 200 && res.statusCode !== 201) { res.destroy(); reject(gitStatusError(res.statusCode ?? 500)); return; }
           let size = 0; const chunks: Buffer[] = [];
           res.on("data", (chunk: Buffer) => { size += chunk.length; if (size > 2 * 1024 * 1024) res.destroy(new Error("size")); else chunks.push(chunk); });
           res.on("end", () => { try { resolve(JSON.parse(Buffer.concat(chunks).toString("utf8"))); } catch { reject(new Error("json")); } });
         });
-        req.on("error", reject); req.end();
+        req.on("error", reject); req.end(body);
       });
     } catch (error) {
       if (error instanceof IssueInputError) throw error;

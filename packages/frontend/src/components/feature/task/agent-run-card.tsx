@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   createId,
   projectFileURL,
@@ -9,6 +9,7 @@ import {
 import { MessageMarkdown } from "../../ui/message-markdown";
 import { UserInfo } from "../../ui/avatar";
 import { Button } from "../../ui/button";
+import { Icon } from "../../ui/icon";
 import { formatDateTime } from "../../../lib/date-format";
 export function AgentRunCard({
   run,
@@ -21,6 +22,12 @@ export function AgentRunCard({
   changed: () => void;
   closed: boolean;
 }) {
+  useEffect(() => {
+    if (window.location.hash.endsWith(`/run/${run.id}`))
+      document
+        .getElementById(`agent-run-${run.id}`)
+        ?.scrollIntoView({ block: "center" });
+  }, [run.id]);
   const [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
     [writing, setWriting] = useState(false),
@@ -42,7 +49,11 @@ export function AgentRunCard({
     }
   }
   return (
-    <article className="agent-run-card" aria-label={`${run.agent.name} run`}>
+    <article
+      id={`agent-run-${run.id}`}
+      className="agent-run-card"
+      aria-label={`${run.agent.name} run`}
+    >
       <header>
         <UserInfo name={run.agent.name} image={run.agent.avatar} />
         <span className="agent-badge">AI</span>
@@ -67,6 +78,11 @@ export function AgentRunCard({
           </a>
         ))}
       </div>
+      {run.publicationOnly && (
+        <p className="muted">
+          Publication retry: no new model execution or checks.
+        </p>
+      )}
       <MessageMarkdown text={run.message} />
       {!!run.attachments?.length && (
         <ul>
@@ -112,6 +128,76 @@ export function AgentRunCard({
           </details>
         </div>
       )}
+      {!!run.result?.verification?.length && (
+        <section
+          aria-label="Verification results"
+          className="agent-verification"
+        >
+          <h4>Verification reported by the agent</h4>
+          <ul>
+            {run.result.verification.map((check, i) => (
+              <li key={i}>
+                <span className={`agent-check-${check.outcome}`}>
+                  {check.outcome.replace("_", " ")}
+                </span>{" "}
+                <code>{check.command}</code>
+                <p>{check.details}</p>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+      {!!run.implementation?.length && (
+        <section
+          aria-label="Implementation repositories"
+          className="agent-implementation"
+        >
+          {run.implementation.map((outcome) => {
+            const repo = run.repositories.find(
+              (r) => r.id === outcome.repositoryId,
+            );
+            return (
+              <div key={outcome.workspaceId} className="agent-pull-card">
+                <strong>{repo?.fullName ?? "Repository"}</strong>
+                <p>
+                  <span
+                    className={`agent-branch-icon is-${outcome.pull?.state ?? "draft"}`}
+                    aria-hidden="true"
+                  >
+                    <Icon name="branch" size={16} />
+                  </span>{" "}
+                  <code>{outcome.branch}</code> →{" "}
+                  <code>{outcome.targetBranch}</code>
+                </p>
+                {outcome.pull && (
+                  <a href={outcome.pull.url} target="_blank" rel="noreferrer">
+                    {repo?.provider === "gitlab" ? "MR" : "PR"} #
+                    {outcome.pull.number} ·{" "}
+                    {outcome.pull.state === "open" && outcome.pull.draft
+                      ? "Draft"
+                      : outcome.pull.state}
+                  </a>
+                )}
+                <p role="status">
+                  {outcome.status === "unchanged"
+                    ? "No changes to publish"
+                    : outcome.status === "published"
+                      ? "Published"
+                      : outcome.status === "publishing" && !active
+                        ? "Publication needs reconciliation"
+                        : outcome.status.replace("_", " ")}
+                  {outcome.commit ? ` · ${outcome.commit.slice(0, 8)}` : ""}
+                </p>
+                {outcome.error && <p role="alert">{outcome.error}</p>}
+              </div>
+            );
+          })}
+          <small>
+            Each repository is published separately. PR/MR status reflects the
+            last execution.
+          </small>
+        </section>
+      )}
       {run.result?.rewrite && (
         <details>
           <summary>Proposed issue changes</summary>
@@ -147,19 +233,78 @@ export function AgentRunCard({
       </details>
       {run.canControl && (
         <div className="agent-run-controls">
-          {!closed && (!(active || waiting) || !run.stopRequested) && (
-            <Button
-              variant="ghost"
-              disabled={busy}
-              onClick={() => setWriting((v) => !v)}
-            >
-              {waiting
-                ? "Reply and resume"
-                : active
-                  ? "Send instructions"
-                  : "Continue"}
-            </Button>
-          )}
+          {!closed &&
+            !(active && run.publicationOnly) &&
+            (!(active || waiting) || !run.stopRequested) && (
+              <Button
+                variant="ghost"
+                disabled={busy}
+                onClick={() => setWriting((v) => !v)}
+              >
+                {waiting
+                  ? "Reply and resume"
+                  : active
+                    ? "Send instructions"
+                    : "Continue"}
+              </Button>
+            )}
+          {!closed &&
+            !active &&
+            !waiting &&
+            run.command === "implement" &&
+            (run.state === "failed" ||
+              run.state === "stopped" ||
+              run.publicationOnly) && (
+              <Button
+                variant="ghost"
+                disabled={busy}
+                onClick={() =>
+                  void act(() =>
+                    actions.invoke({
+                      projectId: run.projectId,
+                      issueId: run.issueId,
+                      requestId: createId(),
+                      agentId: run.agent.id,
+                      command: "implement",
+                      repositoryIds: run.repositories.map((r) => r.id),
+                      message: run.retryMessage ?? run.message,
+                      fileIds: run.attachments.map((f) => f.id),
+                      continuationId: run.id,
+                    }),
+                  )
+                }
+              >
+                Retry implementation
+              </Button>
+            )}
+          {!closed &&
+            !active &&
+            !waiting &&
+            run.canRetryPublication &&
+            run.command === "implement" && (
+              <Button
+                variant="ghost"
+                disabled={busy}
+                onClick={() =>
+                  void act(() =>
+                    actions.invoke({
+                      projectId: run.projectId,
+                      issueId: run.issueId,
+                      requestId: createId(),
+                      agentId: run.agent.id,
+                      command: "implement",
+                      repositoryIds: run.repositories.map((r) => r.id),
+                      message: "Retry publishing saved implementation changes.",
+                      fileIds: [],
+                      continuationId: run.id,
+                      publicationOnly: true,
+                    }),
+                  )
+                }
+              >
+                Retry publication
+              </Button>
+            )}
           {(active || waiting || run.containerRetained) && (
             <Button
               variant="ghost"

@@ -1,7 +1,7 @@
 # AI agents and Git workflow — v1 specification
 
-Status: Stages 1–3 implemented; Stages 4–5 not started. See [Stage 1 notes](ai-agents-stage-1.md), [Stage 2 notes](ai-agents-stage-2.md), and [Stage 3 notes](ai-agents-stage-3.md).
-Last updated: 2026-09-10.
+Status: Stages 1–4 implemented; Stage 5 not started. See [Stage 1 notes](ai-agents-stage-1.md), [Stage 2 notes](ai-agents-stage-2.md), [Stage 3 notes](ai-agents-stage-3.md), and [Stage 4 notes](ai-agents-stage-4.md).
+Last updated: 2026-09-11.
 
 This document captures the decisions made with the project owner and is the handoff for future implementation sessions. The stages below are ordered, independently reviewable increments. Update their status and continuation notes as work lands. Technical suggestions are identified separately from agreed behavior.
 
@@ -293,7 +293,7 @@ Useful official references, to recheck at implementation time:
 
 ## 12. Implementation stages and acceptance criteria
 
-**Stages 1–3 are implemented**; Stages 4–5 are **not started**. Each stage should include appropriate migrations, browser-safe contracts, UI, authorization, error states, and focused verification. Do not implement later stages merely to make an earlier stage look complete.
+**Stages 1–4 are implemented**; Stage 5 is **not started**. Each stage should include appropriate migrations, browser-safe contracts, UI, authorization, error states, and focused verification. Do not implement later stages merely to make an earlier stage look complete.
 
 ### Stage 1 — AI connections and agents
 
@@ -334,11 +334,11 @@ Acceptance: a repository-backed discussion survives page reloads; only explicit 
 
 Depends on Stage 3.
 
-- [ ] Writable execution and recoverable unfinished changes.
-- [ ] Branch creation, contribution notes, pushes, and automatic draft PR/MR creation for both providers.
-- [ ] Existing-branch/PR/MR continuation and one-writer enforcement.
-- [ ] Summary, verification outcomes, Markdown details, and basic linked PR/MR cards.
-- [ ] Per-repository outcomes for multi-repository runs and reconciliation of uncertain remote writes.
+- [x] Writable execution and recoverable unfinished changes.
+- [x] Branch creation, contribution notes, pushes, and automatic draft PR/MR creation for both providers.
+- [x] Existing-branch/PR/MR continuation and one-writer enforcement.
+- [x] Summary, verification outcomes, Markdown details, and basic linked PR/MR cards.
+- [x] Per-repository outcomes for multi-repository runs and reconciliation of uncertain remote writes.
 
 Acceptance: implement an issue and create a correctly attributed draft PR/MR; a follow-up updates the same work; retries do not duplicate it; unfinished changes survive recovery; concurrent writers cannot collide; failed work does not produce an empty PR/MR. No inline diff viewer or separate create approval is introduced.
 
@@ -375,13 +375,13 @@ Do not resolve these by adding autonomous babysitting or a repository environmen
 
 ## 14. Next-session handoff
 
-Current state: Stages 1–3 are implemented. Account agents, project Git integrations, repository-backed chat commands, durable runs, OpenCode containers, results, rewrite Apply, and stop/resume/continuation are available. See [Stage 3 notes](ai-agents-stage-3.md) for setup, verified behavior, and live-provider limits. The local server/worker is enabled, and the project owner confirmed that a live issue review succeeded.
+Current state: Stages 1–4 are implemented. `/implement` uses durable writable workspaces, attributed commits, guarded pushes, automatic draft PR/MR creation, existing-branch continuation, and per-repository chat outcomes. Publication-only retries reconcile saved work without another model call. See [Stage 4 notes](ai-agents-stage-4.md) for setup, recovery, verification, and remaining live-provider checks. The local migration is applied and the persistent app/worker is running.
 
-Recommended next action after acceptance/review: **implement Stage 4 — Implementation and draft PR/MR creation**. Keep reviews, provider discussions, takeover, and merge controls in Stage 5.
+Recommended next action: **user acceptance and PR review**, then **Stage 5A — Review drafts**. Keep provider activity/discussions in 5B, feedback fixes and takeover in 5C, and merge controls in 5D.
 
 Suggested continuation request:
 
-> Read `docs/ai-agents-v1-spec.md` and the Stage 3 implementation notes, then implement Stage 4. Preserve the agreed v1 scope. Add writable recoverable workspaces, attributed branches/commits, pushes, automatic draft PR/MR creation and continuation, and durable reconciliation. Verify both provider boundaries and update the handoff notes.
+> Read `docs/ai-agents-v1-spec.md` and the Stage 4 implementation notes, then implement Stage 5A — review drafts. Preserve the agreed v1 scope: review-code, PR/MR selection, reviewed revisions, editable/dismissible findings, explicit publication, stale finding checks, and durable publication tracking.
 
 After each implementation session, record:
 
@@ -405,3 +405,5 @@ After each implementation session, record:
 - 2026-09-10: Implemented Stage 3 end to end. Migration `0021_agent_runs.sql`; agent/command composer controls and repository chips; durable snapshots, inputs and run cards; OpenCode 1.18.30 Docker worker with read-only source, host-side AI credential proxy, results, rewrite Apply, queued steering, stop/closure cleanup, idle retention and restored continuation. Isolated database/API tests, real Docker/OpenCode tests with local provider fixtures, browser component walkthroughs, and a real selected GitLab clone were exercised. A live OpenCode connection test succeeded after fixing POST forwarding in the credential proxy; the project owner also confirmed a successful issue review. Next: PR review, then Stage 4. Details: [Stage 3 notes](ai-agents-stage-3.md).
 
 - Stage 3 PR review follow-up: guarded unacknowledged steering and capped consecutive turns; preserved successful results during closure cleanup (migration `0022_agent_run_closure.sql`); bounded history and model-specific prompt capacity; isolated run containers with networking disabled and a loopback gateway over Docker process I/O; added rewrite comparison/revision recovery; reduced idle polling and authorization frequency; distinguished interruptions from user stops. All 22 Stage 3 tests, workspace typechecks, and production builds passed; isolated live model generation and browser comparison/Apply were verified.
+
+- 2026-09-11: Implemented Stage 4. Migration `0023_agent_implementations.sql`; durable writable per-issue/repository workspaces and writer reservations; host-side attributed Git commits and leased pushes; automatic GitHub draft PR/GitLab draft MR creation; continuation, lost-response reconciliation, publication-only retry, and per-repository chat cards/check outcomes. All 26 agent tests (including real Docker/OpenCode and Git fixtures), 14 Git regressions, workspace typechecks, and production builds passed. Browser composer/cards/retry were checked; persistent servers are running. Live provider pushes and PR/MR creation remain untested. Next: user acceptance/PR review, then Stage 5A. Details: [Stage 4 notes](ai-agents-stage-4.md).

@@ -861,6 +861,7 @@ export const agentRun = pgTable('agent_runs', {
   command: text('command').$type<import('@spectron/shared').AgentCommand>().notNull(),
   message: text('message').notNull(),
   repositories: jsonb('repositories').$type<(import('@spectron/shared').GitRepository & { commit?: string })[]>().notNull(),
+  implementation: jsonb('implementation').$type<import('@spectron/shared').ImplementationOutcome[]>().default([]).notNull(),
   context: jsonb('context').$type<Record<string, unknown>>().notNull(),
   instructions: text('instructions').notNull(), connectionId: text('connection_id').notNull(),
   state: text('state').$type<import('@spectron/shared').AgentRunState>().default('queued').notNull(),
@@ -887,3 +888,22 @@ export const agentRunEvent = pgTable('agent_run_events', {
   id: text('id').$defaultFn(createId).primaryKey(), runId: text('run_id').notNull().references(() => agentRun.id, { onDelete: 'cascade' }),
   message: text('message').notNull(), createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 }, t => [index('agent_run_events_run_idx').on(t.runId, t.createdAt)]);
+
+// A workspace survives runs. Ownership is released only after all container tools stop.
+export const agentWorkspace = pgTable("agent_workspaces", {
+  id: text("id").$defaultFn(createId).primaryKey(),
+  projectId: text("project_id").notNull(), issueId: text("issue_id").notNull(),
+  repositoryId: text("repository_id").notNull().references(() => gitRepository.id, { onDelete: "restrict" }),
+  lastRunId: text("last_run_id"),
+  contributions: jsonb("contributions").$type<{ runId: string; agentName: string; requesterName: string }[]>().default([]).notNull(),
+  branch: text("branch").notNull(), targetBranch: text("target_branch").notNull(),
+  ownerRunId: text("owner_run_id").references(() => agentRun.id, { onDelete: "restrict" }),
+  baseCommit: text("base_commit"), headCommit: text("head_commit"), remoteCommit: text("remote_commit"),
+  pull: jsonb("pull").$type<import('@spectron/shared').GitPullRequest>(),
+  pending: jsonb("pending").$type<{ commit: string; expectedRemote: string | null; title: string; body: string; runId: string }>(),
+  ...dates(),
+}, t => [
+  foreignKey({ columns: [t.projectId, t.issueId], foreignColumns: [issue.projectId, issue.id], name: "agent_workspaces_issue_fk" }).onDelete("restrict"),
+  uniqueIndex("agent_workspaces_issue_repo_unique").on(t.issueId, t.repositoryId),
+  uniqueIndex("agent_workspaces_branch_unique").on(t.repositoryId, t.branch),
+]);

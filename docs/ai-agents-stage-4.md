@@ -1,0 +1,51 @@
+# Implementation and draft PR/MR creation — Stage 4
+
+Implemented 2026-09-11. Stage 5 remains next.
+
+## Try it locally
+
+The persistent app is running at `http://localhost:5187` and the API/worker at `http://localhost:3105`. Migration `0023_agent_implementations.sql` is applied to the existing development database. Existing users, integrations, repositories, and issues are preserved.
+
+1. In Project settings → Git integrations, configure a commit author name and email associated with the connection's provider identity. A successful connection check alone does not establish write permission. An account with a private email may require entering its provider noreply address explicitly.
+2. Open an issue, select an agent, choose `/implement`, select repositories, and send the implementation request. This authorizes branch push and automatic **draft** PR/MR creation; there is no extra creation approval.
+3. Inspect the summary, Markdown details, verification reported by the agent, and per-repository results. A successful repository can publish even when another repository fails. The issue stays open.
+4. Continue starts a fresh container on the same saved source tree and working branch. Needs input reserves the workspace and requires Reply and resume or Stop. A different run cannot acquire that writer's workspace until execution and cleanup finish.
+5. After a preparation or execution failure, **Retry implementation** runs the saved request with the same agent in a new run. It also recovers the original request from an older publication-only retry. **Retry publication** is available only when a saved publication checkpoint is pending; the API rejects it when there is nothing to publish. After a publication failure, **Retry publication** creates a durable retry using saved changes and results, without another model call. Use the latest run for that workspace: older retries are rejected after newer work starts. A normal continuation also reconciles an unfinished publication before asking the model for further work.
+
+GitHub requires repository Contents write for pushes and Pull requests write for PR creation, with access to each selected repository and any applicable organization authorization. GitLab needs API access for MR operations and Git-over-HTTPS write access (for example, an appropriately scoped personal access token with `api`/`write_repository`). Branch protections and provider permissions still apply. See [GitHub create pull request](https://docs.github.com/en/rest/pulls/pulls#create-a-pull-request) and [GitLab merge request API](https://docs.gitlab.com/api/merge_requests/#create-mr), and [GitLab token scopes](https://docs.gitlab.com/user/profile/personal_access_tokens/).
+
+## Workspaces, attribution, and isolation
+
+- `agent_workspaces` holds one implementation workspace per issue/repository, its `spectron/<workspace-id>` branch, fixed target branch, writer reservation, base/local/remote commits, linked PR/MR, pending publication, latest run, and outstanding contribution history. `agent_runs.implementation` keeps each run's per-repository outcomes.
+- The durable host layout is `<AGENT_WORKSPACES_ROOT>/workspaces/<workspace-id>/{source,git,ready,target.patch}`. Back up this directory together with the database. Missing established workspace data fails visibly; it is never replaced by a fresh clone that discards edits.
+- Source files are writable in the container, which runs as the host worker UID/GID so saved files remain accessible on Linux as well as Docker Desktop. Git metadata, API credentials, Git credentials, Docker access, and application data are outside its mounts. Source cannot supply host Git config or hooks. Git operations use protected metadata and a clean environment; nested agent-created `.git` entries block publication. Source symlinks are not traversed while checking for Git metadata.
+- Containers retain Stage 3's network isolation and model-only relay. Repository dependencies already on disk survive subsequent containers. Package downloads and advanced environments remain deferred. Source-based Git commands are unavailable because metadata is deliberately outside the container; checks requiring that metadata may need to be reported as unavailable.
+- The target branch is fetched without resetting the working tree. `/targets/<repository-id>.patch` provides changes since the implementation base for plan revalidation. A target patch beyond the existing 2 MB command-output bound fails that repository visibly.
+- Writable containers are **removed immediately when execution pauses or finishes**, before any commit/push. This stops background tools, preserves the bind-mounted work, and allows safe writer release after publication. Read-only runs retain Stage 3's three-hour idle policy. Needs-input work keeps its reservation even after its container is gone.
+- Host Git creates commits with the integration's explicit author/committer and contribution trailers for issue, agent, requester, and run. Outstanding contributions from earlier interrupted runs remain attached when later work commits their edits. PR/MR descriptions include issue/run links and contribution context; later commits carry their own attribution without rewriting earlier descriptions.
+
+## Publication and recovery
+
+- Publication snapshots the protected local branch, records a pending commit and expected remote head **before** remote writes, then pushes and finds/creates the draft. An unchanged initial workspace produces no PR/MR.
+- If a push response is lost, retry checks whether the remote already equals the pending commit. Otherwise its head must equal the saved expected revision. An ancestry check and an explicit Git lease prevent both destructive rewrites and a race after checking the branch.
+- If a create response is lost, retry looks up the same source/target pair, including closed/merged requests, before any create. GitHub and GitLab also reject duplicate open requests for that pair. Uncertain failures remain visible; there is no background paid replay or automatic publication loop.
+- Publication checks current project/agent/repository access, Git connection revision, issue state, run claim/lease, and workspace ownership. Database locks serialize publication starts with Stop/closure and integration changes. An already-started remote request can finish; cancellation prevents the next write. Completed remote effects cannot be undone by closing the issue.
+- Cleanup failure retains writer ownership and retries cleanup. A stale worker cannot release another claim's workspace. Failed/interrupted runs preserve available output, files, local commits, and pending operations.
+- A changed remote working branch fails safely and preserves local work. Automatic rebasing/merging of external branch edits is not implemented: reconcile the protected workspace/branch on the runner before continuing. Already closed/merged PRs are not replaced automatically. Requests marked ready must return to draft on the provider before further Stage 4 writes.
+- Cards show the last observed PR/MR state and commit with a provider link. Checks are clearly labeled as agent-reported. Live activity sync, reviewer/comment counts, review drafts, takeover, and merge actions belong to Stage 5.
+
+## Verification
+
+- `TEST_AGENT_DOCKER=true pnpm test:agent-runs`: **26 passed**. Includes isolated PostgreSQL/API tests for reservations, continuation, Needs input, cancellation, mixed-repository partial success, no-change publication, lost push/create response recovery, and publication-only retries with no model call.
+- Real Git tests use a temporary bare remote: protected metadata, saved unfinished edits, explicit author and trailers, idempotent commits/pushes, and refusal to overwrite a changed remote branch. Network boundaries are mapped to the fixture; no external repository is modified.
+- Real Docker/OpenCode tests include an actual write-tool edit with a deterministic local provider, writable-source recovery after container removal, absence of Git metadata and real keys from mounts/configuration, plus the existing read-only, streaming, steering, model-format, and network-isolation regressions.
+- `pnpm test:git`: **14 passed**. Both draft adapters additionally have request/response contract tests for authenticated endpoints, draft fields, source/target lookup, closed state, and trusted links.
+- All workspace typechecks and both production builds passed. The existing app bundle-size warning remains (about 615 kB); Turbo also reported restricted cache-write warnings while completing all build tasks.
+- Browser: actual issue composer lists `/implement`; a temporary component fixture verified grouped draft MR and failed-repository cards, verification outcomes, and Retry publication. Fixture files and tab were removed. No issue or provider data was created for this check.
+- **Live GitHub/GitLab pushes and PR/MR creation have not been exercised.** No paid model requests were needed for these tests. The user can test `/implement` with a small change in an appropriate connected repository.
+
+Main files: `packages/backend/src/agent-runs/{implementation,workspaces,writable-git,worker,runtime,service,prompt}.ts`, `packages/backend/src/git/{provider,transport}.ts`, shared run contracts, run-card/composer UI, migration `0023_agent_implementations.sql`, and `packages/api/test/agent-implementation.test.ts` plus the existing agent service suite.
+
+Next: user acceptance and PR review, then **Stage 5A — review drafts**. Keep provider activity/discussions in 5B, address-feedback/takeover in 5C, and merge permissions/actions in 5D.
+
+Stage 4 acceptance fix: missing Git author email prevents model execution. The prior UI incorrectly offered publication-only retry for that preparation failure, yielding an empty successful run. Added Retry implementation, original-request recovery through publication retries, and pending-publication validation in the API/UI. The reproduced missing-email flow and legacy no-op recovery pass in the agent regression suite (23 passed, 3 unchanged Docker tests skipped); workspace typechecks and both builds pass. No paid or remote-write run was started during this fix.

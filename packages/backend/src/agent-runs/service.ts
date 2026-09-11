@@ -1,3 +1,4 @@
+import { reserveWorkspaces } from "./workspaces";
 import { modelLimits, promptByteBudget } from "./model-limits";
 import { runPrompt } from "./prompt";
 import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
@@ -108,6 +109,9 @@ export function createAgentRunService(db: Database, files: FileService) {
           command: r.command,
           message: r.message,
           repositories: r.repositories,
+          implementation: r.implementation,
+          continuationId: sql<string | null>`${r.context}->>'continuationId'`,
+          publicationOnly: sql<boolean>`coalesce((${r.context}->>'publicationOnly')::boolean, false)`,
           state: r.state,
           stopRequested: r.stopRequested,
           result: r.result,
@@ -125,7 +129,7 @@ export function createAgentRunService(db: Database, files: FileService) {
         .orderBy(asc(r.createdAt));
       if (!rows.length) return [];
       const ids = rows.map((row) => row.id);
-      const [inputs, events] = await Promise.all([
+      const [inputs, events, workspaces] = await Promise.all([
         db
           .select()
           .from(input)
@@ -136,9 +140,32 @@ export function createAgentRunService(db: Database, files: FileService) {
           .from(event)
           .where(inArray(event.runId, ids))
           .orderBy(asc(event.createdAt), asc(event.id)),
+        db
+          .select({
+            lastRunId: schema.agentWorkspace.lastRunId,
+            ownerRunId: schema.agentWorkspace.ownerRunId,
+            pending: sql<boolean>`${schema.agentWorkspace.pending} IS NOT NULL`,
+          })
+          .from(schema.agentWorkspace)
+          .where(eq(schema.agentWorkspace.issueId, scope.issueId)),
       ]);
-      return rows.map((row) => ({
+      const byId = new Map(rows.map((row) => [row.id, row]));
+      const retryMessage = (row: (typeof rows)[number]) => {
+        const seen = new Set<string>();
+        while (row.publicationOnly && row.continuationId && !seen.has(row.id)) {
+          seen.add(row.id);
+          const parent = byId.get(row.continuationId);
+          if (!parent) break;
+          row = parent;
+        }
+        return row.message;
+      };
+      return rows.map(({ continuationId: _continuationId, ...row }) => ({
         ...row,
+        retryMessage: retryMessage(byId.get(row.id)!),
+        canRetryPublication: workspaces.some(
+          (w) => w.lastRunId === row.id && !w.ownerRunId && w.pending,
+        ),
         createdAt: row.createdAt.toISOString(),
         updatedAt: row.updatedAt.toISOString(),
         appliedAt: row.appliedAt?.toISOString() ?? null,
@@ -170,7 +197,13 @@ export function createAgentRunService(db: Database, files: FileService) {
       for (const id of args.fileIds)
         await files.download(userId, args.projectId, id);
       return db.transaction(async (tx) => {
-        const current = await runAccess(tx, userId, args, true);
+        const current = await runAccess(
+          tx,
+          userId,
+          args,
+          true,
+          args.command === "implement",
+        );
         const [duplicate] = await tx
           .select({ id: r.id, issueId: r.issueId })
           .from(r)
@@ -250,6 +283,15 @@ export function createAgentRunService(db: Database, files: FileService) {
           )
             throw new IssueInputError("Select a finished run to continue.");
         }
+        if (
+          args.publicationOnly &&
+          (args.command !== "implement" ||
+            continuation?.command !== "implement" ||
+            continuation.agentId !== args.agentId)
+        )
+          throw new IssueInputError(
+            "Select a finished implementation by this agent to retry publication.",
+          );
         const attached = await tx
           .select({ projectFileId: schema.issueAttachment.projectFileId })
           .from(schema.issueAttachment)
@@ -306,6 +348,12 @@ export function createAgentRunService(db: Database, files: FileService) {
         const limits = modelLimits(agent);
         const context = {
           modelLimits: limits,
+          projectKey: (
+            await tx
+              .select({ key: project.key })
+              .from(project)
+              .where(eq(project.id, args.projectId))
+          )[0]!.key,
           issue: { ...current.issue, tagIds: tags.map((t) => t.id) },
           settings,
           people,
@@ -323,6 +371,17 @@ export function createAgentRunService(db: Database, files: FileService) {
             ]),
           ],
           continuationId: continuation?.id ?? null,
+          publicationOnly: !!args.publicationOnly,
+          ...(args.publicationOnly && continuation?.result
+            ? {
+                publicationResult: {
+                  ...continuation.result,
+                  details: continuation.result.details.slice(0, 30000),
+                  question: undefined,
+                  rewrite: undefined,
+                },
+              }
+            : {}),
         };
         const attachedFiles = context.fileIds.length
           ? await tx
@@ -364,7 +423,7 @@ export function createAgentRunService(db: Database, files: FileService) {
           finalContext.previous.shift();
         while (promptSize() > budget && finalContext.earlierInputs.length)
           finalContext.earlierInputs.shift();
-        if (promptSize() > budget)
+        if (!args.publicationOnly && promptSize() > budget)
           throw new IssueInputError(
             `This issue and its instructions exceed the model's ${budget.toLocaleString("en-US")}-byte input budget after omitting prior agent history. Shorten the issue conversation, description, or agent instructions.`,
           );
@@ -388,7 +447,13 @@ export function createAgentRunService(db: Database, files: FileService) {
           })
           .onConflictDoNothing()
           .returning({ id: r.id });
-        if (created) return created;
+        if (created) {
+          if (args.command === "implement") {
+            const [run] = await tx.select().from(r).where(eq(r.id, created.id));
+            await reserveWorkspaces(tx, run!, repositories);
+          }
+          return created;
+        }
         const [retry] = await tx
           .select({ id: r.id })
           .from(r)
@@ -426,6 +491,10 @@ export function createAgentRunService(db: Database, files: FileService) {
     ) {
       await db.transaction(async (tx) => {
         const row = await controlled(tx, userId, args);
+        if (row.context.publicationOnly)
+          throw new IssueInputError(
+            "This run only retries publication. Start a continuation for new agent instructions.",
+          );
         if (
           row.stopRequested ||
           !["queued", "preparing", "working", "needs_input"].includes(row.state)

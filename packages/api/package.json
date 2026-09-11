@@ -23,7 +23,7 @@
     "test:integrations": "node --import tsx --test test/tracker.test.ts test/jira.test.ts test/export-sync.test.ts",
     "test:exports": "node --import tsx --test test/export-sync.test.ts",
     "test:git": "tsx --test test/git.test.ts",
-    "test:agent-runs": "tsx --test test/agent-runs.test.ts test/agent-runtime.test.ts test/agent-proxy.test.ts"
+    "test:agent-runs": "tsx --test test/agent-runs.test.ts test/agent-runtime.test.ts test/agent-proxy.test.ts test/agent-implementation.test.ts"
   },
   "dependencies": {
     "@hono/node-server": "2.1.1",

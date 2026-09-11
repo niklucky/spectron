@@ -217,7 +217,7 @@ const runRef = runScope.extend({ id: applicationId });
 export const appRouter = t.router({
   runs: t.router({
     list: authenticated.input(runScope).query(({ ctx, input }) => ctx.runs.list(ctx.userId, input)),
-    invoke: authenticated.input(runScope.extend({ requestId: applicationId, agentId: applicationId, command: z.enum(agentCommands), repositoryIds: z.array(applicationId).min(1).max(50), message: z.string().trim().min(1).max(100000), fileIds: z.array(applicationId).max(20), continuationId: applicationId.optional() })).mutation(({ ctx, input }) => ctx.runs.invoke(ctx.userId, input)),
+    invoke: authenticated.input(runScope.extend({ requestId: applicationId, agentId: applicationId, command: z.enum(agentCommands), repositoryIds: z.array(applicationId).min(1).max(50), message: z.string().trim().min(1).max(100000), fileIds: z.array(applicationId).max(20), continuationId: applicationId.optional(), publicationOnly: z.boolean().optional() })).mutation(({ ctx, input }) => ctx.runs.invoke(ctx.userId, input)),
     stop: authenticated.input(runRef).mutation(({ ctx, input }) => ctx.runs.stop(ctx.userId, input)),
     instruct: authenticated.input(runRef.extend({ requestId: applicationId, message: z.string().trim().min(1).max(100000) })).mutation(({ ctx, input }) => ctx.runs.instruct(ctx.userId, input)),
     previewRewrite: authenticated.input(runRef).query(({ ctx, input }) => ctx.runs.previewRewrite(ctx.userId, input)),

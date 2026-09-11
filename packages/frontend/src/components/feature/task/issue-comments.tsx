@@ -845,6 +845,12 @@ export function CommentEditor({
                 ))}
               </select>
             </label>
+            {command === "implement" && agentId && (
+              <small>
+                Implements changes and automatically publishes a draft PR/MR for
+                each selected repository.
+              </small>
+            )}
             {command !== "discuss" && !agentId && (
               <small>Select an agent to run this command.</small>
             )}
