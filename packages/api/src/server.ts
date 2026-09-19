@@ -1,3 +1,4 @@
+import { createGitWorkflow } from "@spectron/backend";
 import { config } from "dotenv";
 import { fileURLToPath } from "node:url";
 import { serve } from "@hono/node-server";
@@ -77,6 +78,7 @@ const stopAgents = process.env.AGENT_RUNNER_ENABLED === 'true'
     }), { ...apiOptions, gitFactory: createGitAdapterFactory(createGitTransport(apiOptions.gitlabAllowedPrivateOrigins, { dns: apiOptions.gitProviderDNS })), appURL: APP_URL, idleHours: Number(process.env.AGENT_IDLE_HOURS || 3) }).start()
   : async () => {};
 
+const stopGitWorkflow = createGitWorkflow(db, apiOptions.integrationSecret, createGitAdapterFactory(createGitTransport(apiOptions.gitlabAllowedPrivateOrigins, { dns: apiOptions.gitProviderDNS }))).start();
 const stopScheduler = createJiraScheduler(
   db,
   createJiraService(
@@ -95,7 +97,7 @@ const server = serve(
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.once(signal, () => {
     server.close(() => {
-      void Promise.all([stopScheduler(), stopExports(), stopAgents()])
+      void Promise.all([stopScheduler(), stopExports(), stopAgents(), stopGitWorkflow()])
         .then(() => pool.end())
         .then(() => process.exit(0));
     });

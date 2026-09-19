@@ -214,10 +214,28 @@ const trackerMapping = z.record(
 const exportScope = z.object({ projectId: applicationId, provider: z.enum(["jira", "tracker"]) });
 const runScope = z.object({ projectId: applicationId, issueId: applicationId }).strict();
 const runRef = runScope.extend({ id: applicationId });
+const workspaceRef = runScope.extend({ workspaceId: applicationId });
 export const appRouter = t.router({
+  gitWorkflow: t.router({
+    list: authenticated.input(runScope).query(({ctx,input}) => ctx.gitWorkflow.list(ctx.userId,input)),
+    refresh: authenticated.input(workspaceRef).mutation(({ctx,input}) => ctx.gitWorkflow.refresh(ctx.userId,input)),
+    saveReply: authenticated.input(workspaceRef.extend({discussionId:applicationId,body:z.string().trim().min(1).max(20000),id:applicationId.optional(),revision:z.number().int().positive().optional()})).mutation(({ctx,input}) => ctx.gitWorkflow.saveReply(ctx.userId,input)),
+    publishReply: authenticated.input(workspaceRef.extend({id:applicationId,revision:z.number().int().positive(),requestId:applicationId})).mutation(({ctx,input}) => ctx.gitWorkflow.publishReply(ctx.userId,input)),
+    act: authenticated.input(workspaceRef.extend({requestId:applicationId,kind:z.enum(['resolve','reopen','ready','merge','close']),expectedHead:z.string().regex(/^[a-f0-9]{40,64}$/),discussionId:applicationId.optional(),mergeMethod:z.enum(['merge','squash','rebase']).optional()})).mutation(({ctx,input}) => ctx.gitWorkflow.act(ctx.userId,input)),
+    reconcile: authenticated.input(workspaceRef.extend({id:applicationId,retry:z.boolean().optional()})).mutation(({ctx,input}) => ctx.gitWorkflow.reconcile(ctx.userId,input)),
+    permissions: authenticated.input(gitProject).query(({ctx,input}) => ctx.gitWorkflow.permissions(ctx.userId,input.projectId)),
+    setMergeGrant: authenticated.input(gitProject.extend({userId:applicationId,canMerge:z.boolean()})).mutation(({ctx,input}) => ctx.gitWorkflow.setMergeGrant(ctx.userId,input)),
+    webhookSettings: authenticated.input(gitProject).query(({ctx,input}) => ctx.gitWorkflow.webhookSettings(ctx.userId,input.projectId)),
+    setWebhook: authenticated.input(gitProject.extend({connectionId:applicationId,secret:z.string().min(32).max(4096).nullable()})).mutation(({ctx,input}) => ctx.gitWorkflow.setWebhook(ctx.userId,input)),
+  }),
   runs: t.router({
+    takeover: authenticated.input(runRef.extend({requestId:applicationId,agentId:applicationId,message:z.string().trim().min(1).max(100000)})).mutation(({ctx,input})=>ctx.runs.takeover(ctx.userId,input)),
+    address: authenticated.input(runScope.extend({requestId:applicationId,agentId:applicationId,message:z.string().max(100000),comments:z.array(z.object({discussionId:applicationId,noteId:z.string().min(1).max(255)})).min(1).max(50)})).mutation(({ctx,input})=>ctx.runs.address(ctx.userId,input)),
+    reviewTargets: authenticated.input(runScope).query(({ ctx, input }) => ctx.runs.reviewTargets(ctx.userId, input)),
+    editFinding: authenticated.input(runRef.extend({ findingId: applicationId, revision: z.number().int().positive(), explanation: z.string().trim().min(1).max(20000), suggestedFix: z.string().max(20000), dismissed: z.boolean() })).mutation(({ ctx, input }) => ctx.runs.editFinding(ctx.userId, input)),
+    publishFindings: authenticated.input(runRef.extend({ findingIds: z.array(applicationId).min(1).max(100) })).mutation(({ ctx, input }) => ctx.runs.publishFindings(ctx.userId, input)),
     list: authenticated.input(runScope).query(({ ctx, input }) => ctx.runs.list(ctx.userId, input)),
-    invoke: authenticated.input(runScope.extend({ requestId: applicationId, agentId: applicationId, command: z.enum(agentCommands), repositoryIds: z.array(applicationId).min(1).max(50), message: z.string().trim().min(1).max(100000), fileIds: z.array(applicationId).max(20), continuationId: applicationId.optional(), publicationOnly: z.boolean().optional() })).mutation(({ ctx, input }) => ctx.runs.invoke(ctx.userId, input)),
+    invoke: authenticated.input(runScope.extend({ requestId: applicationId, agentId: applicationId, command: z.enum(agentCommands), repositoryIds: z.array(applicationId).min(1).max(50), message: z.string().trim().min(1).max(100000), fileIds: z.array(applicationId).max(20), reviewWorkspaceId: applicationId.optional(), reviewBranch: z.string().trim().min(1).max(255).optional(), continuationId: applicationId.optional(), publicationOnly: z.boolean().optional() })).mutation(({ ctx, input }) => ctx.runs.invoke(ctx.userId, input)),
     stop: authenticated.input(runRef).mutation(({ ctx, input }) => ctx.runs.stop(ctx.userId, input)),
     instruct: authenticated.input(runRef.extend({ requestId: applicationId, message: z.string().trim().min(1).max(100000) })).mutation(({ ctx, input }) => ctx.runs.instruct(ctx.userId, input)),
     previewRewrite: authenticated.input(runRef).query(({ ctx, input }) => ctx.runs.previewRewrite(ctx.userId, input)),

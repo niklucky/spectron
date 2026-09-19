@@ -1,3 +1,4 @@
+import { GitCollaborationSettings } from "./git-collaboration-settings";
 import { useEffect, useState, type FormEvent } from "react";
 import type { GitConnectionSummary, GitProvider, GitRepository, GitRemoteRepository, GitPage } from "@spectron/shared";
 import { Button } from "@spectron/frontend/components/ui/button";
@@ -89,6 +90,7 @@ export function GitSettings({ projectId, provider, onBusyChange }: { projectId: 
         <div className="git-actions"><Button variant="ghost" disabled={busy || page === 1} onClick={() => void run("page", () => browse(browsing, page - 1))}>Previous</Button><span>Page {page}</span><Button variant="ghost" disabled={busy || !catalog.nextPage} onClick={() => void run("page", () => browse(browsing, catalog.nextPage!))}>Next</Button></div>
       </>}
     </section>}
+    <GitCollaborationSettings projectId={projectId} provider={provider} />
     <section aria-label="Project repositories"><h3>Project repositories · {repositories.length}</h3><p className="muted">All selected GitHub and GitLab repositories. The project default will be preselected for agent requests. Target branches are verified when saved.</p>
       {!repositories.length && <p className="integration-empty muted">Select repositories from a checked connection to get started.</p>}
       <div className="git-connections">{repositories.map(repository => <RepositoryForm key={`${repository.id}:${repository.revision}`} repository={repository} busy={busy}

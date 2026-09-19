@@ -1,3 +1,7 @@
+import { validateBranch } from "../git/provider";
+import { selectedFeedback } from "../git/workflow";
+import { createReviewService, reviewTargets } from "./reviews";
+import type { GitAdapterFactory } from "../git/provider";
 import { releaseWorkspaces, reserveWorkspaces } from "./workspaces";
 import { modelLimits, promptByteBudget } from "./model-limits";
 import { runPrompt } from "./prompt";
@@ -70,7 +74,14 @@ export async function runAccess(
     throw new IssueInputError("Reopen the issue before invoking an agent.");
   return { ...row, role: p.role };
 }
-export function createAgentRunService(db: Database, files: FileService) {
+export function createAgentRunService(
+  db: Database,
+  files: FileService,
+  reviewOptions: {
+    secret?: string | undefined;
+    factory?: GitAdapterFactory | undefined;
+  } = {},
+) {
   async function controlled(
     tx: RunDB,
     userId: string,
@@ -95,7 +106,8 @@ export function createAgentRunService(db: Database, files: FileService) {
       );
     return row;
   }
-  return {
+  const service = {
+    ...createReviewService(db, reviewOptions.secret, reviewOptions.factory),
     async list(userId: string, scope: AgentRunScope): Promise<AgentRunView[]> {
       const access = await runAccess(db, userId, scope);
       const rows = await db
@@ -106,10 +118,15 @@ export function createAgentRunService(db: Database, files: FileService) {
           agent: r.agent,
           requesterId: r.requesterId,
           requesterName: r.requesterName,
+          handoffFromId: r.handoffFromId,
           command: r.command,
           message: r.message,
           repositories: r.repositories,
           implementation: r.implementation,
+          review: r.review,
+          branchReview: sql<
+            import("@spectron/shared").BranchReview | null
+          >`${r.context}->'branchReview'`,
           continuationId: sql<string | null>`${r.context}->>'continuationId'`,
           publicationOnly: sql<boolean>`coalesce((${r.context}->>'publicationOnly')::boolean, false)`,
           state: r.state,
@@ -149,6 +166,11 @@ export function createAgentRunService(db: Database, files: FileService) {
           .from(schema.agentWorkspace)
           .where(eq(schema.agentWorkspace.issueId, scope.issueId)),
       ]);
+      const findings = await db
+        .select()
+        .from(schema.agentReviewFinding)
+        .where(inArray(schema.agentReviewFinding.runId, ids))
+        .orderBy(asc(schema.agentReviewFinding.ordinal));
       const byId = new Map(rows.map((row) => [row.id, row]));
       const retryMessage = (row: (typeof rows)[number]) => {
         const seen = new Set<string>();
@@ -162,6 +184,9 @@ export function createAgentRunService(db: Database, files: FileService) {
       };
       return rows.map(({ continuationId: _continuationId, ...row }) => ({
         ...row,
+        findings: findings
+          .filter((f) => f.runId === row.id)
+          .map(({ runId, ordinal, createdAt, updatedAt, ...f }) => f),
         retryMessage: retryMessage(byId.get(row.id)!),
         canRetryPublication: workspaces.some(
           (w) => w.lastRunId === row.id && !w.ownerRunId && w.pending,
@@ -235,6 +260,89 @@ export function createAgentRunService(db: Database, files: FileService) {
         const repositories = await createGitService(
           tx as unknown as Database,
         ).authorizeRepositories(userId, args.projectId, args.repositoryIds);
+        let review = null;
+        if (args.reviewBranch) {
+          validateBranch(args.reviewBranch);
+          if (
+            args.command !== "review-code" ||
+            args.reviewWorkspaceId ||
+            repositories.length !== 1
+          )
+            throw new IssueInputError(
+              "Select one repository and either a branch or a linked PR/MR.",
+            );
+        }
+        if (args.command === "review-code" && !args.reviewBranch) {
+          const targets = await reviewTargets(tx, userId, args);
+          review =
+            targets.find((t) => t.workspaceId === args.reviewWorkspaceId) ??
+            (!args.reviewWorkspaceId && targets.length === 1
+              ? targets[0]!
+              : null);
+          if (!review)
+            throw new IssueInputError(
+              targets.length
+                ? "Select the issue PR/MR to review."
+                : "This issue has no linked PR/MR to review. Run /implement first.",
+            );
+          if (
+            repositories.length !== 1 ||
+            repositories[0]!.id !== review.repositoryId
+          )
+            throw new IssueInputError(
+              "Select the repository belonging to the review PR/MR.",
+            );
+        } else if (args.reviewWorkspaceId)
+          throw new IssueInputError(
+            "PR/MR selection is only available for /review-code.",
+          );
+        const feedbackComments = args.feedback?.length
+          ? await selectedFeedback(tx, userId, args, args.feedback)
+          : [];
+        if (
+          feedbackComments.length &&
+          (args.command !== "implement" ||
+            feedbackComments.some(
+              (c) => !args.repositoryIds.includes(c.repositoryId),
+            ))
+        )
+          throw new IssueInputError(
+            "Selected feedback must belong to the implementation repositories.",
+          );
+        let takeover: Run | undefined;
+        if (args.takeoverFromId) {
+          takeover = await controlled(tx, userId, {
+            ...args,
+            id: args.takeoverFromId,
+          });
+          if (
+            args.command !== "implement" ||
+            takeover.command !== "implement" ||
+            takeover.agentId === args.agentId ||
+            takeover.stopRequested ||
+            !["queued", "preparing", "working", "needs_input"].includes(
+              takeover.state,
+            ) ||
+            args.publicationOnly ||
+            JSON.stringify([...args.repositoryIds].sort()) !==
+              JSON.stringify(takeover.repositories.map((r) => r.id).sort())
+          )
+            throw new IssueInputError(
+              "Take over requires a different agent and all repositories of an active implementation.",
+            );
+          const owned = await tx
+            .select()
+            .from(schema.agentWorkspace)
+            .where(eq(schema.agentWorkspace.ownerRunId, takeover.id))
+            .for("update");
+          if (
+            owned.length !== args.repositoryIds.length ||
+            owned.some((w) => w.successorRunId || w.operationId)
+          )
+            throw new IssueConflictError(
+              "A handoff or provider action is already pending.",
+            );
+        }
         const [requester] = await tx
           .select({ name: user.name })
           .from(user)
@@ -270,7 +378,7 @@ export function createAgentRunService(db: Database, files: FileService) {
           .limit(10);
         previous.reverse();
         let continuation: Run | undefined;
-        if (args.continuationId) {
+        if (args.continuationId && !takeover) {
           [continuation] = await tx
             .select()
             .from(r)
@@ -347,6 +455,9 @@ export function createAgentRunService(db: Database, files: FileService) {
           : [];
         const limits = modelLimits(agent);
         const context = {
+          feedbackComments,
+          ...(args.reviewBranch ? { reviewBranch: args.reviewBranch } : {}),
+          ...(takeover ? { takeoverFromId: takeover.id } : {}),
           modelLimits: limits,
           projectKey: (
             await tx
@@ -370,7 +481,7 @@ export function createAgentRunService(db: Database, files: FileService) {
               ...args.fileIds,
             ]),
           ],
-          continuationId: continuation?.id ?? null,
+          continuationId: takeover?.id ?? continuation?.id ?? null,
           publicationOnly: !!args.publicationOnly,
           ...(args.publicationOnly && continuation?.result
             ? {
@@ -441,6 +552,8 @@ export function createAgentRunService(db: Database, files: FileService) {
             command: args.command,
             message: args.message.trim(),
             repositories,
+            review,
+            handoffFromId: takeover?.id ?? null,
             context: finalContext,
             instructions: config.instructions,
             connectionId: config.connectionId,
@@ -448,7 +561,28 @@ export function createAgentRunService(db: Database, files: FileService) {
           .onConflictDoNothing()
           .returning({ id: r.id });
         if (created) {
-          if (args.command === "implement") {
+          if (takeover) {
+            await tx
+              .update(schema.agentWorkspace)
+              .set({ successorRunId: created.id })
+              .where(eq(schema.agentWorkspace.ownerRunId, takeover.id));
+            await tx
+              .update(r)
+              .set({
+                stopRequested: true,
+                error: "Execution stopping for an explicit handoff.",
+                updatedAt: new Date(),
+              })
+              .where(eq(r.id, takeover.id));
+            await tx.insert(event).values({
+              runId: takeover.id,
+              message: `Take over requested: ${agent.name} will continue after execution and tools stop.`,
+            });
+            await tx.insert(event).values({
+              runId: created.id,
+              message: `Waiting for ${takeover.agent.name}'s execution and tools to stop. The saved workspace will be preserved.`,
+            });
+          } else if (args.command === "implement") {
             const [run] = await tx.select().from(r).where(eq(r.id, created.id));
             await reserveWorkspaces(tx, run!, repositories);
           }
@@ -486,12 +620,21 @@ export function createAgentRunService(db: Database, files: FileService) {
             updatedAt: new Date(),
           })
           .where(eq(r.id, row.id));
+        await tx
+          .update(schema.agentWorkspace)
+          .set({ successorRunId: null })
+          .where(eq(schema.agentWorkspace.successorRunId, row.id));
         if (unclaimed) await releaseWorkspaces(tx, row);
       });
     },
     async instruct(
       userId: string,
-      args: AgentRunScope & { id: string; requestId: string; message: string },
+      args: AgentRunScope & {
+        id: string;
+        requestId: string;
+        message: string;
+        feedback?: import("@spectron/shared").FeedbackSelection[];
+      },
     ) {
       await db.transaction(async (tx) => {
         const row = await controlled(tx, userId, args);
@@ -519,6 +662,18 @@ export function createAgentRunService(db: Database, files: FileService) {
           throw new IssueInputError(
             "Enter instructions up to 100,000 characters.",
           );
+        const feedback = args.feedback?.length
+          ? await selectedFeedback(tx, userId, args, args.feedback)
+          : [];
+        if (
+          feedback.some(
+            (c) => !row.repositories.some((r) => r.id === c.repositoryId),
+          ) ||
+          (feedback.length && row.command !== "implement")
+        )
+          throw new IssueInputError(
+            "Feedback does not belong to this writable run.",
+          );
         await tx
           .insert(input)
           .values({
@@ -526,6 +681,7 @@ export function createAgentRunService(db: Database, files: FileService) {
             userId,
             requestId: args.requestId,
             message: args.message.trim(),
+            feedback,
           })
           .onConflictDoNothing();
         if (row.state === "needs_input")
@@ -533,6 +689,88 @@ export function createAgentRunService(db: Database, files: FileService) {
             .update(r)
             .set({ state: "queued", idleUntil: null, updatedAt: new Date() })
             .where(eq(r.id, row.id));
+      });
+    },
+    async takeover(
+      userId: string,
+      args: AgentRunScope & {
+        id: string;
+        requestId: string;
+        agentId: string;
+        message: string;
+      },
+    ) {
+      const old = await db.transaction((tx) => controlled(tx, userId, args));
+      return service.invoke(userId, {
+        ...args,
+        command: "implement",
+        repositoryIds: old.repositories.map((r) => r.id),
+        fileIds: [],
+        takeoverFromId: old.id,
+      });
+    },
+    async address(
+      userId: string,
+      args: AgentRunScope & {
+        requestId: string;
+        agentId: string;
+        comments: import("@spectron/shared").FeedbackSelection[];
+        message: string;
+      },
+    ) {
+      const feedback = await selectedFeedback(db, userId, args, args.comments);
+      const repositories = [...new Set(feedback.map((c) => c.repositoryId))];
+      const workspaces = await db
+        .select()
+        .from(schema.agentWorkspace)
+        .where(
+          and(
+            eq(schema.agentWorkspace.issueId, args.issueId),
+            inArray(schema.agentWorkspace.repositoryId, repositories),
+          ),
+        );
+      const owners = [
+        ...new Set(
+          workspaces.flatMap((w) => (w.ownerRunId ? [w.ownerRunId] : [])),
+        ),
+      ];
+      if (owners.length) {
+        if (owners.length !== 1)
+          throw new IssueConflictError(
+            "Selected repositories have different active writers. Address each writer's comments separately.",
+          );
+        const [active] = await db.select().from(r).where(eq(r.id, owners[0]!));
+        if (active?.agentId !== args.agentId)
+          throw new IssueConflictError(
+            "Another agent owns this work. Use Take over on its run explicitly, then send the selected feedback.",
+          );
+        if (
+          repositories.some(
+            (id) => !active.repositories.some((r) => r.id === id),
+          )
+        )
+          throw new IssueInputError(
+            "Select comments belonging to the active run's repositories.",
+          );
+        await service.instruct(userId, {
+          ...args,
+          id: active.id,
+          feedback: args.comments,
+          message:
+            args.message.trim() ||
+            "Address the selected review comments and report addressed/unresolved findings.",
+        });
+        return { id: active.id };
+      }
+      return service.invoke(userId, {
+        ...args,
+        command: "implement",
+        repositoryIds: repositories,
+        fileIds: [],
+        feedback: args.comments,
+        message:
+          args.message.trim() ||
+          "Address the selected review comments and report addressed/unresolved findings.",
       });
     },
     async previewRewrite(userId: string, args: AgentRunScope & { id: string }) {
@@ -603,5 +841,6 @@ export function createAgentRunService(db: Database, files: FileService) {
       });
     },
   };
+  return service;
 }
 export type AgentRunService = ReturnType<typeof createAgentRunService>;

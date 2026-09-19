@@ -44,3 +44,5 @@ export { createGitTransport } from "./git/transport";
 export * from './agent-runs/service';
 export * from './agent-runs/runtime';
 export * from './agent-runs/worker';
+
+export { createGitWorkflow } from './git/workflow';

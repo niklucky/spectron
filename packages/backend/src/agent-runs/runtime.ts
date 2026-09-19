@@ -1,3 +1,4 @@
+import { validReviewFindings } from "./reviews";
 import { createWritableGit, type WritableGit } from "./writable-git";
 import {
   modelLimits,
@@ -350,11 +351,92 @@ export function parseResult(text: string): AgentResult {
         }
       }
     }
+    if (value.feedback !== undefined) {
+      if (!Array.isArray(value.feedback) || value.feedback.length > 50)
+        throw new Error("Invalid feedback results");
+      result.feedback = value.feedback.map((f) => {
+        if (
+          !f ||
+          typeof f !== "object" ||
+          typeof f.discussionId !== "string" ||
+          typeof f.noteId !== "string" ||
+          !["addressed", "unresolved"].includes(f.status) ||
+          typeof f.explanation !== "string" ||
+          f.explanation.length > 20000 ||
+          (f.reply !== undefined &&
+            (typeof f.reply !== "string" || f.reply.length > 20000))
+        )
+          throw new Error("Invalid feedback result");
+        return {
+          discussionId: f.discussionId,
+          noteId: f.noteId,
+          status: f.status,
+          explanation: f.explanation,
+          ...(f.reply ? { reply: f.reply } : {}),
+        };
+      });
+    }
+    if (value.findings !== undefined)
+      result.findings = validReviewFindings(value.findings);
     return result;
   } catch {
     return { summary: "Agent response", details: text.slice(0, 500_000) };
   }
 }
+export async function checkoutReview(
+  path: string,
+  provider: "github" | "gitlab",
+  pull: import("@spectron/shared").GitPullRequest,
+  env: NodeJS.ProcessEnv,
+  signal: AbortSignal,
+) {
+  if (!/^[1-9]\d{0,19}$/.test(pull.number))
+    throw new Error("Invalid review number.");
+  return checkoutReviewRef(
+    path,
+    provider === "github"
+      ? `refs/pull/${pull.number}/head`
+      : `refs/merge-requests/${pull.number}/head`,
+    pull.head,
+    env,
+    signal,
+  );
+}
+export async function checkoutReviewRef(
+  path: string,
+  ref: string,
+  expectedHead: string,
+  env: NodeJS.ProcessEnv,
+  signal: AbortSignal,
+) {
+  if (
+    !/^[a-f0-9]{40,64}$/.test(expectedHead) ||
+    !ref.startsWith("refs/") ||
+    /[\x00-\x20~^:?*\[\\]/.test(ref) ||
+    ref.includes("..") ||
+    ref.includes("@{")
+  )
+    throw new Error("Invalid review revision.");
+  const bounded = AbortSignal.any([signal, AbortSignal.timeout(300_000)]);
+  await processCommand(
+    "git",
+    ["-C", path, "fetch", "--depth=1", "origin", ref],
+    { env, signal: bounded },
+  );
+  const head = (
+    await processCommand("git", ["-C", path, "rev-parse", "FETCH_HEAD"], {
+      env,
+      signal: bounded,
+    })
+  ).trim();
+  if (head !== expectedHead)
+    throw new Error("The PR/MR changed before checkout. Start a fresh review.");
+  await processCommand("git", ["-C", path, "checkout", "--detach", head], {
+    env,
+    signal: bounded,
+  });
+}
+
 export function createDockerAgentRuntime(options: {
   root: string;
   image?: string;
@@ -396,13 +478,24 @@ export function createDockerAgentRuntime(options: {
       await mkdir(join(dir, "work", "notes"), { recursive: true });
       const continuationId = run.context?.continuationId;
       if (typeof continuationId === "string" && continuationId !== run.id) {
-        const previous = join(directory(continuationId), "work", "notes");
-        await cp(previous, join(dir, "work", "notes"), {
-          recursive: true,
-          dereference: false,
-          force: false,
-          errorOnExist: false,
-        }).catch((error) => {
+        const previous = join(
+          directory(continuationId),
+          "work",
+          ...(run.handoffFromId ? [] : ["notes"]),
+        );
+        await cp(
+          previous,
+          join(dir, "work", ...(run.handoffFromId ? [] : ["notes"])),
+          {
+            // OpenCode's home contains session/config/cache state. Never transfer it between identities.
+            filter: (source) =>
+              !run.handoffFromId || source !== join(previous, "home"),
+            recursive: true,
+            dereference: false,
+            force: false,
+            errorOnExist: false,
+          },
+        ).catch((error) => {
           if (error.code !== "ENOENT")
             throw new Error("Could not restore previous workspace notes.");
         });
@@ -487,6 +580,26 @@ export function createDockerAgentRuntime(options: {
               signal: AbortSignal.any([signal, AbortSignal.timeout(300_000)]),
             },
           );
+          if (run.command === "review-code" && run.context.branchReview) {
+            const branch = run.context
+              .branchReview as import("@spectron/shared").BranchReview;
+            await checkoutReviewRef(
+              path,
+              `refs/heads/${branch.sourceBranch}`,
+              branch.head,
+              env,
+              signal,
+            );
+          } else if (run.command === "review-code") {
+            if (!run.review) throw new Error("Review target unavailable.");
+            await checkoutReview(
+              path,
+              repo.provider,
+              run.review.pull,
+              env,
+              signal,
+            );
+          }
           const revision = (
             await processCommand("git", ["-C", path, "rev-parse", "HEAD"], {
               env,
@@ -497,7 +610,21 @@ export function createDockerAgentRuntime(options: {
             throw new Error("Invalid repository revision.");
           await writeFile(join(dir, `${repo.id}.revision`), revision);
           repositories.push({ ...repo, commit: revision });
-        } else repositories.push({ ...repo, commit: existing.trim() });
+        } else {
+          if (
+            run.command === "review-code" &&
+            existing.trim() !==
+              ((
+                run.context.branchReview as
+                  | import("@spectron/shared").BranchReview
+                  | undefined
+              )?.head ?? run.review?.pull.head)
+          )
+            throw new Error(
+              "Saved review checkout differs from the reviewed revision.",
+            );
+          repositories.push({ ...repo, commit: existing.trim() });
+        }
       }
       const attachments = [];
       for (const file of config.attachments) {

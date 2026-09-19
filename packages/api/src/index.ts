@@ -1,3 +1,4 @@
+import { createGitWorkflow } from "@spectron/backend";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { getConnInfo } from "@hono/node-server/conninfo";
@@ -68,7 +69,8 @@ export function createAPI(
   const worklogs = createWorklogService(db);
   const comments = createCommentService(db);
   const files = createFileService(db, fileStorage);
-  const runs = createAgentRunService(db, files);
+  const gitWorkflow = createGitWorkflow(db, integrationSecret, gitAdapterFactory ?? createGitAdapterFactory(createGitTransport(gitlabAllowedPrivateOrigins, { dns: gitProviderDNS })));
+  const runs = createAgentRunService(db, files, { secret: integrationSecret, factory: gitAdapterFactory ?? createGitAdapterFactory(createGitTransport(gitlabAllowedPrivateOrigins, { dns: gitProviderDNS })) });
   const tracker = createTrackerService(db, undefined, undefined, files);
   const issues = createIssueService(db);
   const fields = createFieldService(db);
@@ -86,7 +88,7 @@ export function createAPI(
       : bodyLimit({
           maxSize: c.req.path.startsWith("/api/trpc/")
             ? 3 * 1024 * 1024
-            : 16 * 1024,
+            : c.req.path.startsWith("/api/git/webhooks/") ? 1024 * 1024 : 16 * 1024,
         })(c, next),
   );
   api.use("/api/*", async (c, next) => {
@@ -96,6 +98,10 @@ export function createAPI(
     c.header("Referrer-Policy", "no-referrer");
   });
   api.route("/api/files", createFileRoutes(auth, files, appURL));
+  api.post("/api/git/webhooks/:connectionId", async c => {
+    try { await gitWorkflow.webhook(c.req.param("connectionId"), c.req.raw.headers, await c.req.text()); return c.json({ accepted: true }); }
+    catch { return c.json({ error: "Webhook rejected" }, 403); }
+  });
   api.get("/api/health", (c) => c.json({ status: "ok" }));
   api.on(["GET", "POST"], "/api/auth/*", (c) => {
     const headers = new Headers(c.req.raw.headers);
@@ -134,6 +140,7 @@ export function createAPI(
           ai,
           git,
           runs,
+          gitWorkflow,
         ),
     });
   });

@@ -597,6 +597,37 @@ export function CommentEditor({
   const [agentId, setAgentId] = useState(""),
     [command, setCommand] = useState<AgentCommand>("discuss"),
     [repositoryIds, setRepositoryIds] = useState<string[]>([]);
+  const [reviewBranch, setReviewBranch] = useState("");
+  const [reviewTargets, setReviewTargets] = useState<
+    import("@spectron/shared").ReviewTarget[]
+  >([]);
+  const [reviewWorkspaceId, setReviewWorkspaceId] = useState("");
+  useEffect(() => {
+    if (!agentActions || command !== "review-code") return;
+    let alive = true;
+    void agentActions.reviewTargets(context.scope).then(
+      (targets) => {
+        if (!alive) return;
+        setReviewTargets(targets);
+        setReviewWorkspaceId((id) =>
+          targets.some((t) => t.workspaceId === id)
+            ? id
+            : targets.length === 1
+              ? targets[0]!.workspaceId
+              : "",
+        );
+      },
+      (e) => {
+        if (alive)
+          setAgentError(
+            e instanceof Error ? e.message : "Could not load PR/MRs.",
+          );
+      },
+    );
+    return () => {
+      alive = false;
+    };
+  }, [agentActions, command, context.scope.projectId, context.scope.issueId]);
   const [agentError, setAgentError] = useState("");
   const requestId = useRef(createId());
   useEffect(() => {
@@ -775,14 +806,34 @@ export function CommentEditor({
             if (agentActions && command !== "discuss" && !agentId)
               throw new Error("Select an agent for this command.");
             if (agentId && agentActions) {
-              if (!repositoryIds.length)
+              if (
+                command === "review-code" &&
+                !reviewWorkspaceId &&
+                (!reviewBranch.trim() || repositoryIds.length !== 1)
+              )
+                throw new Error(
+                  "Select a linked PR/MR, or enter a branch and select exactly one repository.",
+                );
+              if (command !== "review-code" && !repositoryIds.length)
                 throw new Error("Select at least one project repository.");
               await agentActions.invoke({
                 ...context.scope,
                 requestId: requestId.current,
                 agentId,
                 command,
-                repositoryIds,
+                repositoryIds:
+                  command === "review-code" && reviewWorkspaceId
+                    ? [
+                        reviewTargets.find(
+                          (t) => t.workspaceId === reviewWorkspaceId,
+                        )!.repositoryId,
+                      ]
+                    : repositoryIds,
+                ...(command === "review-code"
+                  ? reviewWorkspaceId
+                    ? { reviewWorkspaceId }
+                    : { reviewBranch: reviewBranch.trim() }
+                  : {}),
                 message: draft.text,
                 fileIds: files.map((f) => f.projectFileId),
               });
@@ -854,7 +905,51 @@ export function CommentEditor({
             {command !== "discuss" && !agentId && (
               <small>Select an agent to run this command.</small>
             )}
-            {agentId && (
+            {agentId && command === "review-code" && (
+              <label>
+                PR/MR to review
+                <select
+                  aria-label="PR/MR to review"
+                  value={reviewWorkspaceId}
+                  disabled={busy}
+                  onChange={(e) => setReviewWorkspaceId(e.target.value)}
+                >
+                  <option value="">
+                    {reviewTargets.length
+                      ? "Choose a PR/MR or review a branch"
+                      : "Review a branch below"}
+                  </option>
+                  {reviewTargets.map((t) => (
+                    <option key={t.workspaceId} value={t.workspaceId}>
+                      {t.repositoryName} #{t.pull.number} ·{" "}
+                      {t.pull.sourceBranch} → {t.pull.targetBranch}
+                    </option>
+                  ))}
+                </select>
+                <small>
+                  Reviews a fixed revision. Findings stay here until you publish
+                  them.
+                </small>
+              </label>
+            )}
+            {agentId && command === "review-code" && !reviewWorkspaceId && (
+              <label>
+                Source branch
+                <input
+                  className="input"
+                  value={reviewBranch}
+                  onChange={(e) => setReviewBranch(e.target.value)}
+                  maxLength={255}
+                  disabled={busy}
+                  placeholder="feature/my-change"
+                />
+                <small>
+                  Compare against the selected repository's target branch.
+                  Choose exactly one repository.
+                </small>
+              </label>
+            )}
+            {agentId && (command !== "review-code" || !reviewWorkspaceId) && (
               <div className="agent-repo-chips">
                 {repositories.map((repo) => (
                   <label key={repo.id}>

@@ -7,6 +7,7 @@ export const agentCommands = [
   "rewrite-issue",
   "create-plan",
   "implement",
+  "review-code",
 ] as const;
 export type AgentCommand = (typeof agentCommands)[number];
 export const agentRunStates = [
@@ -27,13 +28,19 @@ export type AgentInvocation = AgentRunScope & {
   repositoryIds: string[];
   message: string;
   fileIds: string[];
+  takeoverFromId?: string | undefined;
+  feedback?: import("./git-workflow").FeedbackSelection[] | undefined;
+  reviewBranch?: string | undefined;
+  reviewWorkspaceId?: string | undefined;
   continuationId?: string | undefined;
   publicationOnly?: boolean | undefined;
 };
 export type AgentResult = {
   summary: string;
   details: string;
+  feedback?: import("./git-workflow").FeedbackResult[];
   question?: string;
+  findings?: ReviewFindingInput[];
   rewrite?: Partial<IssueFields>;
   verification?: {
     command: string;
@@ -53,10 +60,14 @@ export type AgentRunView = AgentRunScope & {
   agent: AgentIdentity;
   requesterId: string;
   requesterName: string;
+  handoffFromId?: string | null;
   command: AgentCommand;
   message: string;
   repositories: (GitRepository & { commit?: string })[];
   implementation?: ImplementationOutcome[];
+  review?: ReviewTarget | null;
+  branchReview?: BranchReview | null;
+  findings?: ReviewFinding[];
   publicationOnly?: boolean;
   canRetryPublication?: boolean;
   retryMessage?: string;
@@ -91,6 +102,27 @@ export function agentRunPollDelay(
   return runs.some((r) => r.state === "needs_input") ? 30000 : null;
 }
 export type AgentRunActions = {
+  takeover: (
+    input: AgentRunScope & {
+      id: string;
+      requestId: string;
+      agentId: string;
+      message: string;
+    },
+  ) => Promise<{ id: string }>;
+  address: (
+    input: AgentRunScope & {
+      requestId: string;
+      agentId: string;
+      comments: import("./git-workflow").FeedbackSelection[];
+      message: string;
+    },
+  ) => Promise<{ id: string }>;
+  reviewTargets: (scope: AgentRunScope) => Promise<ReviewTarget[]>;
+  editFinding: (input: FindingEdit) => Promise<void>;
+  publishFindings: (
+    input: AgentRunScope & { id: string; findingIds: string[] },
+  ) => Promise<void>;
   available: (projectId: string) => Promise<AgentIdentity[]>;
   repositories: (projectId: string) => Promise<GitRepository[]>;
   list: (scope: AgentRunScope) => Promise<AgentRunView[]>;
@@ -131,4 +163,53 @@ export type ImplementationOutcome = {
   commit?: string;
   pull?: GitPullRequest;
   error?: string | undefined;
+};
+
+export type ReviewTarget = {
+  workspaceId: string;
+  repositoryId: string;
+  repositoryName: string;
+  pull: GitPullRequest;
+};
+export type ReviewFindingInput = {
+  path: string;
+  line: number;
+  side: "LEFT" | "RIGHT";
+  explanation: string;
+  suggestedFix?: string;
+};
+export type ReviewFinding = ReviewFindingInput & {
+  id: string;
+  revision: number;
+  state:
+    | "draft"
+    | "dismissed"
+    | "publishing"
+    | "published"
+    | "stale"
+    | "uncertain";
+  error: string | null;
+  externalId: string | null;
+  externalURL: string | null;
+  publishedBy: string | null;
+};
+export type FindingEdit = AgentRunScope & {
+  id: string;
+  findingId: string;
+  revision: number;
+  explanation: string;
+  suggestedFix: string;
+  dismissed: boolean;
+};
+
+export type BranchReview = {
+  repositoryId: string;
+  repositoryName: string;
+  sourceBranch: string;
+  targetBranch: string;
+  head: string;
+  base: string;
+  start: string;
+  url: string;
+  files: { oldPath: string; newPath: string; patch: string }[];
 };

@@ -169,6 +169,20 @@
       "when": 1789078999529,
       "tag": "0023_agent_implementations",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1789089000000,
+      "tag": "0024_agent_review_drafts",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1789776000000,
+      "tag": "0025_git_collaboration",
+      "breakpoints": true
     }
   ]
 }

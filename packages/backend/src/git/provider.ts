@@ -1,3 +1,5 @@
+import { activityAdapter, type GitActivityAdapter } from "./activity-provider";
+import { reviewAdapter, type GitReviewAdapter } from "./reviews";
 import type { GitActor, GitPage, GitProvider, GitRemoteRepository, GitPullRequest } from "@spectron/shared";
 import { IssueInputError } from "../issues";
 import { createGitTransport, normalizeGitBaseURL, type GitTransport } from "./transport";
@@ -5,6 +7,8 @@ import { createGitTransport, normalizeGitBaseURL, type GitTransport } from "./tr
 // The only provider boundary exposed to the service. Later branch/PR/sync
 // operations belong on this adapter; no provider requests belong in the UI.
 export interface GitAdapter {
+  reviews?: GitReviewAdapter;
+  activity?: GitActivityAdapter;
   findPull?(repository: GitRemoteRepository, source: string, target: string): Promise<GitPullRequest | null>;
   createDraft?(repository: GitRemoteRepository, input: { source: string; target: string; title: string; body: string }, signal: AbortSignal): Promise<GitPullRequest>;
   actor(): Promise<GitActor>;
@@ -71,6 +75,8 @@ export function createGitAdapterFactory(transport: GitTransport = createGitTrans
       };
     }
     return {
+      activity: activityAdapter({ github, get, repoPath, pull }),
+      reviews: reviewAdapter({ github, get, repoPath, pull }),
       findPull: (repo, source, target) => safe(async () => {
         validateBranch(source); validateBranch(target);
         const query = new URLSearchParams(github

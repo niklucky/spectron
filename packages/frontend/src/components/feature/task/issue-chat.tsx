@@ -1,3 +1,4 @@
+import { GitActivityCards } from "./git-activity";
 import { AgentRunCard } from "./agent-run-card";
 import { agentRunPollDelay, type AgentRunView } from "@spectron/shared";
 import { formatDateTime } from "../../../lib/date-format";
@@ -372,6 +373,28 @@ export function IssueChat({
           >
             Load earlier activity
           </Button>
+        )}
+        {actions.gitWorkflow && actions.runs && (
+          <GitActivityCards
+            scope={context.scope}
+            actions={actions.gitWorkflow}
+            agents={actions.runs}
+            currentUserId={actions.worklogs.currentUserId}
+            active={active}
+            revision={revision + reload}
+            closed={
+              !!issue.deletedAt ||
+              settings.states.some(
+                (s) =>
+                  s.id === issue.stateId &&
+                  ["finished", "cancelled"].includes(s.trigger),
+              )
+            }
+            changed={() => {
+              setReload((n) => n + 1);
+              changed();
+            }}
+          />
         )}
         {runError && <p role="alert">{runError}</p>}
         {timeline.map(({ event, file, run }) => {
