@@ -10,6 +10,7 @@ import { Segmented } from "../../ui/segmented";
 import { StatusDot, Spinner, ProgressLine } from "../../ui/status";
 import { ProjectMark } from "../project/project-mark";
 import { IssueRow, ListGroup } from "../../ui/list";
+import { Breadcrumbs, EmptyState, PageTabs, PageToolbar, WidgetSlot } from "../../ui/page-shell";
 import {
   DaySeparator,
   EventLine,
@@ -93,6 +94,7 @@ const nav: { id: string; label: string }[] = [
   { id: "labels", label: "Pills & chips" },
   { id: "controls", label: "Controls" },
   { id: "icons", label: "Icons" },
+  { id: "page", label: "Page anatomy" },
   { id: "list", label: "Issue list" },
   { id: "messages", label: "Messages" },
   { id: "results", label: "Agent results" },
@@ -118,8 +120,9 @@ export function DesignSystemPage() {
   const [view, setView] = useState<"simple" | "dev">("dev");
   const [seg, setSeg] = useState<"all" | "mine" | "unread">("all");
   const [tab, setTab] = useState<"checks" | "changes" | "activity">("checks");
+  const [section, setSection] = useState<"overview" | "wiki" | "issues" | "board" | "gantt" | "settings">("issues");
   const iconNames: IconName[] = [
-    "inbox", "overview", "chats", "chat", "issues", "settings", "users", "plus", "search",
+    "pulse", "inbox", "overview", "book", "board", "gantt", "widget", "command", "chats", "chat", "issues", "settings", "users", "plus", "search",
     "filter", "chevron", "chevron-right", "back", "arrow", "more", "paperclip", "mic", "play",
     "pause", "stop", "file", "files", "image", "download", "close", "check", "check-circle",
     "branch", "pr", "merge", "diff", "github", "gitlab", "jira", "link", "external", "sparkle",
@@ -232,6 +235,42 @@ export function DesignSystemPage() {
             {iconNames.map((n) => (
               <div key={n} className="flex flex-col items-center gap-1.5 rounded-lg py-3 hover:bg-surface-2"><Icon name={n} size={18} /><span className="mono text-2xs text-ink-3">{n}</span></div>
             ))}
+          </div>
+        </Section>
+
+        <Section id="page" title="Page anatomy" lead="Every full-width page shares one quiet frame: a 44px header row with breadcrumbs, section tabs and right-aligned actions; an optional toolbar for filters and display; then the body. No page titles in large type: the last breadcrumb is the title.">
+          <div className="overflow-hidden rounded-xl bg-surface hairline">
+            <header className="flex h-11 items-center gap-2 px-3 hairline-b">
+              <Breadcrumbs items={[{ label: "Spectron", mark: <ProjectMark project={project} size="sm" />, onClick: () => {} }, { label: "Issues", icon: "issues" }]} />
+              <div className="ml-2 hidden md:flex">
+                <PageTabs label="Sections" value={section} onChange={setSection} tabs={[
+                  { value: "overview", label: "Overview", icon: "overview" },
+                  { value: "wiki", label: "Wiki", icon: "book" },
+                  { value: "issues", label: "Issues", icon: "issues" },
+                  { value: "board", label: "Board", icon: "board" },
+                  { value: "gantt", label: "Gantt", icon: "gantt" },
+                  { value: "settings", label: "Settings", icon: "settings" },
+                ]} />
+              </div>
+              <div className="ml-auto flex items-center gap-1">
+                <IconButton icon="search" label="Search" />
+                <Button variant="primary" icon="plus">New issue</Button>
+              </div>
+            </header>
+            <PageToolbar trailing={<span className="text-sm text-ink-3 tabular-nums">142</span>}>
+              <Button variant="ghost" size="sm" icon="filter">Filter</Button>
+              <Chip>Open</Chip>
+              <Chip>Assigned to me</Chip>
+            </PageToolbar>
+            <div className="grid gap-4 p-6 sm:grid-cols-2">
+              <EmptyState icon="widget" title="Section is empty" description="Empty sections say what will live here and offer one action, nothing else." className="py-8" />
+              <WidgetSlot disabled hint="Widgets are coming next" />
+            </div>
+          </div>
+          <div className="mt-4 grid gap-3 text-sm text-ink-2 sm:grid-cols-3">
+            <div><b className="text-ink">Header.</b> Breadcrumbs (mark, project, section) on the left, tabs next, actions on the right: search, view options, one primary button.</div>
+            <div><b className="text-ink">Toolbar.</b> Only when a page has filters or display options. Filter chips on the left, counts and sort on the right.</div>
+            <div><b className="text-ink">Body.</b> Scrolls on its own. Dashboards use a widget grid, lists use a split with the conversation on the right.</div>
           </div>
         </Section>
 

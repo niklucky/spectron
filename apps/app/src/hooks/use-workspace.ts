@@ -15,23 +15,49 @@ import type {
 import { useTheme } from "@spectron/frontend/hooks/use-theme";
 import type { WorkspaceDialogName } from "@spectron/frontend/components/feature/workspace";
 import type { Task, Project } from "@spectron/frontend/components/feature/task";
+import { isProjectSection, type ProjectSection } from "@spectron/frontend/components/feature/project";
 import { trpc } from "../lib/trpc";
 
-function readRoute(projects: Project[]) {
+export type WorkspaceView = "flow" | "overview" | "project";
+type Route = {
+  view: WorkspaceView;
+  isFlow: boolean;
+  project: string;
+  section: ProjectSection;
+  id: string;
+};
+
+/**
+ * Hash routes:
+ *   #flow                          inbox across projects
+ *   #flow/:project/:issue          issue opened from the inbox
+ *   #overview                      personal dashboard
+ *   #project/:id                   project overview
+ *   #project/:id/:section          wiki | issues | board | gantt | settings
+ *   #project/:id/issues/:issue     issue inside the project
+ *   #project/:id/:issue            legacy issue link, treated as issues/:issue
+ */
+function readRoute(projects: Project[]): Route {
   const parts = window.location.hash.slice(1).split("/");
-  return {
-    isFlow: parts[0] === "flow" || !projects.length,
-    project:
-      projects.find((p) => p.id === parts[1])?.id || projects[0]?.id || "",
-    id: parts[2] || "",
-  };
+  const project =
+    projects.find((p) => p.id === parts[1])?.id || projects[0]?.id || "";
+  if (parts[0] === "overview" && projects.length)
+    return { view: "overview", isFlow: false, project, section: "overview", id: "" };
+  if (parts[0] === "project" && projects.length) {
+    const section: ProjectSection = isProjectSection(parts[2]) ? parts[2] : parts[2] ? "issues" : "overview";
+    const id = isProjectSection(parts[2]) ? (section === "issues" ? parts[3] ?? "" : "") : parts[2] ?? "";
+    return { view: "project", isFlow: false, project, section, id };
+  }
+  return { view: "flow", isFlow: true, project, section: "issues", id: parts[0] === "flow" ? parts[2] ?? "" : "" };
 }
 const taskHash = (project: string, id: string, flow: boolean) =>
   flow
     ? id
       ? `#flow/${project}/${id}`
       : "#flow"
-    : `#project/${project}${id ? `/${id}` : ""}`;
+    : `#project/${project}/issues${id ? `/${id}` : ""}`;
+const sectionHash = (project: string, section: ProjectSection) =>
+  section === "overview" ? `#project/${project}` : `#project/${project}/${section}`;
 
 export function useWorkspace(
   initialName: string,
@@ -39,10 +65,8 @@ export function useWorkspace(
   userId: string,
 ) {
   const [collapsed, setCollapsed] = useState(false);
-  const [mobileChat, setMobileChat] = useState(
-    () => !!window.location.hash.split("/")[2],
-  );
   const [route, setRoute] = useState(() => readRoute(projects));
+  const [mobileChat, setMobileChat] = useState(() => !!route.id);
   const [issues, setIssues] = useState<IssueSummary[]>([]);
   const [settings, setSettings] = useState<Record<string, IssueSettings>>({});
   const [loading, setLoading] = useState(true);
@@ -143,9 +167,10 @@ export function useWorkspace(
   }, [refresh]);
   useEffect(() => {
     const onHashChange = () => {
-      setRoute(readRoute(projects));
+      const next = readRoute(projects);
+      setRoute(next);
       setQuery("");
-      setMobileChat(!!window.location.hash.split("/")[2]);
+      setMobileChat(!!next.id);
     };
     setRoute(readRoute(projects));
     window.addEventListener("hashchange", onHashChange);
@@ -158,7 +183,11 @@ export function useWorkspace(
   }, [notice]);
   const navigate = (project: string, id: string, isFlow: boolean) => {
     history.pushState(null, "", taskHash(project, id, isFlow));
-    setRoute({ project, id, isFlow });
+    setRoute({ view: isFlow ? "flow" : "project", isFlow, project, section: "issues", id });
+  };
+  const navigateSection = (project: string, section: ProjectSection) => {
+    history.pushState(null, "", sectionHash(project, section));
+    setRoute({ view: "project", isFlow: false, project, section, id: "" });
   };
   const allTasks: Task[] = useMemo(
     () =>
@@ -276,6 +305,8 @@ export function useWorkspace(
     mobileChat,
     setMobileChat,
     project: route.project,
+    view: route.view,
+    section: route.section,
     isFlow: route.isFlow,
     selectedId: task?.id ?? route.id,
     task,
@@ -320,8 +351,19 @@ export function useWorkspace(
       setQuery("");
       setMobileChat(false);
     },
-    selectProject: (id: string) => {
-      navigate(id, "", false);
+    selectProject: (id: string, section: ProjectSection = "overview") => {
+      navigateSection(id, section);
+      setQuery("");
+      setMobileChat(false);
+    },
+    selectSection: (section: ProjectSection) => {
+      navigateSection(route.project, section);
+      setQuery("");
+      setMobileChat(false);
+    },
+    selectOverview: () => {
+      history.pushState(null, "", "#overview");
+      setRoute({ view: "overview", isFlow: false, project: route.project, section: "overview", id: "" });
       setQuery("");
       setMobileChat(false);
     },

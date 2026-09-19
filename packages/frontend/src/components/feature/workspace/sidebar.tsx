@@ -11,6 +11,7 @@ type SidebarProps = {
   project: string;
   projects: Project[];
   isFlow: boolean;
+  isOverview?: boolean | undefined;
   accountMenu: ReactNode;
   unreadCount?: number | undefined;
   onToggleCollapse: () => void;
@@ -19,7 +20,7 @@ type SidebarProps = {
   onCreateProject: () => void;
   onProjectSettings: (id: string) => void;
   onArchiveProject: (id: string) => void;
-  onNavigate: (page: "overview" | "issues" | "settings") => void;
+  onOpenOverview: () => void;
   onOpenAgents?: (() => void) | undefined;
 };
 
@@ -67,6 +68,7 @@ export function Sidebar({
   project,
   projects,
   isFlow,
+  isOverview = false,
   accountMenu,
   unreadCount = 0,
   onToggleCollapse,
@@ -75,7 +77,7 @@ export function Sidebar({
   onCreateProject,
   onProjectSettings,
   onArchiveProject,
-  onNavigate,
+  onOpenOverview,
   onOpenAgents,
 }: SidebarProps) {
   return (
@@ -137,7 +139,7 @@ export function Sidebar({
       )}
       <nav className="flex flex-col gap-px">
         <NavItem
-          icon="inbox"
+          icon="pulse"
           label="Flow"
           collapsed={collapsed}
           active={isFlow}
@@ -159,7 +161,8 @@ export function Sidebar({
           icon="overview"
           label="Overview"
           collapsed={collapsed}
-          onClick={() => onNavigate("overview")}
+          active={isOverview}
+          onClick={onOpenOverview}
         />
       </nav>
       <div
@@ -181,7 +184,7 @@ export function Sidebar({
       </div>
       <nav className="flex flex-col gap-px">
         {projects.map((item) => {
-          const active = !isFlow && project === item.id;
+          const active = !isFlow && !isOverview && project === item.id;
           return (
             <div key={item.id} className="group/project relative flex items-center">
               <NavItem
@@ -238,21 +241,7 @@ export function Sidebar({
           </nav>
         </>
       )}
-      <div className="mt-auto flex flex-col gap-px">
-        <NavItem
-          icon="issues"
-          label="Issues"
-          collapsed={collapsed}
-          onClick={() => onNavigate("issues")}
-        />
-        <NavItem
-          icon="settings"
-          label="Settings"
-          collapsed={collapsed}
-          onClick={() => onNavigate("settings")}
-        />
-        {accountMenu}
-      </div>
+      <div className="mt-auto flex flex-col gap-px">{accountMenu}</div>
     </aside>
   );
 }

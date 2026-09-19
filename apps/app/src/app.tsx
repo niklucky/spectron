@@ -24,14 +24,19 @@ import {
   Sidebar,
   WorkspaceLayout,
   WorkspaceDialogs,
+  OverviewPage,
 } from "@spectron/frontend/components/feature/workspace";
 import { Toast } from "@spectron/frontend/components/ui/toast";
 import { Icon } from "@spectron/frontend/components/ui/icon";
+import { Button, IconButton } from "@spectron/frontend/components/ui/button";
+import { PageBody } from "@spectron/frontend/components/ui/page-shell";
+import { cn } from "@spectron/frontend/components/ui/cn";
 import { previewMedia } from "./fixtures/preview-metadata";
 import {
   CreateProjectDialog,
   ProjectSettingsPage,
   ProjectEmptyState,
+  ProjectPage,
 } from "@spectron/frontend/components/feature/project";
 import { InvitationPage } from "./invitation-page";
 import { DesignSystemPage } from "@spectron/frontend/components/feature/design-system";
@@ -87,7 +92,10 @@ function Workspace({
   );
   const workspace = useWorkspace(user.name, projects, user.id);
   const [integrationBusy, setIntegrationBusy] = useState(false);
-  const [settingsId, setSettingsId] = useState<string | null>(null);
+  const settingsId =
+    workspace.view === "project" && workspace.section === "settings"
+      ? workspace.project
+      : null;
   const [aiSettings, setAISettings] = useState(false);
   const settingsProject = projectState.projects.find(
     (item) => item.id === settingsId && item.state === "active",
@@ -411,6 +419,86 @@ function Workspace({
     workspace.setQuery("");
     workspace.setFilter(defaultTaskFilters);
   };
+  /** Issue list plus conversation column, shared by Flow and the project Issues section. */
+  const issueColumns = (embedded: boolean) => (
+    <>
+      <TaskList
+        loading={workspace.loading}
+        error={workspace.error}
+        onRetry={() => void workspace.refresh()}
+        project={workspace.project}
+        projects={projects}
+        isFlow={workspace.isFlow}
+        embedded={embedded}
+        tasks={workspace.tasks}
+        selectedId={workspace.selectedId}
+        query={workspace.query}
+        searchOpen={workspace.searchOpen}
+        filter={workspace.filter}
+        settings={workspace.settings}
+        onSearchToggle={() => {
+          workspace.setSearchOpen((value) => !value);
+          workspace.setQuery("");
+        }}
+        onSearchClear={() => {
+          workspace.setSearchOpen(false);
+          workspace.setQuery("");
+        }}
+        onQueryChange={workspace.setQuery}
+        onFilterChange={workspace.setFilter}
+        onClearFilters={clearFilters}
+        onSelectTask={workspace.selectTask}
+        onNewTask={workspace.startNewIssue}
+      />
+      {workspace.creatingIssue ? (
+        <NewIssueChat
+          key={`${workspace.isFlow}:${workspace.project}`}
+          project={workspace.project}
+          projects={projects}
+          isFlow={workspace.isFlow}
+          onCreate={workspace.createTask}
+          fileActions={issueActions.files}
+          onBack={() => workspace.setMobileChat(false)}
+        />
+      ) : task && project ? (
+        <IssuePanel
+          key={task.id}
+          issue={task}
+          settings={
+            workspace.settings[task.projectId] ?? {
+              states: [],
+              priorities: [],
+            }
+          }
+          issues={workspace.allIssues}
+          actions={issueActions}
+          onActivityChange={() => void workspace.refresh()}
+          onBack={() => workspace.setMobileChat(false)}
+          onCopy={workspace.copyTaskLink}
+          onSelect={workspace.selectTask}
+        />
+      ) : (
+        <section className="chat-column flex flex-col items-center justify-center gap-3 bg-surface px-6 text-center">
+          <button
+            type="button"
+            className="hidden text-sm text-accent-ink max-[700px]:block"
+            onClick={() => workspace.setMobileChat(false)}
+          >
+            Back to tasks
+          </button>
+          <Icon name="chats" size={28} className="text-ink-3" />
+          <p className="max-w-[36ch] text-base text-ink-2">
+            {workspace.loading
+              ? "Loading issues…"
+              : workspace.selectedId
+                ? "Issue not found. Select another issue or create one."
+                : "Select an issue to view its details."}
+          </p>
+        </section>
+      )}
+    
+    </>
+  );
   return (
     <WorkspaceLayout
       collapsed={workspace.collapsed}
@@ -422,10 +510,12 @@ function Workspace({
         projects={projects}
         isFlow={workspace.isFlow}
         onToggleCollapse={() => workspace.setCollapsed((value) => !value)}
-        onSelectProject={(id) => { if (!integrationBusy) { setAISettings(false); setSettingsId(null); workspace.selectProject(id); } }}
-        onSelectFlow={() => { if (!integrationBusy) { setAISettings(false); setSettingsId(null); workspace.selectFlow(); } }}
+        isOverview={workspace.view === "overview"}
+        onSelectProject={(id) => { if (!integrationBusy) { setAISettings(false); workspace.selectProject(id); } }}
+        onSelectFlow={() => { if (!integrationBusy) { setAISettings(false); workspace.selectFlow(); } }}
+        onOpenOverview={() => { if (!integrationBusy) { setAISettings(false); workspace.selectOverview(); } }}
         onCreateProject={projectState.openCreate}
-        onProjectSettings={(id) => { setAISettings(false); setSettingsId(id); }}
+        onProjectSettings={(id) => { if (!integrationBusy) { setAISettings(false); workspace.selectProject(id, "settings"); } }}
         onArchiveProject={(id) => {
           void projectState
             .archive(id)
@@ -441,8 +531,7 @@ function Workspace({
               ),
             );
         }}
-        onNavigate={workspace.openModal}
-        onOpenAgents={() => { if (!integrationBusy) { setSettingsId(null); setAISettings(true); } }}
+        onOpenAgents={() => { if (!integrationBusy) setAISettings(true); }}
         accountMenu={
           <AccountMenu
             name={workspace.name}
@@ -454,7 +543,7 @@ function Workspace({
             onThemeChange={workspace.setTheme}
             onAction={(action) => {
               if (action === "ai") {
-                if (!integrationBusy) { setSettingsId(null); setAISettings(true); }
+                if (!integrationBusy) setAISettings(true);
               } else if (action === "signout") {
                 void authClient
                   .signOut()
@@ -477,29 +566,6 @@ function Workspace({
       />
       {aiSettings ? (
         <AISettingsPage actions={aiActions} projects={projects} ownerId={user.id} onClose={() => setAISettings(false)} />
-      ) : settingsProject ? (
-        <ProjectSettingsPage
-          key={settingsProject.id}
-          project={settingsProject}
-          actions={settingsActions}
-          externalBusy={integrationBusy}
-          loadIntegrations={loadIntegrations}
-          gitSettings={provider => settingsProject.role === "owner" ? <GitSettings key={`${settingsProject.id}:${provider}`} projectId={settingsProject.id} provider={provider} onBusyChange={setIntegrationBusy} /> : <p className="muted">Only the project owner can manage Git connections.</p>}
-          yandexSettings={
-            settingsProject.role === "owner" ? (
-              <ProjectIntegrationSettings
-                projectId={settingsProject.id}
-                onChanged={workspace.refresh}
-                onBusyChange={setIntegrationBusy}
-              />
-            ) : (
-              <p className="muted">
-                Only the project owner can manage Yandex Tracker.
-              </p>
-            )
-          }
-          onClose={() => setSettingsId(null)}
-        />
       ) : projectState.loading || !projects.length ? (
         <ProjectEmptyState
           hasArchived={projectState.projects.some(
@@ -510,82 +576,67 @@ function Workspace({
           onRetry={() => void projectState.refresh()}
           onCreate={projectState.openCreate}
         />
-      ) : (
-        <>
-          <TaskList
-            loading={workspace.loading}
-            error={workspace.error}
-            onRetry={() => void workspace.refresh()}
-            project={workspace.project}
-            projects={projects}
-            isFlow={workspace.isFlow}
-            tasks={workspace.tasks}
-            selectedId={workspace.selectedId}
-            query={workspace.query}
-            searchOpen={workspace.searchOpen}
-            filter={workspace.filter}
-            settings={workspace.settings}
-            onSearchToggle={() => {
-              workspace.setSearchOpen((value) => !value);
-              workspace.setQuery("");
-            }}
-            onSearchClear={() => {
-              workspace.setSearchOpen(false);
-              workspace.setQuery("");
-            }}
-            onQueryChange={workspace.setQuery}
-            onFilterChange={workspace.setFilter}
-            onClearFilters={clearFilters}
-            onSelectTask={workspace.selectTask}
-            onNewTask={workspace.startNewIssue}
-          />
-          {workspace.creatingIssue ? (
-            <NewIssueChat
-              key={`${workspace.isFlow}:${workspace.project}`}
-              project={workspace.project}
-              projects={projects}
-              isFlow={workspace.isFlow}
-              onCreate={workspace.createTask}
-              fileActions={issueActions.files}
-              onBack={() => workspace.setMobileChat(false)}
-            />
-          ) : task && project ? (
-            <IssuePanel
-              key={task.id}
-              issue={task}
-              settings={
-                workspace.settings[task.projectId] ?? {
-                  states: [],
-                  priorities: [],
-                }
+      ) : workspace.view === "overview" ? (
+        <OverviewPage />
+      ) : workspace.view === "project" && project ? (
+        <ProjectPage
+          project={project}
+          section={workspace.section}
+          onSectionChange={(section) => { if (!integrationBusy) workspace.selectSection(section); }}
+          onOpenOverview={() => { if (!integrationBusy) workspace.selectSection("overview"); }}
+          actions={
+            workspace.section === "issues" ? (
+              <>
+                <IconButton
+                  icon="search"
+                  label="Search issues"
+                  aria-expanded={workspace.searchOpen}
+                  active={workspace.searchOpen}
+                  onClick={() => { workspace.setSearchOpen((value) => !value); workspace.setQuery(""); }}
+                />
+                <Button variant="primary" icon="plus" onClick={workspace.startNewIssue}>New issue</Button>
+              </>
+            ) : undefined
+          }
+        >
+          {workspace.section === "issues" ? (
+            <div
+              className={cn(
+                "grid min-h-0 flex-1 grid-cols-[340px_minmax(0,1fr)] [&>*]:min-h-0 [&>*]:overflow-hidden",
+                "max-[1380px]:grid-cols-[316px_minmax(0,1fr)] max-[1180px]:grid-cols-[300px_minmax(0,1fr)] max-[700px]:grid-cols-1",
+                workspace.mobileChat ? "max-[700px]:[&>.task-panel]:hidden" : "max-[700px]:[&>.chat-column]:hidden",
+              )}
+            >
+              {issueColumns(true)}
+            </div>
+          ) : workspace.section === "settings" && settingsProject ? (
+            <PageBody>
+            <ProjectSettingsPage
+              key={settingsProject.id}
+              project={settingsProject}
+              actions={settingsActions}
+              externalBusy={integrationBusy}
+              loadIntegrations={loadIntegrations}
+              gitSettings={provider => settingsProject.role === "owner" ? <GitSettings key={`${settingsProject.id}:${provider}`} projectId={settingsProject.id} provider={provider} onBusyChange={setIntegrationBusy} /> : <p className="muted">Only the project owner can manage Git connections.</p>}
+              yandexSettings={
+                settingsProject.role === "owner" ? (
+                  <ProjectIntegrationSettings
+                    projectId={settingsProject.id}
+                    onChanged={workspace.refresh}
+                    onBusyChange={setIntegrationBusy}
+                  />
+                ) : (
+                  <p className="muted">
+                    Only the project owner can manage Yandex Tracker.
+                  </p>
+                )
               }
-              issues={workspace.allIssues}
-              actions={issueActions}
-              onActivityChange={() => void workspace.refresh()}
-              onBack={() => workspace.setMobileChat(false)}
-              onCopy={workspace.copyTaskLink}
-              onSelect={workspace.selectTask}
             />
-          ) : (
-            <section className="chat-column flex flex-col items-center justify-center gap-3 bg-surface px-6 text-center">
-              <button
-                type="button"
-                className="hidden text-sm text-accent-ink max-[700px]:block"
-                onClick={() => workspace.setMobileChat(false)}
-              >
-                Back to tasks
-              </button>
-              <Icon name="chats" size={28} className="text-ink-3" />
-              <p className="max-w-[36ch] text-base text-ink-2">
-                {workspace.loading
-                  ? "Loading issues…"
-                  : workspace.selectedId
-                    ? "Issue not found. Select another issue or create one."
-                    : "Select an issue to view its details."}
-              </p>
-            </section>
-          )}
-        </>
+            </PageBody>
+          ) : undefined}
+        </ProjectPage>
+      ) : (
+        issueColumns(false)
       )}
       <Toast message={workspace.notice || projectState.error} />
       {projectState.showCreate && (

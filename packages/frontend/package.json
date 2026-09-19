@@ -27,6 +27,7 @@
     "./components/ui/status": "./src/components/ui/status/index.tsx",
     "./components/ui/chat": "./src/components/ui/chat/index.tsx",
     "./components/ui/list": "./src/components/ui/list/index.tsx",
+    "./components/ui/page-shell": "./src/components/ui/page-shell/index.tsx",
     "./components/ui/menu": "./src/components/ui/menu/index.ts",
     "./components/ui/cn": "./src/components/ui/cn.ts",
     "./components/feature/design-system": "./src/components/feature/design-system/index.ts"

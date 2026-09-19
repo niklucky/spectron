@@ -4,6 +4,7 @@ import { TaskFiltersSelect, type TaskFilters } from "./task-filters";
 import { Icon } from "../../ui/icon";
 import { IconButton } from "../../ui/button";
 import { ListGroup } from "../../ui/list";
+import { cn } from "../../ui/cn";
 import { TaskItem, taskActivityTime } from "./task-item";
 import type { Project, TaskListItem } from "./types";
 
@@ -14,6 +15,8 @@ type TaskListProps = {
   project: string;
   projects: Project[];
   isFlow: boolean;
+  /** Inside a project page: the page header carries the title and actions. */
+  embedded?: boolean | undefined;
   tasks: TaskListItem[];
   selectedId: string;
   query: string;
@@ -46,6 +49,7 @@ export function TaskList({
   project,
   projects,
   isFlow,
+  embedded = false,
   tasks,
   selectedId,
   query,
@@ -76,7 +80,7 @@ export function TaskList({
       className="task-panel flex min-w-0 flex-col border-r border-line bg-surface"
       aria-label={isFlow ? "Flow tasks" : `${projectName} tasks`}
     >
-      <header className="flex items-center gap-2 px-3.5 pt-3.5 pb-2 pl-4">
+      {!embedded && <header className="flex items-center gap-2 px-3.5 pt-3.5 pb-2 pl-4">
         <h1 className="flex min-w-0 flex-1 items-center gap-2 text-base font-semibold tracking-[-0.015em]">
           {!isFlow && current && <ProjectMark project={current} size="md" />}
           <span className="truncate">{isFlow ? "Flow" : projectName}</span>
@@ -94,9 +98,9 @@ export function TaskList({
           onClick={onNewTask}
           className="bg-ink text-surface hover:not-disabled:bg-ink hover:not-disabled:text-surface hover:not-disabled:opacity-90"
         />
-      </header>
+      </header>}
       {searchOpen && (
-        <div className="mx-3.5 mb-2.5 flex h-8 items-center gap-2 rounded-md bg-surface-2 px-2.5 text-ink-2 focus-within:bg-surface focus-within:shadow-[inset_0_0_0_1px_var(--sp-line)]">
+        <div className={cn("mx-3.5 mb-2.5 flex h-8 items-center gap-2 rounded-md bg-surface-2 px-2.5 text-ink-2 focus-within:bg-surface focus-within:shadow-[inset_0_0_0_1px_var(--sp-line)]", embedded && "mt-2.5")}>
           <Icon name="search" size={14} />
           <input
             autoFocus
@@ -109,7 +113,7 @@ export function TaskList({
           <IconButton icon="close" label="Clear search" size="sm" onClick={onSearchClear} />
         </div>
       )}
-      <div className="flex items-center gap-1 px-3.5 pb-2.5 pl-4">
+      <div className={cn("flex items-center gap-1 px-3.5 pb-2.5 pl-4", embedded && !searchOpen && "pt-2.5")}>
         <TaskFiltersSelect
           value={filter}
           onChange={onFilterChange}

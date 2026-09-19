@@ -42,7 +42,7 @@ export function ProjectSettingsPage({
   externalBusy?: boolean;
   project: ProjectSummary;
   actions: ProjectSettingsActions;
-  onClose: () => void;
+  onClose?: (() => void) | undefined;
 }) {
   const [provider, setProvider] = useState<string | null>(null);
   const [tab, setTab] = useState("general");
@@ -50,10 +50,12 @@ export function ProjectSettingsPage({
   const [saved, setSaved] = useState(false);
   return (
     <main className="project-settings-page">
-      <header className="project-settings-header">
-        <Button variant="ghost" className="navigation-button" disabled={busy || externalBusy} onClick={onClose}>← Back to project</Button>
-        <h1>{project.name} settings</h1>
-      </header>
+      {onClose && (
+        <header className="project-settings-header">
+          <Button variant="ghost" className="navigation-button" disabled={busy || externalBusy} onClick={onClose}>← Back to project</Button>
+          <h1>{project.name} settings</h1>
+        </header>
+      )}
       <div className="project-settings-layout">
         <nav
           className="project-settings-nav"
@@ -97,7 +99,7 @@ export function ProjectSettingsPage({
                 submitLabel="Save changes"
                 readOnly={project.role !== "owner"}
                 onBusyChange={setBusy}
-                onCancel={onClose}
+                onCancel={onClose ?? (() => setTab("general"))}
                 onDiscoverLogo={actions.discoverLogo}
                 onSubmit={async (input) => {
                   setSaved(false);

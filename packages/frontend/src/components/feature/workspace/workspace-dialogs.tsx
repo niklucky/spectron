@@ -10,9 +10,6 @@ export type WorkspaceDialogName =
   | "profile"
   | "language"
   | "new-task"
-  | "overview"
-  | "issues"
-  | "settings"
   | "video"
   | "image"
   | "sources"
@@ -76,47 +73,6 @@ export function WorkspaceDialogs({
           </div>
           <p className="muted">
             More languages will be added with localization.
-          </p>
-        </Dialog>
-      )}
-      {(modal === "overview" || modal === "issues") && (
-        <Dialog
-          title={modal === "overview" ? "Overview" : "Issues"}
-          onClose={() => onClose()}
-        >
-          <p className="muted">
-            {modal === "overview"
-              ? "A space for your team’s widgets and reports. We’ll design this next."
-              : "Your aggregated kanban, lists, sprints, and reports will live here."}
-          </p>
-          <div className="dialog-footer">
-            <Button onClick={() => onClose()}>Back to conversations</Button>
-          </div>
-        </Dialog>
-      )}
-      {modal === "settings" && (
-        <Dialog title="Settings" onClose={() => onClose()}>
-          <label className="setting-row">
-            Appearance
-            <Select
-              variant="plain"
-              value={theme}
-              onChange={(event) => setTheme(event.target.value as Theme)}
-            >
-              <option value="light">Light</option>
-              <option value="dark">Dark</option>
-              <option value="system">System</option>
-            </Select>
-          </label>
-          <div className="setting-row">
-            <span>Workspace</span>
-            <span>
-              {projects.find((item) => item.id === project)?.name ||
-                "No project"}
-            </span>
-          </div>
-          <p className="muted">
-            Connections and team settings will be added as we build.
           </p>
         </Dialog>
       )}
