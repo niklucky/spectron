@@ -46,12 +46,12 @@ export function MessageMarkdown({ text, renderImage, mentions = [] }: {
   mentions?: MarkdownMention[];
 }) {
   const images = trackerImages(text);
-  return <div className="message-markdown">
+  return <div className="prose-chat">
     <Markdown remarkPlugins={[remarkGfm, remarkTrackerImages]} components={{
       a: ({ href, children }) => {
         const mention = mentions.find(item => item.href === href);
         return mention
-          ? <span className="comment-mention" title={mention.title}>@{mention.label}</span>
+          ? <span className="mention rounded-sm bg-accent-soft px-1.5 py-px font-semibold text-accent-ink" title={mention.title}>@{mention.label}</span>
           : <a href={href} target="_blank" rel="noreferrer">{children}</a>;
       },
       img: ({ src, alt }) => {

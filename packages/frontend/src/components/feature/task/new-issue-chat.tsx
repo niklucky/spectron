@@ -1,7 +1,9 @@
 import { ISSUE_DESCRIPTION_MAX_LENGTH } from "@spectron/shared";
-import { MessageComposer, MessageComposerActions } from "./message-composer";
+import { ComposerShell, SendButton } from "../../ui/chat";
+import { IconButton } from "../../ui/button";
+import { AttachmentPreview } from "./issue-files";
 import type { IssueFileActions } from "./issue-files";
-import { useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ProjectMark } from "../project";
 import { Icon } from "../../ui/icon";
 import { MessageMarkdown } from "../../ui/message-markdown";
@@ -52,6 +54,13 @@ export function NewIssueChat({
   const [files, setFiles] = useState<File[]>([]);
   const [dragging, setDragging] = useState(false);
   const [progress, setProgress] = useState("");
+  const previews = useMemo(() => {
+    const map = new Map<File, string>();
+    for (const file of files)
+      if (file.type.startsWith("image/") || file.type.startsWith("video/")) map.set(file, URL.createObjectURL(file));
+    return map;
+  }, [files]);
+  useEffect(() => () => { for (const url of previews.values()) URL.revokeObjectURL(url); }, [previews]);
   const addFiles = (incoming: File[]) => {
     if (busy) return;
     setError("");
@@ -109,169 +118,116 @@ export function NewIssueChat({
       setProgress("");
     }
   };
+  const projectMark = destination;
   return (
-    <section className="new-issue-chat" aria-label="New issue chat">
-      <button className="mobile-back" onClick={onBack}>
-        Back to tasks
+    <section className="chat-column relative flex min-w-0 flex-col items-center justify-center bg-surface px-8 py-8" aria-label="New issue chat">
+      <button type="button" className="absolute top-4 left-4 hidden text-sm text-accent-ink max-[700px]:block" onClick={onBack}>
+        ← Back to tasks
       </button>
-      <div className="new-issue-welcome">
-        <ProjectMark project={destination} />
-        <h1>What are we working on?</h1>
-        <p>Send your first message to create an issue in {destination.name}.</p>
+      <div className="mb-7 flex flex-col items-center text-center">
+        <ProjectMark project={projectMark} size="lg" className="mb-4" />
+        <h1 className="text-2xl font-semibold tracking-[-0.02em]">What are we working on?</h1>
+        <p className="mt-2 text-md text-ink-2">Send your first message to create an issue in {destination.name}.</p>
       </div>
-      <MessageComposer
-        className={`new-issue-composer ${dragging ? "is-dragging" : ""}`}
-        onDragOver={(e) => {
-          if (e.dataTransfer.types.includes("Files")) {
+      <div className="w-full max-w-[680px]">
+        <ComposerShell
+          className={dragging ? "outline-2 outline-dashed outline-accent outline-offset-4" : undefined}
+          onDragOver={(e) => {
+            if (e.dataTransfer.types.includes("Files")) {
+              e.preventDefault();
+              e.dataTransfer.dropEffect = busy ? "none" : "copy";
+              if (!busy) setDragging(true);
+            }
+          }}
+          onDragLeave={(e) => {
+            if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragging(false);
+          }}
+          onDrop={(e) => {
+            if (e.dataTransfer.types.includes("Files")) {
+              e.preventDefault();
+              setDragging(false);
+              addFiles(Array.from(e.dataTransfer.files));
+            }
+          }}
+          onSubmit={(e) => {
             e.preventDefault();
-            e.dataTransfer.dropEffect = busy ? "none" : "copy";
-            if (!busy) setDragging(true);
+            void send();
+          }}
+          pending={
+            files.length ? (
+              <>
+                {files.map((file, index) => (
+                  <AttachmentPreview
+                    key={`${file.name}:${file.lastModified}:${index}`}
+                    name={file.name}
+                    size={file.size}
+                    contentType={file.type || "application/octet-stream"}
+                    src={previews.get(file)}
+                    busy={busy}
+                    onRemove={() => setFiles((previous) => previous.filter((f) => f !== file))}
+                  />
+                ))}
+              </>
+            ) : undefined
           }
-        }}
-        onDragLeave={(e) => {
-          if (!e.currentTarget.contains(e.relatedTarget as Node | null))
-            setDragging(false);
-        }}
-        onDrop={(e) => {
-          if (e.dataTransfer.types.includes("Files")) {
-            e.preventDefault();
-            setDragging(false);
-            addFiles(Array.from(e.dataTransfer.files));
+          chips={
+            isFlow && projects.length > 1 ? (
+              <label className="inline-flex h-[26px] items-center gap-1.5 rounded-md bg-surface-3 pr-1.5 pl-2 text-sm font-medium text-ink-2">
+                <ProjectMark project={destination} size="xs" />
+                <select aria-label="Issue project" className="bg-transparent text-sm font-medium text-ink outline-none" value={destination.id} disabled={busy || voice.listening} onChange={(e) => setProjectId(e.target.value)}>
+                  {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+              </label>
+            ) : undefined
           }
-        }}
-        onSubmit={(e) => {
-          e.preventDefault();
-          void send();
-        }}
-      >
-        {preview ? (
-          <div className="message-preview" aria-label="Message preview">
-            <MessageMarkdown
-              text={draft || "Your message preview appears here."}
-            />
-          </div>
-        ) : (
-          <textarea
-            ref={editor}
-            autoFocus
-            aria-label="First message"
-            placeholder="Describe the issue…"
-            value={draft}
-            maxLength={ISSUE_DESCRIPTION_MAX_LENGTH}
-            disabled={busy || voice.listening}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (
-                e.key === "Enter" &&
-                !e.shiftKey &&
-                !e.nativeEvent.isComposing
-              ) {
-                e.preventDefault();
-                void send();
-              }
-            }}
-          />
-        )}
-        {voice.listening && (
-          <p className="dictation-status" role="status">
-            {voice.interim || "Listening…"}
-          </p>
-        )}
-        {dragging && (
-          <div className="new-issue-drop-hint">Drop files to attach</div>
-        )}
-        {!!files.length && (
-          <ul
-            className="new-issue-attachments"
-            aria-label="Pending attachments"
-          >
-            {files.map((file, index) => (
-              <li key={`${file.name}:${file.lastModified}:${index}`}>
-                <Icon name="file" size={16} />
-                <span title={file.name}>
-                  {file.name}
-                  <small>
-                    {file.size < 1024 * 1024
-                      ? `${Math.ceil(file.size / 1024)} KB`
-                      : `${(file.size / 1024 / 1024).toFixed(1)} MB`}
-                  </small>
-                </span>
-                <button
-                  type="button"
-                  disabled={busy}
-                  aria-label={`Remove ${file.name}`}
-                  onClick={() =>
-                    setFiles((previous) => previous.filter((f) => f !== file))
-                  }
-                >
-                  <Icon name="close" size={14} />
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-        {progress && (
-          <p className="dictation-status" role="status">
-            {progress}
-          </p>
-        )}
-        <div className="new-issue-toolbar">
-          <input
-            ref={fileInput}
-            type="file"
-            multiple
-            hidden
-            onChange={(e) => {
-              addFiles(Array.from(e.target.files ?? []));
-              e.target.value = "";
-            }}
-          />
-          <button
-            type="button"
-            className="new-issue-attach"
-            aria-label="Add attachments"
-            title="Add attachments or drop files here"
-            disabled={busy}
-            onClick={() => fileInput.current?.click()}
-          >
-            <Icon name="plus" size={18} />
-          </button>
-          {isFlow ? (
-            <select
-              aria-label="Issue project"
-              value={destination.id}
-              disabled={busy || voice.listening}
-              onChange={(e) => setProjectId(e.target.value)}
-            >
-              {projects.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
+          hint="first line becomes the title"
+          tools={
+            <>
+              <input ref={fileInput} type="file" multiple hidden onChange={(e) => { addFiles(Array.from(e.target.files ?? [])); e.target.value = ""; }} />
+              <IconButton icon="paperclip" label="Add attachments" className="text-ink-3" disabled={busy} onClick={() => fileInput.current?.click()} />
+              <IconButton icon={voice.listening ? "pause" : "mic"} label={voice.listening ? "Stop dictation" : "Dictate"} className={voice.listening ? "bg-bad-soft text-bad" : "text-ink-3"} aria-pressed={voice.listening} disabled={busy} onClick={() => { setPreview(false); voice.toggle(language); }} />
+              {voice.listening && (
+                <select className="h-6 rounded-sm bg-transparent text-xs text-ink-3" aria-label="Dictation language" value={language} disabled={busy} onChange={(e) => setLanguage(e.target.value)}>
+                  <option value="en-US">EN</option>
+                  <option value="ru-RU">RU</option>
+                </select>
+              )}
+              <button type="button" className={`ml-1 rounded-sm px-1.5 py-0.5 text-xs text-ink-3 hover:text-ink ${preview ? "bg-surface-3 text-ink" : ""}`} aria-pressed={preview} onClick={() => setPreview((v) => !v)}>{preview ? "Edit" : "Preview"}</button>
+              <span className="ml-auto mr-1.5 hidden text-xs text-ink-3 md:inline"><kbd className="mono rounded-sm border border-line-soft bg-surface-2 px-1 text-2xs">↵</kbd> create · <kbd className="mono rounded-sm border border-line-soft bg-surface-2 px-1 text-2xs">⇧↵</kbd> newline</span>
+              <SendButton disabled={busy || voice.listening || (!draft.trim() && !files.length)} label="Create issue" />
+            </>
+          }
+        >
+          {preview ? (
+            <div className="prose-chat max-h-60 min-h-[72px] overflow-y-auto px-3.5 pt-2.5 pb-1 text-lg" aria-label="Message preview">
+              <MessageMarkdown text={draft || "Your message preview appears here."} />
+            </div>
           ) : (
-            <span className="new-issue-project-name">{destination.name}</span>
+            <textarea
+              ref={editor}
+              autoFocus
+              rows={3}
+              aria-label="First message"
+              placeholder="Describe the issue…"
+              value={draft}
+              maxLength={ISSUE_DESCRIPTION_MAX_LENGTH}
+              disabled={busy || voice.listening}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+                  e.preventDefault();
+                  void send();
+                }
+              }}
+              className="block max-h-[40vh] min-h-[72px] w-full resize-none bg-transparent px-3.5 pt-2.5 pb-1 text-lg text-ink outline-none placeholder:text-ink-3 disabled:opacity-60"
+            />
           )}
-          <MessageComposerActions
-            preview={preview}
-            setPreview={setPreview}
-            language={language}
-            setLanguage={setLanguage}
-            voice={voice}
-            busy={busy}
-            canSend={!!draft.trim() || !!files.length}
-          />
-        </div>
-        {(error || voice.error) && (
-          <p role="alert" className="project-error">
-            {error || voice.error}
-          </p>
-        )}
-        <p className="new-issue-hint">
-          First line becomes the title. Formatting and details are saved in the
-          description. Shift+Enter for a new line.
-        </p>
-      </MessageComposer>
+          {voice.listening && <p className="px-3.5 pb-1 text-sm text-ink-2" role="status">{voice.interim || "Listening…"}</p>}
+          {progress && <p className="px-3.5 pb-1 text-sm text-ink-3" role="status">{progress}</p>}
+          {(error || voice.error) && <p role="alert" className="px-3.5 pb-1 text-sm text-bad">{error || voice.error}</p>}
+        </ComposerShell>
+        <p className="mt-3 text-center text-xs text-ink-3">Formatting and details are saved in the description.</p>
+      </div>
     </section>
   );
 }

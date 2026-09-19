@@ -1,0 +1,23 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "app",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "APP_URL=http://localhost:5187 API_PORT=3001 pnpm --filter @spectron/app dev"
+      ],
+      "port": 5187
+    },
+    {
+      "name": "api",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "APP_URL=http://localhost:5187 pnpm --filter @spectron/api dev"
+      ],
+      "port": 3001
+    }
+  ]
+}

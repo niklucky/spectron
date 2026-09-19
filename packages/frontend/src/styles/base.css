@@ -1,9 +1,0 @@
-body {
-  overflow: hidden;
-  color: var(--color-text-primary);
-  background: var(--color-surface);
-}
-
-.workspace p {
-  line-height: var(--line-height-body);
-}

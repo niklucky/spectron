@@ -6,7 +6,6 @@
   "exports": {
     ".": "./src/index.ts",
     "./styles.css": "./src/styles.css",
-    "./theme.css": "./src/theme.css",
     "./components/ui/button": "./src/components/ui/button/index.ts",
     "./components/ui/input": "./src/components/ui/input/index.ts",
     "./components/ui/icon": "./src/components/ui/icon/index.ts",
@@ -14,7 +13,6 @@
     "./components/ui/dialog": "./src/components/ui/dialog/index.ts",
     "./components/ui/toast": "./src/components/ui/toast/index.tsx",
     "./components/ui/page": "./src/components/ui/page/index.ts",
-    "./components/feature/chat": "./src/components/feature/chat/index.ts",
     "./components/feature/task": "./src/components/feature/task/index.ts",
     "./components/feature/project": "./src/components/feature/project/index.ts",
     "./components/feature/account": "./src/components/feature/account/index.ts",
@@ -22,9 +20,16 @@
     "./tokens.css": "./src/styles/tokens/index.css",
     "./workspace.css": "./src/workspace.css",
     "./hooks/use-theme": "./src/hooks/use-theme.ts",
-    "./ui.css": "./src/ui.css",
     "./components/feature/auth": "./src/components/feature/auth/index.ts",
-    "./auth.css": "./src/auth.css"
+    "./auth.css": "./src/auth.css",
+    "./components/ui/pill": "./src/components/ui/pill/index.tsx",
+    "./components/ui/segmented": "./src/components/ui/segmented/index.tsx",
+    "./components/ui/status": "./src/components/ui/status/index.tsx",
+    "./components/ui/chat": "./src/components/ui/chat/index.tsx",
+    "./components/ui/list": "./src/components/ui/list/index.tsx",
+    "./components/ui/menu": "./src/components/ui/menu/index.ts",
+    "./components/ui/cn": "./src/components/ui/cn.ts",
+    "./components/feature/design-system": "./src/components/feature/design-system/index.ts"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json"
@@ -36,6 +41,8 @@
     "@types/react": "19.2.18"
   },
   "dependencies": {
+    "@fontsource-variable/inter": "^5.3.0",
+    "@fontsource-variable/jetbrains-mono": "^5.3.0",
     "@spectron/shared": "workspace:*",
     "react-markdown": "10.1.0",
     "remark-gfm": "4.0.1"

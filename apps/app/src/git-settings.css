@@ -1,3 +1,4 @@
+@layer screens {
 .git-settings { display: grid; gap: 20px; max-width: 960px; }
 .git-settings > header, .git-card-heading, .git-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .git-settings > header, .git-card-heading { justify-content: space-between; }
@@ -18,3 +19,5 @@
 .git-repo-picker li { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 12px 0; border-bottom: 1px solid var(--color-border, #e2e4e9); }
 .git-repo-picker li > div { display: grid; gap: 3px; min-width: 0; overflow-wrap: anywhere; font-size: 13px; }
 @media (max-width: 600px) { .git-card { padding: 14px; }.git-card dl { grid-template-columns: 1fr; gap: 6px; }.git-card dd { margin-bottom: 6px; } }
+
+}

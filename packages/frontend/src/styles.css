@@ -1,16 +1,6 @@
-@import './components/feature/task/agent-runs.css';
-@import "./styles/tokens/index.css";
-@import "./components/ui/page/page.css";
-:root {
-  font-family: var(--font-family-sans);
-  color: var(--color-page-text);
-  background: var(--color-page-background);
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-}
-* {
-  box-sizing: border-box;
-}
-body {
-  margin: 0;
-}
+@layer theme, base, screens, components, utilities;
+@import "./styles/fonts.css";
+@import "./styles/tokens/index.css" layer(screens);
+@import "./styles/design-tokens.css";
+@import "./components/ui/page/page.css" layer(screens);
+@import "./styles/tailwind.css";
