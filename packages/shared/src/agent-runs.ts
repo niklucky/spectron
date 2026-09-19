@@ -66,7 +66,7 @@ export type AgentRunView = AgentRunScope & {
   repositories: (GitRepository & { commit?: string })[];
   implementation?: ImplementationOutcome[];
   review?: ReviewTarget | null;
-  branchReview?: BranchReview | null;
+  branchReview?: Omit<BranchReview, "files"> | null;
   findings?: ReviewFinding[];
   publicationOnly?: boolean;
   canRetryPublication?: boolean;

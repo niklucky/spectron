@@ -19,6 +19,7 @@ export type GitDiscussionData = {
   notes: GitNote[];
 };
 export type GitActivity = {
+  providerVersion?: string;
   pull: GitPullRequest;
   title: string;
   providerId: string;
@@ -114,6 +115,9 @@ export type FeedbackResult = FeedbackSelection & {
 export type GitWorkflowActions = {
   list: (scope: AgentRunScope) => Promise<GitWorkspaceView[]>;
   refresh: (ref: GitWorkspaceRef) => Promise<void>;
+  discardReply: (
+    input: GitWorkspaceRef & { id: string; revision: number },
+  ) => Promise<void>;
   saveReply: (input: GitReplyInput) => Promise<{ id: string }>;
   publishReply: (
     input: GitWorkspaceRef & {

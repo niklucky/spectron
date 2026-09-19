@@ -124,9 +124,10 @@ export function createAgentRunService(
           repositories: r.repositories,
           implementation: r.implementation,
           review: r.review,
-          branchReview: sql<
-            import("@spectron/shared").BranchReview | null
-          >`${r.context}->'branchReview'`,
+          branchReview: sql<Omit<
+            import("@spectron/shared").BranchReview,
+            "files"
+          > | null>`(${r.context}->'branchReview') - 'files'`,
           continuationId: sql<string | null>`${r.context}->>'continuationId'`,
           publicationOnly: sql<boolean>`coalesce((${r.context}->>'publicationOnly')::boolean, false)`,
           state: r.state,

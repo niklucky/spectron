@@ -219,6 +219,7 @@ export const appRouter = t.router({
   gitWorkflow: t.router({
     list: authenticated.input(runScope).query(({ctx,input}) => ctx.gitWorkflow.list(ctx.userId,input)),
     refresh: authenticated.input(workspaceRef).mutation(({ctx,input}) => ctx.gitWorkflow.refresh(ctx.userId,input)),
+    discardReply: authenticated.input(workspaceRef.extend({id:applicationId,revision:z.number().int().positive()})).mutation(({ctx,input}) => ctx.gitWorkflow.discardReply(ctx.userId,input)),
     saveReply: authenticated.input(workspaceRef.extend({discussionId:applicationId,body:z.string().trim().min(1).max(20000),id:applicationId.optional(),revision:z.number().int().positive().optional()})).mutation(({ctx,input}) => ctx.gitWorkflow.saveReply(ctx.userId,input)),
     publishReply: authenticated.input(workspaceRef.extend({id:applicationId,revision:z.number().int().positive(),requestId:applicationId})).mutation(({ctx,input}) => ctx.gitWorkflow.publishReply(ctx.userId,input)),
     act: authenticated.input(workspaceRef.extend({requestId:applicationId,kind:z.enum(['resolve','reopen','ready','merge','close']),expectedHead:z.string().regex(/^[a-f0-9]{40,64}$/),discussionId:applicationId.optional(),mergeMethod:z.enum(['merge','squash','rebase']).optional()})).mutation(({ctx,input}) => ctx.gitWorkflow.act(ctx.userId,input)),

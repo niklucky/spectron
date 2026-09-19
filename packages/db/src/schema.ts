@@ -910,7 +910,8 @@ export const agentWorkspace = pgTable("agent_workspaces", {
   operationId: text("operation_id"),
   activity: jsonb("activity").$type<import('@spectron/shared').GitActivity>(),
   syncClaim: text("sync_claim"), syncLeaseUntil: timestamp("sync_lease_until", { withTimezone: true }),
-  syncedAt: timestamp("synced_at", { withTimezone: true }), nextSyncAt: timestamp("next_sync_at", { withTimezone: true }).defaultNow().notNull(),
+  syncedAt: timestamp("synced_at", { withTimezone: true }), nextSyncAt: timestamp("next_sync_at", { withTimezone: true }).defaultNow(),
+  syncedVersion: integer("synced_version").default(0).notNull(),
   syncError: text("sync_error"), syncVersion: integer("sync_version").default(0).notNull(),
   ...dates(),
 }, t => [
@@ -944,6 +945,7 @@ export const gitDiscussion = pgTable("git_discussions", {
   ...dates(),
 }, t => [uniqueIndex("git_discussions_external_unique").on(t.workspaceId, t.externalId)]);
 export const gitReplyDraft = pgTable("git_reply_drafts", {
+  discardedAt: timestamp("discarded_at", { withTimezone: true }),
   id: text("id").$defaultFn(createId).primaryKey(),
   discussionId: text("discussion_id").notNull().references(() => gitDiscussion.id, { onDelete: "cascade" }),
   authorId: text("author_id").notNull().references(() => user.id, { onDelete: "restrict" }),

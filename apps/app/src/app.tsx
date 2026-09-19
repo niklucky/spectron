@@ -245,6 +245,7 @@ function Workspace({
         list: input => trpc.gitWorkflow.list.query(input),
         refresh: input => trpc.gitWorkflow.refresh.mutate(input),
         saveReply: input => trpc.gitWorkflow.saveReply.mutate(input),
+        discardReply: input => trpc.gitWorkflow.discardReply.mutate(input),
         publishReply: input => trpc.gitWorkflow.publishReply.mutate(input),
         act: input => trpc.gitWorkflow.act.mutate(input),
         reconcile: input => trpc.gitWorkflow.reconcile.mutate(input),

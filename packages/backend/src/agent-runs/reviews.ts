@@ -106,7 +106,10 @@ export function createReviewService(
         ),
       )
       .for("update");
-    if ((!run?.review && !run?.context.branchReview) || (run.requesterId !== userId && access.role !== "owner"))
+    if (
+      (!run?.review && !run?.context.branchReview) ||
+      (run.requesterId !== userId && access.role !== "owner")
+    )
       throw new ProjectAccessError(
         "Only the review requester or a project owner can edit or publish findings.",
       );
@@ -117,13 +120,20 @@ export function createReviewService(
     await createGitService(tx as Database).authorizeRepositories(
       userId,
       ref.projectId,
-      [run.review?.repositoryId ?? (run.context.branchReview as import("@spectron/shared").BranchReview).repositoryId],
+      [
+        run.review?.repositoryId ??
+          (run.context.branchReview as import("@spectron/shared").BranchReview)
+            .repositoryId,
+      ],
     );
     return run;
   }
   async function client(userId: string, ref: Ref) {
     const run = await db.transaction((tx) => controlled(tx, userId, ref));
-    if(!run.review)throw new IssueInputError("Branch review findings are local. Review a linked PR/MR to publish comments.");
+    if (!run.review)
+      throw new IssueInputError(
+        "Branch review findings are local. Review a linked PR/MR to publish comments.",
+      );
     const [repo] = await createGitService(db).authorizeRepositories(
       userId,
       ref.projectId,
@@ -229,8 +239,10 @@ export function createReviewService(
         if (rows.length !== args.findingIds.length)
           throw new ProjectAccessError("Finding not found in this review.");
       });
+      const { run, repo, adapter, connection } = await client(userId, args);
+      // One immutable diff snapshot per batch; each claim still rechecks current access and settings.
+      let diff: ReviewDiff | undefined;
       for (const id of args.findingIds) {
-        const { run, repo, adapter, connection } = await client(userId, args);
         const [finding] = await db
           .select()
           .from(f)
@@ -279,12 +291,11 @@ export function createReviewService(
               );
           continue;
         }
-        let diff: ReviewDiff;
         try {
-          diff = await adapter.review(repo, run.review!.pull.number);
+          diff ??= await adapter.review(repo, run.review!.pull.number);
         } catch {
           throw new IssueInputError(
-            "The current PR/MR diff could not be verified. No finding was sent. Retry when the provider is available.",
+            "The current PR/MR diff could not be verified. Retry when the provider is available.",
           );
         }
         const original = run.context.reviewDiff as ReviewDiff | undefined;

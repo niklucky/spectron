@@ -227,10 +227,16 @@ export function reviewAdapter(options: {
         p = pull(before, repo);
       const files = await pages(`${url}/${github ? "files" : "diffs"}`);
       const after = obj(await get(url));
+      const current = pull(after, repo);
       if (
-        pull(after, repo).head !== p.head ||
-        JSON.stringify(before.diff_refs ?? before.base) !==
-          JSON.stringify(after.diff_refs ?? after.base)
+        current.head !== p.head ||
+        current.state !== p.state ||
+        current.sourceBranch !== p.sourceBranch ||
+        current.targetBranch !== p.targetBranch ||
+        (github
+          ? obj(before.base).sha !== obj(after.base).sha
+          : JSON.stringify(before.diff_refs) !==
+            JSON.stringify(after.diff_refs))
       )
         throw new IssueInputError(
           "The PR/MR changed while loading its diff. Retry the review.",

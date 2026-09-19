@@ -9,6 +9,7 @@ import type {
 import type { GitTransport } from "./transport";
 import { IssueInputError } from "../issues";
 export interface GitActivityAdapter {
+  probe?(repo: GitRemoteRepository, number: string): Promise<string>;
   draft?(repo: GitRemoteRepository, pull: GitPullRequest): Promise<void>;
   snapshot(
     repo: GitRemoteRepository,
@@ -185,7 +186,21 @@ export function activityAdapter({
     }
     throw new Error("Too many review threads");
   }
+  const providerVersion = (
+    raw: Record<string, any>,
+    repo: GitRemoteRepository,
+  ) =>
+    JSON.stringify([
+      raw.updated_at ?? null,
+      pull(raw, repo),
+      raw.title,
+      raw.mergeable_state ?? raw.detailed_merge_status,
+      raw.head_pipeline ?? null,
+    ]);
   return {
+    async probe(repo, number) {
+      return providerVersion(object(await get(endpoint(repo, number))), repo);
+    },
     async snapshot(repo, number) {
       const url = endpoint(repo, number),
         raw = object(await get(url)),
@@ -295,7 +310,10 @@ export function activityAdapter({
         const byLogin = new Map<string, GitActivity["reviewers"][number]>();
         for (const r of reviews) {
           const u = person(r.user);
-          if (r.state !== "PENDING")
+          if (
+            r.state !== "PENDING" &&
+            (r.state !== "COMMENTED" || !byLogin.has(u.login))
+          )
             byLogin.set(u.login, { ...u, state: String(r.state) });
         }
         for (const r of raw.requested_reviewers ?? []) {
@@ -435,6 +453,7 @@ export function activityAdapter({
         );
       return {
         activity: {
+          providerVersion: providerVersion(raw, repo),
           pull: p,
           title: str(raw.title, 4096),
           providerId,
@@ -498,15 +517,24 @@ export function activityAdapter({
         });
     },
     async ready(repo, activity) {
+      const raw = object(await get(endpoint(repo, activity.pull.number))),
+        current = pull(raw, repo);
+      if (current.head !== activity.pull.head || current.state !== "open")
+        throw new IssueInputError(
+          "PR/MR changed before marking ready. Refresh first.",
+        );
+      if (!current.draft) return;
       if (github)
         await gql(
           "mutation($id:ID!){markPullRequestReadyForReview(input:{pullRequestId:$id}){pullRequest{id isDraft}}}",
-          { id: activity.providerId },
+          { id: id(raw.node_id) },
         );
       else
         await get(endpoint(repo, activity.pull.number), {
           method: "PUT",
-          body: { title: activity.title.replace(/^(Draft:|WIP:)\s*/i, "") },
+          body: {
+            title: str(raw.title, 4096).replace(/^(Draft:|WIP:)\s*/i, ""),
+          },
         });
     },
     async close(repo, activity) {

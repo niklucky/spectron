@@ -361,6 +361,15 @@ function WorkspaceCard({
                       }),
                     )
                   }
+                  discard={() =>
+                    run(() =>
+                      actions.discardReply({
+                        ...ref,
+                        id: draft.id,
+                        revision: draft.revision,
+                      }),
+                    )
+                  }
                   publish={() =>
                     run(() =>
                       actions.publishReply({
@@ -563,6 +572,7 @@ function WorkspaceCard({
   );
 }
 function ReplyEditor({
+  discard,
   draft,
   editable,
   busy,
@@ -570,6 +580,7 @@ function ReplyEditor({
   save,
   publish,
 }: {
+  discard?: () => Promise<boolean>;
   draft?: GitReplyDraft;
   editable: boolean;
   busy: boolean;
@@ -604,6 +615,22 @@ function ReplyEditor({
         disabled={!editable || busy || (!!draft && draft.state !== "draft")}
       />
       {draft?.error && <p role="alert">{draft.error}</p>}
+      {draft?.state === "uncertain" && discard && (
+        <>
+          <p>
+            Discard hides this local draft after checking the provider. It does
+            not resend or remove a provider comment; a delayed publication may
+            still appear.
+          </p>
+          <Button
+            variant="ghost"
+            disabled={!editable || busy}
+            onClick={() => void discard()}
+          >
+            Check provider and discard draft
+          </Button>
+        </>
+      )}
       {(!draft || draft.state === "draft") && (
         <>
           <Button

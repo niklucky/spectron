@@ -71,7 +71,7 @@ export function createGitAdapterFactory(transport: GitTransport = createGitTrans
         sourceBranch: validateBranch(text(github ? head.ref : r.source_branch)),
         targetBranch: validateBranch(text(github ? target.ref : r.target_branch)), head: sha,
         state: r.merged_at || r.state === "merged" ? "merged" : ["open", "opened"].includes(String(r.state)) ? "open" : "closed",
-        draft: r.draft === true || r.work_in_progress === true || /^(Draft:|WIP:)/i.test(String(r.title)),
+        draft: github ? r.draft === true : r.draft === true || r.work_in_progress === true || /^(Draft:|WIP:)/i.test(String(r.title)),
       };
     }
     return {

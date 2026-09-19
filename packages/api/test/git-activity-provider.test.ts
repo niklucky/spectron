@@ -26,7 +26,7 @@ for (const provider of ["github", "gitlab"] as const)
       node_id: "PR7",
       number: 7,
       iid: 7,
-      title: "Change",
+      title: github ? "WIP: Change" : "Change",
       state: github ? "open" : "opened",
       draft: false,
       head: { sha: head, ref: "feature" },
@@ -42,6 +42,7 @@ for (const provider of ["github", "gitlab"] as const)
       has_conflicts: false,
       blocking_discussions_resolved: true,
     };
+    let reads = 0;
     const writes: { path: string; method: string; body: any }[] = [];
     const transport: Parameters<typeof createGitAdapterFactory>[0] = async (
       url,
@@ -50,6 +51,7 @@ for (const provider of ["github", "gitlab"] as const)
     ) => {
       assert.ok(github ? headers.Authorization : headers["PRIVATE-TOKEN"]);
       const p = url.pathname;
+      if (!options) reads++;
       if (p === "/graphql") {
         const body = options!.body as any,
           q = body.query as string;
@@ -157,6 +159,13 @@ for (const provider of ["github", "gitlab"] as const)
             state: "APPROVED",
           },
           {
+            id: 16,
+            body: "Follow-up",
+            submitted_at: date,
+            user: { login: "reviewer" },
+            state: "COMMENTED",
+          },
+          {
             id: 14,
             body: "Unsubmitted",
             submitted_at: null,
@@ -215,6 +224,13 @@ for (const provider of ["github", "gitlab"] as const)
     ).activity!;
     const snapshot = await adapter.snapshot(repo, "7");
     assert.equal(snapshot.activity.mergeable, true);
+    assert.equal(snapshot.activity.pull.draft, false);
+    const beforeProbe = reads;
+    assert.equal(
+      await adapter.probe!(repo, "7"),
+      snapshot.activity.providerVersion,
+    );
+    assert.equal(reads - beforeProbe, 1);
     assert.equal(snapshot.activity.commits.length, 1);
     assert.ok(
       snapshot.activity.checks.some(
@@ -255,7 +271,18 @@ for (const provider of ["github", "gitlab"] as const)
       false,
     );
     await adapter.draft!(repo, snapshot.activity.pull);
-    await adapter.ready(repo, { ...snapshot.activity, title: "Draft: Change" });
+    const beforeReady = writes.length;
+    await adapter.ready(repo, {
+      ...snapshot.activity,
+      title: "Draft: Stale title",
+    });
+    assert.equal(writes.length, beforeReady);
+    raw.draft = true;
+    raw.title = "Draft: Renamed change";
+    await adapter.ready(repo, {
+      ...snapshot.activity,
+      title: "Draft: Stale title",
+    });
     await adapter.close(repo, snapshot.activity);
     await adapter.merge(repo, snapshot.activity, "squash");
     const merged = writes.at(-1)!;
@@ -284,7 +311,7 @@ for (const provider of ["github", "gitlab"] as const)
       );
     } else {
       assert.ok(writes.some((w) => w.body.resolved === false));
-      assert.ok(writes.some((w) => w.body.title === "Change"));
+      assert.ok(writes.some((w) => w.body.title === "Renamed change"));
     }
     status = "BLOCKED";
     glstatus = "ci_still_running";

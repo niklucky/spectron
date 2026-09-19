@@ -267,10 +267,12 @@ export function createAgentWorker(
               state: i.state,
             })),
           };
-          row.context.fileIds = [...new Set([
-            ...((old.context.fileIds ?? []) as string[]),
-            ...((row.context.fileIds ?? []) as string[]),
-          ])];
+          row.context.fileIds = [
+            ...new Set([
+              ...((old.context.fileIds ?? []) as string[]),
+              ...((row.context.fileIds ?? []) as string[]),
+            ]),
+          ];
           const originalFeedback = (old.context.feedbackComments ??
             []) as import("@spectron/shared").FeedbackComment[];
           row.context.feedbackComments = [
@@ -475,6 +477,8 @@ export function createAgentWorker(
               []) as import("@spectron/shared").FeedbackComment[];
             const replies = new Map<string, string[]>();
             const reportedComments = new Set<string>();
+            const validFeedback: NonNullable<typeof result.feedback> = [];
+            let droppedFeedback = 0;
             for (const feedback of result.feedback ?? []) {
               const selected = comments.find(
                 (c) =>
@@ -482,10 +486,11 @@ export function createAgentWorker(
                   c.noteId === feedback.noteId,
               );
               const key = `${feedback.discussionId}:${feedback.noteId}`;
-              if (!selected || reportedComments.has(key))
-                throw new Error(
-                  "Agent returned duplicate feedback or feedback outside the selected comments.",
-                );
+              if (!selected || reportedComments.has(key)) {
+                droppedFeedback++;
+                continue;
+              }
+              validFeedback.push(feedback);
               reportedComments.add(key);
               if (feedback.reply?.trim())
                 replies.set(feedback.discussionId, [
@@ -493,6 +498,9 @@ export function createAgentWorker(
                   feedback.reply.trim(),
                 ]);
             }
+            result.feedback = validFeedback;
+            if (droppedFeedback)
+              result.details += `\n\nIgnored ${droppedFeedback} duplicate or unselected feedback result(s). Selected comments without an outcome are reported as unresolved.`;
             for (const [discussionId, bodies] of replies)
               await tx
                 .insert(schema.gitReplyDraft)

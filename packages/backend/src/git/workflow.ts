@@ -173,6 +173,27 @@ export function createGitWorkflow(
     }
     try {
       const { repo: repository, connection, adapter } = await client(workspace);
+      const unchanged =
+        !force &&
+        adapter.probe &&
+        workspace.activity?.providerVersion &&
+        workspace.syncedVersion === workspace.syncVersion &&
+        workspace.syncedAt &&
+        workspace.syncedAt.getTime() > Date.now() - 3600000 &&
+        (await adapter.probe(repository, workspace.pull.number)) ===
+          workspace.activity.providerVersion;
+      if (unchanged) {
+        await db
+          .update(w)
+          .set({
+            syncClaim: null,
+            syncLeaseUntil: null,
+            syncError: null,
+            nextSyncAt: sql`CASE WHEN ${w.syncVersion} <> ${workspace.syncVersion} THEN now() ELSE ${new Date(Date.now() + 300000).toISOString()}::timestamptz END`,
+          })
+          .where(and(eq(w.id, workspaceId), eq(w.syncClaim, claim)));
+        return;
+      }
       const snapshot = await adapter.snapshot(
         repository,
         workspace.pull.number,
@@ -284,12 +305,13 @@ export function createGitWorkflow(
             syncClaim: null,
             syncLeaseUntil: null,
             syncError: null,
-            nextSyncAt: new Date(
+            syncedVersion: workspace.syncVersion,
+            nextSyncAt:
               current.syncVersion !== workspace.syncVersion
-                ? 0
-                : Date.now() +
-                  (snapshot.activity.pull.state === "open" ? 60000 : 600000),
-            ),
+                ? new Date(0)
+                : snapshot.activity.pull.state === "open"
+                  ? new Date(Date.now() + 300000)
+                  : null,
           })
           .where(and(eq(w.id, workspaceId), eq(w.syncClaim, claim)));
       });
@@ -303,7 +325,7 @@ export function createGitWorkflow(
             error instanceof IssueInputError
               ? error.message
               : "Could not synchronize provider activity. Retry refresh.",
-          nextSyncAt: new Date(Date.now() + 60000),
+          nextSyncAt: sql`CASE WHEN ${w.syncVersion} <> ${workspace.syncVersion} THEN now() WHEN ${w.pull}->>'state' IN ('closed', 'merged') THEN NULL ELSE ${new Date(Date.now() + 900000).toISOString()}::timestamptz END`,
         })
         .where(and(eq(w.id, workspaceId), eq(w.syncClaim, claim)));
       if (force)
@@ -619,7 +641,9 @@ export function createGitWorkflow(
                 id: t.id,
                 workspaceId: t.workspaceId,
               })),
-            replies: drafts.map(({ createdAt, updatedAt, ...r }) => r),
+            replies: drafts
+              .filter((r) => !r.discardedAt)
+              .map(({ createdAt, updatedAt, discardedAt, ...r }) => r),
             operations: operations.map(
               ({
                 requestId,
@@ -647,6 +671,59 @@ export function createGitWorkflow(
     async refresh(userId: string, ref: GitWorkspaceRef) {
       await db.transaction((tx) => access(tx, userId, ref));
       await sync(ref.workspaceId, true);
+    },
+    async discardReply(
+      userId: string,
+      args: GitWorkspaceRef & { id: string; revision: number },
+    ) {
+      // Reconcile once more before hiding the draft. Keep the row/marker for late provider recovery.
+      await db.transaction(async (tx) => {
+        const a = await access(tx, userId, args, true);
+        const [draft] = await tx
+          .select({ reply })
+          .from(reply)
+          .innerJoin(d, eq(reply.discussionId, d.id))
+          .where(
+            and(eq(reply.id, args.id), eq(d.workspaceId, args.workspaceId)),
+          );
+        if (!draft || (!a.canManage && draft.reply.authorId !== userId))
+          throw new ProjectAccessError(
+            "Reply not found or owned by another member.",
+          );
+        if (
+          draft.reply.state !== "uncertain" ||
+          draft.reply.revision !== args.revision
+        )
+          throw new IssueConflictError(
+            "Only an unchanged uncertain reply can be discarded.",
+          );
+      });
+      await sync(args.workspaceId, true);
+      await db.transaction(async (tx) => {
+        const a = await access(tx, userId, args, true);
+        const [saved] = await tx
+          .update(reply)
+          .set({
+            discardedAt: new Date(),
+            revision: sql`${reply.revision}+1`,
+            updatedAt: new Date(),
+          })
+          .where(
+            and(
+              eq(reply.id, args.id),
+              eq(reply.revision, args.revision),
+              eq(reply.state, "uncertain"),
+              isNull(reply.discardedAt),
+              a.canManage ? undefined : eq(reply.authorId, userId),
+              sql`${reply.discussionId} IN (SELECT id FROM git_discussions WHERE workspace_id=${args.workspaceId})`,
+            ),
+          )
+          .returning();
+        if (!saved)
+          throw new IssueConflictError(
+            "The reply changed or was found on the provider. Refresh its status.",
+          );
+      });
     },
     async saveReply(userId: string, args: GitReplyInput) {
       if (!args.body.trim() || args.body.length > 20000)
@@ -678,6 +755,7 @@ export function createGitWorkflow(
                 eq(reply.id, args.id),
                 eq(reply.discussionId, args.discussionId),
                 eq(reply.state, "draft"),
+                isNull(reply.discardedAt),
                 eq(reply.revision, args.revision ?? 0),
                 a.canManage ? undefined : eq(reply.authorId, userId),
               ),
@@ -745,7 +823,11 @@ export function createGitWorkflow(
           );
         const r = draft.git_reply_drafts;
         if (r.state === "published") return null;
-        if (r.state !== "draft" || r.revision !== args.revision)
+        if (
+          r.discardedAt ||
+          r.state !== "draft" ||
+          r.revision !== args.revision
+        )
           throw new IssueConflictError(
             "Reply changed or has an uncertain publication. Refresh first.",
           );

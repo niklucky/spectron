@@ -127,6 +127,8 @@ for (const provider of ["github", "gitlab"] as const) {
           },
         };
     const posts: any[] = [];
+    let pullReads = 0,
+      moveBase = false;
     const adapter = createGitAdapterFactory(async (url, headers, options) => {
       assert.ok(github ? headers.Authorization : headers["PRIVATE-TOKEN"]);
       if (options?.method === "POST") {
@@ -150,10 +152,25 @@ for (const provider of ["github", "gitlab"] as const) {
         return github
           ? [{ id: 99, body: "<!-- marker -->" }]
           : [{ notes: [{ id: 99, body: "<!-- marker -->" }] }];
-      return payload;
+      pullReads++;
+      return github
+        ? {
+            ...payload,
+            base: {
+              ...payload.base,
+              sha: moveBase && pullReads % 2 === 0 ? "d".repeat(40) : diff.base,
+              repo: { watchers_count: pullReads, pushed_at: String(pullReads) },
+            },
+          }
+        : payload;
     })({ provider, baseURL }, "fixture-token").reviews!;
     const loaded = await adapter.review(repo, "7");
     assert.equal(loaded.pull.head, pull.head);
+    if (github) {
+      moveBase = true;
+      await assert.rejects(adapter.review(repo, "7"), /changed/);
+      moveBase = false;
+    }
     const sent = await adapter.publishFinding(
       repo,
       loaded,
@@ -282,6 +299,7 @@ for (const provider of ["github", "gitlab"] as const)
     });
     let currentDiff = structuredClone(diff),
       writes = 0,
+      reviewReads = 0,
       lose = false,
       noEffect = false;
     const published = new Map<string, { id: string; url: string }>();
@@ -298,7 +316,10 @@ for (const provider of ["github", "gitlab"] as const)
         webURL: `${c.baseURL}/${fullName}`,
       }),
       reviews: {
-        review: async () => structuredClone(currentDiff),
+        review: async () => {
+          reviewReads++;
+          return structuredClone(currentDiff);
+        },
         findFinding: async (_repo, _pull, marker) =>
           published.get(marker) ?? null,
         publishFinding: async (_repo, _diff, _finding, body) => {
@@ -461,6 +482,20 @@ for (const provider of ["github", "gitlab"] as const)
     await runs.publishFindings(member, { ...lostRef, findingIds: [unknownId] });
     assert.equal(writes, 3);
     assert.equal((await view(lost.id)).findings![1]!.state, "uncertain");
+    const batch = await runs.invoke(owner, invoke());
+    await finish();
+    const readsBeforeBatch = reviewReads,
+      writesBeforeBatch = writes;
+    await runs.publishFindings(owner, {
+      ...scope,
+      id: batch.id,
+      findingIds: (await view(batch.id)).findings!.map((f) => f.id),
+    });
+    assert.equal(reviewReads - readsBeforeBatch, 1);
+    assert.equal(writes - writesBeforeBatch, 2);
+    assert.ok(
+      (await view(batch.id)).findings!.every((f) => f.state === "published"),
+    );
     result = { summary: "No issues", details: "Checked", findings: [] };
     const empty = await runs.invoke(owner, invoke());
     await finish();
@@ -481,16 +516,14 @@ for (const provider of ["github", "gitlab"] as const)
       fullName: "team/second",
       externalId: "2",
     });
-    await db
-      .insert(schema.agentWorkspace)
-      .values({
-        id: createId(),
-        ...scope,
-        repositoryId: repo2.id,
-        branch: "feature",
-        targetBranch: "main",
-        pull: { ...pull, number: "8" },
-      });
+    await db.insert(schema.agentWorkspace).values({
+      id: createId(),
+      ...scope,
+      repositoryId: repo2.id,
+      branch: "feature",
+      targetBranch: "main",
+      pull: { ...pull, number: "8" },
+    });
     await assert.rejects(runs.invoke(owner, invoke()), /Select/);
     await assert.rejects(
       runs.invoke(owner, {
@@ -511,7 +544,7 @@ for (const provider of ["github", "gitlab"] as const)
     });
     await finish();
     assert.equal((await view(selected.id)).review!.workspaceId, workspaceId);
-    assert.equal(preparations, 5);
+    assert.equal(preparations, 6);
     assert.ok(
       !JSON.stringify(await runs.list(member, scope)).includes("fake-token"),
     );

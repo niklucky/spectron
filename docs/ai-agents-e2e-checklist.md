@@ -76,10 +76,10 @@ For every required model family, use the exact configured IDs and every exposed 
 ## Provider activity and discussions — repeat for both Git providers
 
 - [ ] Card shows real draft/open/closed/merged state, source/target/head, check/pipeline/job statuses, commits, participants, reviewer decisions and unresolved discussions. Spinner ends when actual synchronization ends.
-- [ ] Add/edit/remove provider notes, request/change/submit a review, update checks and push a commit. Webhooks update the card; a deliberately missed delivery recovers by polling.
+- [ ] Add/edit/remove provider notes, request/change/submit a review, update checks and push a commit. Webhooks update the card; a deliberately missed delivery recovers by polling (five-minute metadata probes, hourly full snapshots). Closed/merged requests stop scheduled polling; webhook/manual refresh still works.
 - [ ] Duplicate/reordered deliveries and a delivery during synchronization do not duplicate notes or lose a newer refresh. Bad signatures/tokens are rejected without applying payload data.
 - [ ] Write and edit a local reply; it remains local until Publish. Published text appears in the correct original provider thread under the integration identity, with the requester retained in Spectron's action history.
-- [ ] Refresh/restart after publishing; the reply appears once. On lost response, Reconcile finds the sent note or stays uncertain without resending.
+- [ ] Refresh/restart after publishing; the reply appears once. On lost response, Reconcile finds the sent note or stays uncertain without resending. Check provider and discard hides an unchanged uncertain draft only for its author or an owner, retains late publication recovery, and never resends/deletes a provider comment.
 - [ ] Resolve and Reopen real inline threads in both directions, including an outside provider change. Unsupported thread operations and provider permission failures remain explicit.
 
 ## Feedback and handoffs

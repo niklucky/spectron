@@ -83,6 +83,7 @@ async function fixture(
       provider === "github" ? "https://github.com" : "https://git.example.test";
   const remote: { activity: GitActivity; discussions: GitDiscussionData[] } = {
     activity: {
+      providerVersion: "v1",
       pull: {
         number: "7",
         url: `${baseURL}/team/repo/${provider === "github" ? "pull" : "-/merge_requests"}/7`,
@@ -126,6 +127,8 @@ async function fixture(
   };
   const state = {
     writes: 0,
+    snapshots: 0,
+    probes: 0,
     lose: false,
     noEffect: false,
     failSnapshot: false,
@@ -155,7 +158,12 @@ async function fixture(
     findPull: async () => structuredClone(remote.activity.pull),
     createDraft: async () => structuredClone(remote.activity.pull),
     activity: {
+      probe: async () => {
+        state.probes++;
+        return remote.activity.providerVersion!;
+      },
       snapshot: async () => {
+        state.snapshots++;
         if (state.failSnapshot)
           throw new Error("secret-token in unsafe upstream error");
         if (state.onSnapshot) {
@@ -426,6 +434,37 @@ for (const provider of ["github", "gitlab"] as const)
       }),
       /uncertain/,
     );
+    const uncertain = (await view()).replies.find((r) => r.id === unknown.id)!;
+    await assert.rejects(
+      workflow.discardReply(f.outsider, {
+        ...ref,
+        id: unknown.id,
+        revision: uncertain.revision,
+      }),
+    );
+    await workflow.discardReply(member, {
+      ...ref,
+      id: unknown.id,
+      revision: uncertain.revision,
+    });
+    assert.ok(!(await view()).replies.some((r) => r.id === unknown.id));
+    const [archived] = await f.db
+      .select()
+      .from(schema.gitReplyDraft)
+      .where(eq(schema.gitReplyDraft.id, unknown.id));
+    assert.ok(archived!.discardedAt);
+    assert.equal(state.writes, 2);
+    remote.discussions[0]!.notes.push({
+      ...remote.discussions[0]!.notes[0]!,
+      id: "late",
+      body: `Delayed reply\n<!-- spectron-reply:${archived!.id} -->`,
+    });
+    await workflow.reconcile(member, { ...ref, id: unknownOp.id });
+    assert.equal(
+      (await view()).operations.find((o) => o.id === unknownOp.id)!.state,
+      "completed",
+    );
+    assert.equal(state.writes, 2);
     for (const kind of ["resolve", "reopen"] as const) {
       await workflow.act(member, {
         ...ref,
@@ -774,6 +813,12 @@ test("branch reviews pin source and comparison, keep editable local drafts and r
   assert.equal(result.state, "completed", result.error ?? "");
   assert.equal(result.review, null);
   assert.equal(result.branchReview?.head, "a".repeat(40));
+  assert.ok(!("files" in result.branchReview!));
+  const [stored] = await f.db
+    .select()
+    .from(schema.agentRun)
+    .where(eq(schema.agentRun.id, run.id));
+  assert.ok((stored!.context.branchReview as any).files.length);
   assert.equal(result.findings?.[0]?.state, "draft");
   const finding = result.findings![0]!;
   await f.runs.editFinding(f.owner, {
@@ -849,7 +894,24 @@ test("feedback updates a ready request by returning it to draft before pushing a
     };
     return adapter;
   };
-  const run = await f.runs.invoke(f.owner, f.invocation());
+  const thread = (await f.view()).discussions[0]!;
+  f.remote.discussions[0]!.notes.push({
+    ...f.remote.discussions[0]!.notes[0]!,
+    id: "2",
+    body: "Also check retries",
+  });
+  await f.workflow.refresh(f.owner, f.ref);
+  const comments = [
+    { discussionId: thread.id, noteId: "1" },
+    { discussionId: thread.id, noteId: "2" },
+  ];
+  const run = await f.runs.address(f.owner, {
+    ...f.scope,
+    requestId: createId(),
+    agentId: f.agents[0]!.id,
+    comments,
+    message: "Fix comments",
+  });
   await assert.rejects(
     f.workflow.act(f.owner, {
       ...f.ref,
@@ -865,6 +927,27 @@ test("feedback updates a ready request by returning it to draft before pushing a
     turn: async () => ({
       summary: "Partial fix",
       details: "A check failed; inspect before ready",
+      feedback: [
+        {
+          ...comments[0]!,
+          status: "addressed",
+          explanation: "Fixed",
+          reply: "Fixed and checked",
+        },
+        {
+          ...comments[0]!,
+          status: "addressed",
+          explanation: "Duplicate",
+          reply: "Do not publish duplicate",
+        },
+        {
+          discussionId: createId(),
+          noteId: "foreign",
+          status: "addressed",
+          explanation: "Not selected",
+          reply: "Do not publish foreign",
+        },
+      ],
       verification: [
         { command: "test", outcome: "failed", details: "Fixture failure" },
       ],
@@ -899,6 +982,67 @@ test("feedback updates a ready request by returning it to draft before pushing a
     (r) => r.id === run.id,
   )!;
   assert.equal(row.state, "completed", row.error ?? "");
+  assert.deepEqual(
+    row.result?.feedback?.map((f) => f.status),
+    ["addressed", "unresolved"],
+  );
+  assert.match(row.result!.details, /Ignored 2/);
+  assert.equal((await f.view()).replies.length, 1);
+  assert.equal((await f.view()).replies[0]!.body, "Fixed and checked");
   assert.equal(row.implementation?.[0]?.pull?.draft, true);
   assert.equal(row.result?.verification?.[0]?.outcome, "failed");
+});
+
+test("background activity uses cheap probes, periodic full refreshes, webhook invalidation and stops closed polling", async (t) => {
+  const f = await fixture(t);
+  const update = async (
+    values: Partial<typeof schema.agentWorkspace.$inferInsert>,
+  ) =>
+    f.db
+      .update(schema.agentWorkspace)
+      .set(values)
+      .where(eq(schema.agentWorkspace.id, f.ref.workspaceId));
+  const stored = async () =>
+    (
+      await f.db
+        .select()
+        .from(schema.agentWorkspace)
+        .where(eq(schema.agentWorkspace.id, f.ref.workspaceId))
+    )[0]!;
+  const initial = f.state.snapshots;
+  await update({ nextSyncAt: new Date(0) });
+  await f.workflow.sync(f.ref.workspaceId);
+  assert.equal(f.state.probes, 1);
+  assert.equal(f.state.snapshots, initial);
+  assert.ok((await stored()).nextSyncAt!.getTime() > Date.now() + 240000);
+  await update({
+    nextSyncAt: new Date(0),
+    syncedAt: new Date(Date.now() - 3600001),
+  });
+  await f.workflow.sync(f.ref.workspaceId);
+  assert.equal(f.state.snapshots, initial + 1);
+  // A webhook version invalidates the cheap path, even with an unchanged PR timestamp.
+  await update({ nextSyncAt: new Date(0), syncVersion: 1 });
+  await f.workflow.sync(f.ref.workspaceId);
+  assert.equal(f.state.snapshots, initial + 2);
+  assert.equal((await stored()).syncedVersion, 1);
+  f.remote.activity.pull.state = "closed";
+  await f.workflow.refresh(f.owner, f.ref);
+  assert.equal((await stored()).nextSyncAt, null);
+  const closedReads = f.state.snapshots;
+  await f.workflow.sync(f.ref.workspaceId);
+  assert.equal(f.state.snapshots, closedReads);
+  // Manual refresh is still available; transient errors do not restart closed polling.
+  f.state.failSnapshot = true;
+  await assert.rejects(f.workflow.refresh(f.owner, f.ref));
+  assert.equal((await stored()).nextSyncAt, null);
+  f.state.failSnapshot = false;
+  f.remote.activity.pull.state = "open";
+  await update({ nextSyncAt: new Date(0), syncVersion: 2 });
+  await f.workflow.sync(f.ref.workspaceId);
+  assert.equal((await stored()).pull!.state, "open");
+  assert.ok((await stored()).nextSyncAt);
+  f.state.failSnapshot = true;
+  await assert.rejects(f.workflow.refresh(f.owner, f.ref));
+  assert.ok((await stored()).nextSyncAt!.getTime() > Date.now() + 840000);
 });

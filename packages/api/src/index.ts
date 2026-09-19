@@ -65,12 +65,15 @@ export function createAPI(
 
   const activity = createActivityService(db);
   const ai = createAIService(db, aiSecret, aiCredentialCheck);
-  const git = createGitService(db, integrationSecret, gitAdapterFactory ?? createGitAdapterFactory(createGitTransport(gitlabAllowedPrivateOrigins, { dns: gitProviderDNS })));
+  const factory = gitAdapterFactory ?? createGitAdapterFactory(
+    createGitTransport(gitlabAllowedPrivateOrigins, { dns: gitProviderDNS }),
+  );
+  const git = createGitService(db, integrationSecret, factory);
   const worklogs = createWorklogService(db);
   const comments = createCommentService(db);
   const files = createFileService(db, fileStorage);
-  const gitWorkflow = createGitWorkflow(db, integrationSecret, gitAdapterFactory ?? createGitAdapterFactory(createGitTransport(gitlabAllowedPrivateOrigins, { dns: gitProviderDNS })));
-  const runs = createAgentRunService(db, files, { secret: integrationSecret, factory: gitAdapterFactory ?? createGitAdapterFactory(createGitTransport(gitlabAllowedPrivateOrigins, { dns: gitProviderDNS })) });
+  const gitWorkflow = createGitWorkflow(db, integrationSecret, factory);
+  const runs = createAgentRunService(db, files, { secret: integrationSecret, factory });
   const tracker = createTrackerService(db, undefined, undefined, files);
   const issues = createIssueService(db);
   const fields = createFieldService(db);
