@@ -1,5 +1,6 @@
 import {
   type ComponentProps,
+  type CSSProperties,
   type ReactNode,
   useId,
   useRef,
@@ -28,6 +29,7 @@ export function Menu({
   className = "",
   trigger,
   align = "start",
+  placement = "auto",
 }: {
   label: string;
   icon?: ComponentProps<typeof Icon>["name"] | undefined;
@@ -36,11 +38,13 @@ export function Menu({
   items: MenuItem[];
   trigger?: ReactNode;
   align?: "start" | "end" | undefined;
+  /** `top` opens above the trigger; `auto` does so only when there is no room below. */
+  placement?: "auto" | "top" | "bottom" | undefined;
 }) {
   const id = useId();
   const ref = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
-  const [position, setPosition] = useState({ top: 0, left: 0 });
+  const [position, setPosition] = useState<CSSProperties>({ top: 0, bottom: "auto", left: 0, right: "auto" });
   const [open, setOpen] = useState(false);
   const width = 220;
   return (
@@ -62,19 +66,31 @@ export function Menu({
         aria-controls={id}
         onClick={() => {
           const rect = triggerRef.current!.getBoundingClientRect();
-          setPosition({
-            top: Math.min(
-              rect.bottom + 6,
-              window.innerHeight - items.length * 36 - 24,
+          const height = items.length * 36 + 8;
+          const above =
+            placement === "top" ||
+            (placement === "auto" &&
+              rect.bottom + 6 + height > window.innerHeight &&
+              rect.top - 6 - height >= 0);
+          const left = Math.max(
+            8,
+            Math.min(
+              align === "end" ? rect.right - width : rect.left,
+              window.innerWidth - width - 8,
             ),
-            left: Math.max(
-              8,
-              Math.min(
-                align === "end" ? rect.right - width : rect.left,
-                window.innerWidth - width - 8,
-              ),
-            ),
-          });
+          );
+          // Every offset is set explicitly: the popover UA style is `inset: 0`,
+          // and an offset React merely removes would fall back to it.
+          setPosition(
+            above
+              ? { top: "auto", bottom: window.innerHeight - rect.top + 6, left, right: "auto" }
+              : {
+                  top: Math.min(rect.bottom + 6, window.innerHeight - height - 16),
+                  bottom: "auto",
+                  left,
+                  right: "auto",
+                },
+          );
           ref.current?.togglePopover();
         }}
       >
@@ -87,7 +103,7 @@ export function Menu({
         role="menu"
         aria-label={label}
         className="m-0 rounded-xl border-0 bg-surface p-1 text-ink shadow-pop hairline"
-        style={{ ...position, width, position: "fixed", inset: "auto" }}
+        style={{ ...position, width, position: "fixed" }}
         onToggle={(event) => {
           const shown = event.newState === "open";
           setOpen(shown);

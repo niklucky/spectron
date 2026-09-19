@@ -54,10 +54,7 @@ export function TaskItem({
   ) : undefined;
   return (
     <IssueRow
-      author={{
-        name: item.author?.name ?? "Unknown author",
-        image: item.author?.image,
-      }}
+      assignee={item.assignee ?? null}
       project={project}
       statusTrigger={item.statusTrigger}
       statusColor={item.stateColor}

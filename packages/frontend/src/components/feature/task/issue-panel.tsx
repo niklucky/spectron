@@ -170,6 +170,25 @@ export function IssuePanel({
         identityPeople.find((i) => i.id === id)?.name ??
         "Former member")
       : "Unassigned";
+  // Imported issues may point at an external identity; select the mapped
+  // member when there is one, otherwise offer the identity itself as an option.
+  const assigneeValue = (() => {
+    const id = issue.assigneeId;
+    if (!id || members.some((m) => m.id === id)) return id ?? "";
+    const identity = (settings.externalIdentities ?? []).find((i) => i.id === id);
+    return identity?.localUserId && members.some((m) => m.id === identity.localUserId)
+      ? identity.localUserId
+      : id;
+  })();
+  const assigneeOptions = (
+    <>
+      <option value="">Unassigned</option>
+      {assigneeValue && !members.some((m) => m.id === assigneeValue) && (
+        <option value={assigneeValue}>{person(assigneeValue)}</option>
+      )}
+      {members.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+    </>
+  );
   const valueLabel = (field: string, value: unknown): string => {
     if (value == null || value === "") return "None";
     if (field.startsWith("fieldValues.")) {
@@ -322,9 +341,8 @@ export function IssuePanel({
             <label className="relative flex h-[26px] max-w-40 cursor-pointer items-center gap-1.5 rounded-md px-2 text-sm font-medium text-ink-2 hairline hover:bg-surface-2 max-[900px]:hidden" title={`Assignee: ${issue.assignee?.name ?? person(issue.assigneeId)}`}>
               {issue.assigneeId ? <Avatar name={issue.assignee?.name ?? person(issue.assigneeId)} image={issue.assignee?.image} size="xs" /> : <Icon name="user" size={13} className="text-ink-3" />}
               <span className="truncate">{issue.assigneeId ? (issue.assignee?.name ?? person(issue.assigneeId)).split(" ")[0] : "Unassigned"}</span>
-              <select aria-label="Assignee" className="absolute inset-0 cursor-pointer opacity-0" value={issue.assigneeId ?? ""} disabled={!!issue.deletedAt || busy} onChange={(e) => void saveField({ assigneeId: e.target.value || null }, "Could not update assignee.")}>
-                <option value="">Unassigned</option>
-                {members.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+              <select aria-label="Assignee" className="absolute inset-0 cursor-pointer opacity-0" value={assigneeValue} disabled={!!issue.deletedAt || busy} onChange={(e) => void saveField({ assigneeId: e.target.value || null }, "Could not update assignee.")}>
+                {assigneeOptions}
               </select>
             </label>
             <span className="mx-1 h-[18px] w-px bg-line max-[900px]:hidden" />
@@ -389,9 +407,8 @@ export function IssuePanel({
                   <dd className="min-w-0">
                     <span className="inline-flex max-w-full items-center gap-1.5">
                       {issue.assigneeId && <Avatar name={issue.assignee?.name ?? person(issue.assigneeId)} image={issue.assignee?.image} size="xs" />}
-                      <select aria-label="Assignee" className={fieldSelect} value={issue.assigneeId ?? ""} disabled={!!issue.deletedAt || busy} onChange={(e) => void saveField({ assigneeId: e.target.value || null }, "Could not update assignee.")}>
-                        <option value="">Unassigned</option>
-                        {members.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+                      <select aria-label="Assignee" className={fieldSelect} value={assigneeValue} disabled={!!issue.deletedAt || busy} onChange={(e) => void saveField({ assigneeId: e.target.value || null }, "Could not update assignee.")}>
+                        {assigneeOptions}
                       </select>
                     </span>
                   </dd>
@@ -487,7 +504,7 @@ export function IssuePanel({
                   <ol className="flex flex-col gap-2.5 text-sm">
                     {entries.map((entry) => (
                       <li key={entry.id}>
-                        <div className="text-ink-2"><b className="font-semibold text-ink">{entry.actorName}</b> {entry.action} {entry.entityType === "worklog" ? "a worklog" : entry.entityType === "comment" ? "a comment" : entry.entityType === "attachment" ? "an attachment" : "this issue"} <time className="text-xs text-ink-3">{formatDateTime(entry.createdAt)}</time></div>
+                        <div className="text-ink-2"><b className="font-semibold text-ink">{entry.entityType === "issue" && entry.action === "created" ? (issue.author?.name ?? entry.actorName) : entry.actorName}</b> {entry.action} {entry.entityType === "worklog" ? "a worklog" : entry.entityType === "comment" ? "a comment" : entry.entityType === "attachment" ? "an attachment" : "this issue"} <time className="text-xs text-ink-3">{formatDateTime(entry.createdAt)}</time></div>
                         {entry.action === "created" && entry.entityType === "issue" ? (
                           <p className="text-ink-3">{valueLabel("title", entry.changes.title?.after)}</p>
                         ) : (

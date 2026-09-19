@@ -333,15 +333,26 @@ export function createIssueService(db: Database) {
             desc(issueHistory.id),
           );
         const activity = new Map(
-          latest.map(({ entry, actorName, actorImage }) => [
-            entry.issueId,
-            {
-              actorName,
-              actorImage,
-              preview: activityPreview(entry),
-              createdAt: entry.createdAt.toISOString(),
-            },
-          ]),
+          latest.map(({ entry, actorName, actorImage }) => {
+            // Imported issues are created by the sync on behalf of the remote
+            // author: credit the author, not the importing user.
+            const row =
+              entry.entityType === "issue" && entry.action === "created"
+                ? rows.find((r) => r.id === entry.issueId)
+                : undefined;
+            const author = row
+              ? identities.get(row.authorId ?? row.externalAuthorId ?? "")
+              : undefined;
+            return [
+              entry.issueId,
+              {
+                actorName: author?.name ?? actorName,
+                actorImage: author?.image ?? actorImage,
+                preview: activityPreview(entry),
+                createdAt: entry.createdAt.toISOString(),
+              },
+            ];
+          }),
         );
         const links = await tx.select().from(issueTag).where(eq(issueTag.projectId, projectId));
         const trackerLinks = await tx

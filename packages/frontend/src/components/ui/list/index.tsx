@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { cn } from "../cn";
 import { Avatar } from "../avatar";
+import { Icon } from "../icon";
 import { StatusDot } from "../status";
 import { Badge } from "../pill";
 import { ProjectMark } from "../../feature/project/project-mark";
@@ -12,11 +13,12 @@ export function ListGroup({ children }: { children: ReactNode }) {
 }
 
 /**
- * One conversation in the issue list. Left column stacks the author's avatar
- * over the project mark; the text column has key line, title, and preview.
+ * One conversation in the issue list. Left column stacks the assignee's
+ * avatar (a placeholder when unassigned) over the project mark; the text
+ * column has key line, title, and preview.
  */
 export function IssueRow({
-  author,
+  assignee,
   project,
   statusTrigger,
   statusColor,
@@ -30,7 +32,7 @@ export function IssueRow({
   onClick,
   ariaCurrent,
 }: {
-  author: { name: string; image?: string | null | undefined };
+  assignee?: { name: string; image?: string | null | undefined } | null | undefined;
   project: Pick<Project, "name" | "initial" | "logo">;
   statusTrigger: string;
   statusColor?: string | null | undefined;
@@ -58,11 +60,21 @@ export function IssueRow({
       )}
     >
       <span className="mt-0.5 flex flex-col items-center gap-1.5">
-        <Avatar name={author.name} image={author.image} size="lg" title={`Author: ${author.name}`} />
+        {assignee ? (
+          <Avatar name={assignee.name} image={assignee.image} size="lg" title={`Assignee: ${assignee.name}`} />
+        ) : (
+          <span
+            className="inline-grid size-9 shrink-0 place-items-center rounded-full bg-surface-3 text-ink-3"
+            title="Unassigned"
+            aria-label="Unassigned"
+          >
+            <Icon name="user" size={16} />
+          </span>
+        )}
         <ProjectMark project={project} size="sm" />
       </span>
       <span className="flex min-w-0 flex-col gap-1">
-        <span className="flex h-4 min-w-0 items-center gap-1.5 text-sm text-ink-3">
+        <span className="flex h-4 min-w-0 items-center gap-1.5 text-xs text-ink-3">
           <StatusDot trigger={statusTrigger} color={statusColor} />
           <span className="mono text-xs text-ink-2">{issueKey}</span>
           <time className="ml-auto shrink-0" title={timeTitle}>
@@ -71,7 +83,7 @@ export function IssueRow({
         </span>
         <span
           className={cn(
-            "clamp-2 text-lg leading-[1.3] tracking-[-0.01em] text-ink",
+            "clamp-2 text-base leading-[1.3] tracking-[-0.01em] text-ink",
             unread > 0 ? "font-bold" : "font-medium",
           )}
         >
@@ -81,7 +93,7 @@ export function IssueRow({
           <span className="flex min-w-0 items-center gap-2.5">
             <span
               className={cn(
-                "flex min-w-0 flex-1 items-center gap-1.5 truncate text-base",
+                "flex min-w-0 flex-1 items-center gap-1.5 truncate text-sm",
                 unread > 0 ? "text-ink [&_b]:font-semibold [&_b]:text-ink" : "text-ink-2 [&_b]:font-semibold [&_b]:text-ink-2",
               )}
             >

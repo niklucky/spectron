@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { Icon } from "../../ui/icon";
 import { Avatar } from "../../ui/avatar";
 import { cn } from "../../ui/cn";
@@ -27,7 +27,20 @@ export function AccountMenu({
   onAction: (action: AccountAction) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [position, setPosition] = useState<CSSProperties>({});
   const ref = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const toggle = () => {
+    const rect = triggerRef.current?.getBoundingClientRect();
+    // Fixed placement above the trigger: the sidebar column clips overflow,
+    // which would hide the menu when the sidebar is collapsed.
+    if (rect)
+      setPosition({
+        left: Math.max(8, Math.min(rect.left, window.innerWidth - 256 - 8)),
+        bottom: window.innerHeight - rect.top + 8,
+      });
+    setOpen((value) => !value);
+  };
   const act = (action: AccountAction) => {
     setOpen(false);
     onAction(action);
@@ -52,7 +65,8 @@ export function AccountMenu({
     <div className="relative mt-1" ref={ref}>
       {open && (
         <div
-          className="absolute bottom-full left-0 z-20 mb-2 w-64 rounded-xl bg-surface p-1.5 shadow-pop hairline"
+          className="fixed z-30 w-64 rounded-xl bg-surface p-1.5 shadow-pop hairline"
+          style={position}
           aria-label="Account options"
           role="menu"
         >
@@ -132,12 +146,13 @@ export function AccountMenu({
       )}
       <button
         type="button"
+        ref={triggerRef}
         className={cn(
           "flex w-full items-center gap-2.5 rounded-lg py-1.5 text-left hover:bg-surface-3",
           collapsed ? "justify-center px-0" : "px-2",
           open && "bg-surface-3",
         )}
-        onClick={() => setOpen((value) => !value)}
+        onClick={toggle}
         aria-expanded={open}
         aria-haspopup="menu"
         aria-label="Open account menu"

@@ -399,6 +399,7 @@ export function ChatComposer({
             <Menu
               label="Attach"
               icon="paperclip"
+              placement="top"
               className="text-ink-3"
               disabled={busy || files.length >= 20}
               items={[

@@ -380,7 +380,7 @@ export function IssueChat({
                 {separator}
                 <EventLine icon={e.entityType === "worklog" ? "clock" : e.action === "deleted" ? "trash" : "check-circle"}>
                   <button type="button" className="inline-flex items-center gap-1.5 hover:text-ink" aria-expanded={expanded} onClick={() => setExpandedHistory((previous) => { const next = new Set(previous); if (next.has(e.id)) next.delete(e.id); else next.add(e.id); return next; })}>
-                    <b>{e.actorName}</b> {headline} · {timeOf(e.createdAt)}
+                    <b>{e.entityType === "issue" && e.action === "created" ? (issue.author?.name ?? e.actorName) : e.actorName}</b> {headline} · {timeOf(e.createdAt)}
                     {changes.length > 0 && <Icon name="chevron" size={11} className={cn("transition-transform", expanded && "rotate-180")} />}
                   </button>
                 </EventLine>
