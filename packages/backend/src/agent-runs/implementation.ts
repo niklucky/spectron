@@ -147,6 +147,7 @@ export function createImplementation(
       throw new Error("Git provider does not support draft publication.");
     return {
       find: a.findPull.bind(a),
+      draft: a.activity?.draft?.bind(a.activity),
       create: a.createDraft.bind(a),
       repo: c.repository,
     };
@@ -154,16 +155,16 @@ export function createImplementation(
   async function reconcile(workspace: Workspace) {
     const a = adapter(workspace),
       c = credential(workspace);
-    const pull = await a.find(a.repo, workspace.branch, workspace.targetBranch);
+    let pull = await a.find(a.repo, workspace.branch, workspace.targetBranch);
     if (pull) {
       await guard(workspace, async (tx) => {
         await tx.update(w).set({ pull }).where(eq(w.id, workspace.id));
       });
       workspace.pull = pull;
       await saveOutcome(workspace, { pull });
-      if (pull.state !== "open" || !pull.draft)
+      if (pull.state !== "open")
         throw new Error(
-          "The PR/MR is closed, merged, or marked ready. Return it to an open draft on the provider before continuing.",
+          "The PR/MR is closed or merged. Reopen it on the provider before continuing.",
         );
     } else if (workspace.pull)
       throw new Error(
@@ -171,6 +172,23 @@ export function createImplementation(
       );
     if (!workspace.pending) return;
     const pending = workspace.pending;
+    if (pull && !pull.draft) {
+      if (!a.draft)
+        throw new Error(
+          "Return the PR/MR to draft on the provider before publishing more changes.",
+        );
+      await operation(workspace, () => a.draft!(a.repo, pull!));
+      pull = await a.find(a.repo, workspace.branch, workspace.targetBranch);
+      if (!pull?.draft || pull.state !== "open")
+        throw new Error(
+          "Could not confirm draft status. Retry publication after checking the provider.",
+        );
+      workspace.pull = pull;
+      await guard(workspace, async (tx) => {
+        await tx.update(w).set({ pull }).where(eq(w.id, workspace.id));
+      });
+      await saveOutcome(workspace, { pull });
+    }
     await saveOutcome(workspace, {
       status: "publishing",
       commit: pending.commit,
@@ -191,7 +209,7 @@ export function createImplementation(
       workspace.branch,
       workspace.targetBranch,
     );
-    if (existing && (existing.state !== "open" || !existing.draft))
+    if (existing && existing.state !== "open")
       throw new Error(
         "The PR/MR changed state during publication. Inspect it before continuing.",
       );

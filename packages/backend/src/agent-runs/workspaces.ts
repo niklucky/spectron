@@ -38,6 +38,12 @@ export async function reserveWorkspaces(
       .where(and(eq(w.issueId, run.issueId), eq(w.repositoryId, repo.id)))
       .for("update");
     if (!workspace) throw new Error("Workspace unavailable.");
+    if (workspace.operationId)
+      throw new IssueConflictError(
+        "A provider action is pending. Reconcile it before starting writable work.",
+      );
+    if (workspace.successorRunId && workspace.successorRunId !== run.id)
+      throw new IssueConflictError("A takeover is waiting for this workspace.");
     hasPendingPublication ||= !!workspace.pending;
     if (workspace.ownerRunId && workspace.ownerRunId !== run.id)
       throw new IssueConflictError(
@@ -104,7 +110,11 @@ export async function releaseWorkspaces(db: RunDB, run: Run) {
   // Never release a waiting run: its unfinished work is reserved until explicit resume/Stop.
   await db
     .update(w)
-    .set({ ownerRunId: null, updatedAt: new Date() })
+    .set({
+      ownerRunId: sql`CASE WHEN EXISTS (SELECT 1 FROM agent_runs successor WHERE successor.id = ${w.successorRunId} AND NOT successor.stop_requested AND successor.state = 'queued') THEN ${w.successorRunId} ELSE NULL END`,
+      successorRunId: null,
+      updatedAt: new Date(),
+    })
     .where(
       and(
         eq(w.ownerRunId, run.id),

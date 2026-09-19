@@ -124,3 +124,14 @@
   overflow-wrap: anywhere;
   white-space: normal;
 }
+
+.agent-review-drafts { margin-block: 16px; }
+.agent-review-finding { border: 1px solid var(--border-color, #d8dce2); border-radius: 8px; padding: 12px; margin-top: 10px; overflow-wrap: anywhere; }
+.agent-review-finding > header { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.agent-finding-editor label { display: block; margin-block: 8px; }
+.agent-finding-editor textarea { display: block; box-sizing: border-box; width: 100%; min-height: 100px; padding: 8px; font: inherit; color: inherit; background: transparent; border: 1px solid var(--border-color, #d8dce2); border-radius: 6px; }
+.git-discussion { margin-block: 1rem; padding: .75rem; border: 1px solid var(--border); border-radius: .5rem; }
+.git-discussion header { display: flex; gap: .75rem; justify-content: space-between; }
+.git-note, .git-reply-draft { margin-block: .75rem; }
+.git-workspace-card details { margin-block: .5rem; }
+.git-workspace-card textarea { width: 100%; min-height: 5rem; }

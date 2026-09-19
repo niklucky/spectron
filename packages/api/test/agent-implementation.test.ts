@@ -464,5 +464,80 @@ test(
       "Unfinished",
     );
     assert.equal(await readFile(join(p.git, "protected"), "utf8"), "protected");
+    // A handoff keeps source dependencies and work artifacts, but creates a new OpenCode home/session.
+    await mkdir(join(p.tree, "node_modules", "fixture"), { recursive: true });
+    await writeFile(
+      join(p.tree, "node_modules", "fixture", "dependency.txt"),
+      "installed dependency",
+    );
+    await mkdir(join(root, id, "work", "artifacts"), { recursive: true });
+    await writeFile(
+      join(root, id, "work", "artifacts", "check.txt"),
+      "saved check output",
+    );
+    await mkdir(join(root, id, "work", "home"), { recursive: true });
+    await writeFile(
+      join(root, id, "work", "home", "old-identity.txt"),
+      "must not transfer",
+    );
+    await runtime.cleanup(id);
+    const replacementId = createId();
+    t.after(() => runtime.cleanup(replacementId));
+    const replacement = {
+      ...run,
+      id: replacementId,
+      handoffFromId: id,
+      agent: { ...run.agent, id: createId(), name: "Replacement" },
+      context: { continuationId: id },
+    } as Run;
+    await runtime.prepare(
+      replacement,
+      { ...config, key: "replacement-key" },
+      AbortSignal.timeout(30000),
+      async () => {},
+    );
+    assert.equal(
+      await readFile(
+        join(root, replacementId, "work", "artifacts", "check.txt"),
+        "utf8",
+      ),
+      "saved check output",
+    );
+    await assert.rejects(
+      readFile(join(root, replacementId, "work", "home", "old-identity.txt")),
+    );
+    await assert.rejects(readFile(join(root, replacementId, "session")));
+    assert.equal(
+      (
+        await processCommand("docker", [
+          "exec",
+          `spectron-run-${replacementId}`,
+          "cat",
+          `/repos/${repoId}/node_modules/fixture/dependency.txt`,
+        ])
+      ).trim(),
+      "installed dependency",
+    );
+    assert.equal(
+      (
+        await processCommand("docker", [
+          "exec",
+          `spectron-run-${replacementId}`,
+          "cat",
+          `/repos/${repoId}/file.txt`,
+        ])
+      ).trim(),
+      "Unfinished",
+    );
+    const replacementConfig = await readFile(
+      join(root, replacementId, "config.json"),
+      "utf8",
+    );
+    assert.ok(!replacementConfig.includes("replacement-key"));
+    assert.notEqual(
+      JSON.parse(replacementConfig).provider.spectron.options.apiKey,
+      JSON.parse(cfg).provider.spectron.options.apiKey,
+    );
+    await runtime.cleanup(replacementId);
   },
 );

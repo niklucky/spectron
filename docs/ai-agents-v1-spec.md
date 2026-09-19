@@ -1,7 +1,7 @@
 # AI agents and Git workflow — v1 specification
 
-Status: Stages 1–4 implemented; Stage 5 not started. See [Stage 1 notes](ai-agents-stage-1.md), [Stage 2 notes](ai-agents-stage-2.md), [Stage 3 notes](ai-agents-stage-3.md), and [Stage 4 notes](ai-agents-stage-4.md).
-Last updated: 2026-09-11.
+Status: Stages 1–5 implemented. Styling/UX refinement and full live E2E acceptance remain separate follow-up sessions. See [Stage 1 notes](ai-agents-stage-1.md), [Stage 2 notes](ai-agents-stage-2.md), [Stage 3 notes](ai-agents-stage-3.md), [Stage 4 notes](ai-agents-stage-4.md), [Stage 5A notes](ai-agents-stage-5a.md), and [Stage 5 completion notes](ai-agents-stage-5.md).
+Last updated: 2026-09-19.
 
 This document captures the decisions made with the project owner and is the handoff for future implementation sessions. The stages below are ordered, independently reviewable increments. Update their status and continuation notes as work lands. Technical suggestions are identified separately from agreed behavior.
 
@@ -293,7 +293,7 @@ Useful official references, to recheck at implementation time:
 
 ## 12. Implementation stages and acceptance criteria
 
-**Stages 1–4 are implemented**; Stage 5 is **not started**. Each stage should include appropriate migrations, browser-safe contracts, UI, authorization, error states, and focused verification. Do not implement later stages merely to make an earlier stage look complete.
+**Stages 1–5 are implemented**. Full live acceptance is pending; use [the E2E matrix](ai-agents-e2e-checklist.md). Each stage should include appropriate migrations, browser-safe contracts, UI, authorization, error states, and focused verification. Implementation completion does not mean every live provider/model combination has passed acceptance.
 
 ### Stage 1 — AI connections and agents
 
@@ -346,10 +346,10 @@ Acceptance: implement an issue and create a correctly attributed draft PR/MR; a 
 
 Depends on Stage 4. Deliver in these substeps to keep changes reviewable:
 
-- [ ] **5A — Review drafts:** review-code, PR/MR selection, reviewed revision, editable/dismissible findings, explicit publish selected/all, stale finding checks, publication tracking.
-- [ ] **5B — Activity and discussions:** updating provider cards, incoming comments, webhook/reconciliation deduplication, explicit reply publishing, Resolve/Reopen.
-- [ ] **5C — Address feedback and handoffs:** selected-comment fixes, active steering, explicit Take over, stopped-tool verification, fresh agent session in preserved workspace, separate review containers, draft external replies.
-- [ ] **5D — Merge controls:** owner-managed Can merge grants, Mark ready/Merge/Close actions, current provider requirements, displayed-commit verification, action attribution.
+- [x] **5A — Review drafts:** review-code, PR/MR selection, reviewed revision, editable/dismissible findings, explicit publish selected/all, stale finding checks, publication tracking.
+- [x] **5B — Activity and discussions:** updating provider cards, incoming comments, webhook/reconciliation deduplication, explicit reply publishing, Resolve/Reopen.
+- [x] **5C — Address feedback and handoffs:** selected-comment fixes, active steering, explicit Take over, stopped-tool verification, fresh agent session in preserved workspace, separate review containers, draft external replies.
+- [x] **5D — Merge controls:** owner-managed Can merge grants, Mark ready/Merge/Close actions, current provider requirements, displayed-commit verification, action attribution.
 
 Acceptance: findings remain local until published; repeated sync/publish does not duplicate comments; stale references are flagged; resolving/reopening round-trips to the provider; a replacement agent continues unfinished work without concurrent writers or leaked prior credentials; agent replies await human publication; unauthorized members cannot merge through the creator's token; newer remote commits prevent an unseen merge. Exercise both Git providers.
 
@@ -375,13 +375,15 @@ Do not resolve these by adding autonomous babysitting or a repository environmen
 
 ## 14. Next-session handoff
 
-Current state: Stages 1–4 are implemented. `/implement` uses durable writable workspaces, attributed commits, guarded pushes, automatic draft PR/MR creation, existing-branch continuation, and per-repository chat outcomes. Publication-only retries reconcile saved work without another model call. See [Stage 4 notes](ai-agents-stage-4.md) for setup, recovery, verification, and remaining live-provider checks. The local migration is applied and the persistent app/worker is running.
+Current state: Stages 1–5 are implemented, including branch and PR/MR review drafts, synchronized provider activity and discussions, explicit reply publication and Resolve/Reopen, selected-comment fixes, safe agent takeovers, owner-managed merge grants, and guarded Mark ready/Merge/Close. Migration `0025_git_collaboration.sql` is applied locally. See [Stage 5 completion notes](ai-agents-stage-5.md) for implementation, authorization, recovery behavior, tests, and the styling handoff.
 
-Recommended next action: **user acceptance and PR review**, then **Stage 5A — Review drafts**. Keep provider activity/discussions in 5B, feedback fixes and takeover in 5C, and merge controls in 5D.
+The owner requested this sequence on 2026-09-19: finish features in this session; refine styling/UX separately; perform uncompromised full E2E acceptance in a fresh session. Automated and container fixtures have passed; live provider writes and the complete model matrix remain unverified.
 
-Suggested continuation request:
+Next: **styling/UX refinement**, then **full E2E acceptance** using [the checklist](ai-agents-e2e-checklist.md). Preserve backend authorization, request identities, revision guards, and explicit publication boundaries during UX changes.
 
-> Read `docs/ai-agents-v1-spec.md` and the Stage 4 implementation notes, then implement Stage 5A — review drafts. Preserve the agreed v1 scope: review-code, PR/MR selection, reviewed revisions, editable/dismissible findings, explicit publication, stale finding checks, and durable publication tracking.
+Suggested E2E continuation request:
+
+> Read `docs/ai-agents-v1-spec.md`, `docs/ai-agents-stage-5.md`, and `docs/ai-agents-e2e-checklist.md`. Test the complete workflow with both Git providers and every required AI provider/model combination. Record evidence and fix failures. Do not count mocks, skipped cases, or unavailable prerequisites as passing live E2E acceptance.
 
 After each implementation session, record:
 
@@ -407,3 +409,7 @@ After each implementation session, record:
 - Stage 3 PR review follow-up: guarded unacknowledged steering and capped consecutive turns; preserved successful results during closure cleanup (migration `0022_agent_run_closure.sql`); bounded history and model-specific prompt capacity; isolated run containers with networking disabled and a loopback gateway over Docker process I/O; added rewrite comparison/revision recovery; reduced idle polling and authorization frequency; distinguished interruptions from user stops. All 22 Stage 3 tests, workspace typechecks, and production builds passed; isolated live model generation and browser comparison/Apply were verified.
 
 - 2026-09-11: Implemented Stage 4. Migration `0023_agent_implementations.sql`; durable writable per-issue/repository workspaces and writer reservations; host-side attributed Git commits and leased pushes; automatic GitHub draft PR/GitLab draft MR creation; continuation, lost-response reconciliation, publication-only retry, and per-repository chat cards/check outcomes. All 26 agent tests (including real Docker/OpenCode and Git fixtures), 14 Git regressions, workspace typechecks, and production builds passed. Browser composer/cards/retry were checked; persistent servers are running. Live provider pushes and PR/MR creation remain untested. Next: user acceptance/PR review, then Stage 5A. Details: [Stage 4 notes](ai-agents-stage-4.md).
+
+- 2026-09-11: Implemented Stage 5A. Migration `0024_agent_review_drafts.sql`; `/review-code`, linked PR/MR selection, pinned provider revisions and source checkout, local editable/dismissible findings, Publish selected/all, conservative stale-location checks, and durable publication/reconciliation for GitHub and GitLab. Isolated database, provider-contract, actual Git checkout, Docker/OpenCode fixture, typecheck/build, and browser checks passed. Restored the previous local configuration and saved workspaces from the `spectron-7e7d-20260911` backup; the app/API/worker are running with existing data. New live review model execution and provider comment writes were not exercised. Next: user acceptance/PR review, then Stage 5B. Details: [Stage 5A notes](ai-agents-stage-5a.md).
+
+- 2026-09-19: Completed Stages 5B–5D and the branch-review gap in 5A. Added durable activity/discussion reconciliation and signed webhooks; human reply drafts and tracked provider actions; feedback addressing and single-writer takeovers; fresh replacement sessions with preserved dependencies/artifacts; merge grants and displayed-head/provider-rule guards. Migration `0025_git_collaboration.sql` applied locally. Automated database/provider/Git/Docker/OpenCode checks and workspace typecheck/build passed. Browser smoke verified the existing GitHub PR's live checks and the action/review-target controls without executing external writes. Styling/UX and the full live E2E matrix remain the next sessions, as requested. See [completion notes](ai-agents-stage-5.md).

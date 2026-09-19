@@ -1,3 +1,4 @@
+import { ReviewDrafts } from "./review-drafts";
 import { useEffect, useState } from "react";
 import {
   createId,
@@ -32,6 +33,11 @@ export function AgentRunCard({
     [error, setError] = useState(""),
     [writing, setWriting] = useState(false),
     [message, setMessage] = useState("");
+  const [takeoverAgents, setTakeoverAgents] = useState<
+    import("@spectron/shared").AgentIdentity[]
+  >([]);
+  const [takeoverAgent, setTakeoverAgent] = useState("");
+  const [takingOver, setTakingOver] = useState(false);
   const [preview, setPreview] = useState<AgentRewritePreview | null>(null);
   const active = ["queued", "preparing", "working"].includes(run.state);
   const waiting = run.state === "needs_input";
@@ -83,6 +89,13 @@ export function AgentRunCard({
           Publication retry: no new model execution or checks.
         </p>
       )}
+      {run.handoffFromId && (
+        <p>
+          Continues{" "}
+          <a href={`#agent-run-${run.handoffFromId}`}>the previous execution</a>{" "}
+          in the same workspace, with a fresh agent session.
+        </p>
+      )}
       <MessageMarkdown text={run.message} />
       {!!run.attachments?.length && (
         <ul>
@@ -127,6 +140,30 @@ export function AgentRunCard({
             <MessageMarkdown text={run.result.details} />
           </details>
         </div>
+      )}
+      {(run.review || run.branchReview) && (
+        <ReviewDrafts
+          run={run}
+          actions={actions}
+          changed={changed}
+          closed={closed}
+        />
+      )}
+      {!!run.result?.feedback?.length && (
+        <section aria-label="Comment outcomes">
+          <h4>Selected comment outcomes</h4>
+          {run.result.feedback.map((f) => (
+            <div key={`${f.discussionId}:${f.noteId}`}>
+              <strong>{f.status}</strong>
+              <MessageMarkdown text={f.explanation} />
+              {f.reply && (
+                <p className="muted">
+                  Reply saved as a draft in provider discussions.
+                </p>
+              )}
+            </div>
+          ))}
+        </section>
       )}
       {!!run.result?.verification?.length && (
         <section
@@ -305,6 +342,28 @@ export function AgentRunCard({
                 Retry publication
               </Button>
             )}
+          {!closed &&
+            (active || waiting) &&
+            run.command === "implement" &&
+            !run.stopRequested &&
+            !run.publicationOnly && (
+              <Button
+                variant="ghost"
+                disabled={busy}
+                onClick={() =>
+                  void act(async () => {
+                    setTakeoverAgents(
+                      (await actions.available(run.projectId)).filter(
+                        (a) => a.id !== run.agent.id,
+                      ),
+                    );
+                    setTakingOver(true);
+                  })
+                }
+              >
+                Take over with another agent
+              </Button>
+            )}
           {(active || waiting || run.containerRetained) && (
             <Button
               variant="ghost"
@@ -330,6 +389,68 @@ export function AgentRunCard({
               </Button>
             )}
         </div>
+      )}
+      {takingOver && !closed && !run.stopRequested && (active || waiting) && (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            void act(async () => {
+              await actions.takeover({
+                ...ref,
+                requestId: createId(),
+                agentId: takeoverAgent,
+                message:
+                  message.trim() ||
+                  "Continue the implementation from the preserved workspace and address outstanding feedback.",
+              });
+              setTakingOver(false);
+              setMessage("");
+            });
+          }}
+        >
+          <p>
+            The current execution stops first. Its workspace, files, and context
+            carry forward; the replacement uses its own credentials and a new
+            session.
+          </p>
+          <label>
+            Replacement agent
+            <select
+              className="input"
+              required
+              value={takeoverAgent}
+              onChange={(e) => setTakeoverAgent(e.target.value)}
+              disabled={busy}
+            >
+              <option value="">Choose an agent</option>
+              {takeoverAgents.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Handoff instructions
+            <textarea
+              className="input"
+              value={message}
+              maxLength={100000}
+              onChange={(e) => setMessage(e.target.value)}
+              disabled={busy}
+            />
+          </label>
+          <Button type="submit" disabled={busy || !takeoverAgent}>
+            Stop and hand off
+          </Button>
+          <Button
+            variant="ghost"
+            disabled={busy}
+            onClick={() => setTakingOver(false)}
+          >
+            Cancel
+          </Button>
+        </form>
       )}
       {preview && !closed && !run.appliedAt && (
         <section
@@ -436,6 +557,12 @@ export function AgentRunCard({
                   message,
                   fileIds: [],
                   continuationId: run.id,
+                  ...(run.branchReview
+                    ? { reviewBranch: run.branchReview.sourceBranch }
+                    : {}),
+                  ...(run.review
+                    ? { reviewWorkspaceId: run.review.workspaceId }
+                    : {}),
                 });
               setMessage("");
               setWriting(false);

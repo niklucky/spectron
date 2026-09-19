@@ -19,6 +19,7 @@ import type {
 export type Context = {
   userId: string | null;
   runs: AgentRunService;
+  gitWorkflow: ReturnType<typeof import("@spectron/backend").createGitWorkflow>;
   ai: AIService;
   git: GitService;
   exports: ExportService;
@@ -50,12 +51,14 @@ export async function createContext(
   ai: AIService,
   git: GitService,
   runs: AgentRunService,
+  gitWorkflow: Context["gitWorkflow"],
 ): Promise<Context> {
   const session = await auth.api.getSession({ headers: request.headers });
   return {
     userId: session?.user.id || null,
     ai,
     runs,
+    gitWorkflow,
     git,
     tracker,
     exports,

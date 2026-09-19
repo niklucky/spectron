@@ -241,7 +241,22 @@ function Workspace({
         await workspace.refresh();
         return result;
       },
+      gitWorkflow: {
+        list: input => trpc.gitWorkflow.list.query(input),
+        refresh: input => trpc.gitWorkflow.refresh.mutate(input),
+        saveReply: input => trpc.gitWorkflow.saveReply.mutate(input),
+        discardReply: input => trpc.gitWorkflow.discardReply.mutate(input),
+        publishReply: input => trpc.gitWorkflow.publishReply.mutate(input),
+        act: input => trpc.gitWorkflow.act.mutate(input),
+        reconcile: input => trpc.gitWorkflow.reconcile.mutate(input),
+        address: input => trpc.runs.address.mutate(input),
+      } satisfies import('@spectron/shared').GitWorkflowActions,
       runs: {
+        takeover: (input: Parameters<import('@spectron/shared').AgentRunActions['takeover']>[0]) => trpc.runs.takeover.mutate(input),
+        address: (input: Parameters<import('@spectron/shared').AgentRunActions['address']>[0]) => trpc.runs.address.mutate(input),
+        reviewTargets: (input: import('@spectron/shared').AgentRunScope) => trpc.runs.reviewTargets.query(input),
+        editFinding: (input: import('@spectron/shared').FindingEdit) => trpc.runs.editFinding.mutate(input),
+        publishFindings: (input: import('@spectron/shared').AgentRunScope & { id: string; findingIds: string[] }) => trpc.runs.publishFindings.mutate(input),
         available: (projectId: string) => trpc.ai.available.query({ projectId }),
         repositories: (projectId: string) => trpc.git.repositories.query({ projectId }),
         list: (input: import('@spectron/shared').AgentRunScope) => trpc.runs.list.query(input),

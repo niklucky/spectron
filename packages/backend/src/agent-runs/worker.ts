@@ -1,5 +1,7 @@
+import { validReviewFindings } from "./reviews";
+import { reviewLocation, type ReviewDiff } from "../git/reviews";
 import { createImplementation } from "./implementation";
-import { releaseWorkspaces } from "./workspaces";
+import { releaseWorkspaces, reserveWorkspaces } from "./workspaces";
 import { and, asc, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import { schema, type Database } from "@spectron/db";
 import { createId } from "@spectron/shared";
@@ -104,6 +106,36 @@ export function createAgentWorker(
             "The repository moved. Start a new run with its current location.",
           );
         await adapter.branch(remote, repository.targetBranch);
+        if (
+          row.command === "review-code" &&
+          typeof row.context.reviewBranch === "string"
+        ) {
+          if (!adapter.reviews?.branchReview)
+            throw new Error("Branch review unavailable.");
+          if (!row.context.branchReview)
+            row.context.branchReview = {
+              ...(await adapter.reviews.branchReview(
+                remote,
+                row.context.reviewBranch,
+                repository.targetBranch,
+              )),
+              repositoryId: repository.id,
+              repositoryName: repository.fullName,
+            };
+        } else if (row.command === "review-code") {
+          if (!row.review || !adapter.reviews)
+            throw new Error("PR/MR review unavailable.");
+          if (!row.context.reviewDiff) {
+            const diff = await adapter.reviews.review(
+              remote,
+              row.review.pull.number,
+            );
+            if (diff.pull.state !== "open")
+              throw new Error("Select an open PR/MR to review.");
+            row.review = { ...row.review, pull: diff.pull };
+            row.context.reviewDiff = diff;
+          }
+        }
         repositories.push({
           repository,
           token,
@@ -204,6 +236,65 @@ export function createAgentWorker(
         });
     }, 1000);
     try {
+      if (row.handoffFromId && !row.implementation.length) {
+        await db.transaction(async (tx) => {
+          await runAccess(tx, row.requesterId, row, true, true);
+          const [old] = await tx
+            .select()
+            .from(r)
+            .where(eq(r.id, row.handoffFromId!))
+            .for("share");
+          if (
+            !old ||
+            old.claim ||
+            old.containerRetained ||
+            !["stopped", "failed", "completed"].includes(old.state)
+          )
+            throw new Error("Previous execution has not stopped safely.");
+          const oldInputs = await tx
+            .select()
+            .from(input)
+            .where(eq(input.runId, old.id))
+            .orderBy(asc(input.createdAt));
+          row.context.handoffSummary = {
+            agent: old.agent.name,
+            message: old.message,
+            result: old.result,
+            error: old.error,
+            implementation: old.implementation,
+            instructions: oldInputs.map((i) => ({
+              message: i.message,
+              state: i.state,
+            })),
+          };
+          row.context.fileIds = [
+            ...new Set([
+              ...((old.context.fileIds ?? []) as string[]),
+              ...((row.context.fileIds ?? []) as string[]),
+            ]),
+          ];
+          const originalFeedback = (old.context.feedbackComments ??
+            []) as import("@spectron/shared").FeedbackComment[];
+          row.context.feedbackComments = [
+            ...originalFeedback,
+            ...oldInputs.flatMap((i) => i.feedback),
+            ...((row.context.feedbackComments ??
+              []) as import("@spectron/shared").FeedbackComment[]),
+          ];
+          await reserveWorkspaces(tx, row, row.repositories);
+          const [updated] = await tx
+            .update(r)
+            .set({ context: row.context })
+            .where(fence(row))
+            .returning();
+          if (!updated) throw new Error("Handoff was cancelled.");
+          row.implementation = updated.implementation;
+        });
+        await record(
+          row,
+          "Previous tools stopped. Starting a new agent session in the preserved workspace.",
+        );
+      }
       await record(row, "Preparing a repository-backed session.");
       const config = await preparation(row);
       controller.signal.throwIfAborted();
@@ -234,6 +325,7 @@ export function createAgentWorker(
         .update(r)
         .set({
           repositories,
+          review: row.review,
           context: row.context,
           containerRetained: !publicationOnly,
           state: "working",
@@ -266,6 +358,16 @@ export function createAgentWorker(
             row,
             "Starting the next session turn with queued instructions.",
           );
+        const feedback = new Map(
+          (
+            (row.context.feedbackComments ??
+              []) as import("@spectron/shared").FeedbackComment[]
+          ).map((c) => [`${c.discussionId}:${c.noteId}`, c]),
+        );
+        for (const i of pending)
+          for (const c of i.feedback)
+            feedback.set(`${c.discussionId}:${c.noteId}`, c);
+        row.context.feedbackComments = [...feedback.values()];
         let accepted = false;
         const result: import("@spectron/shared").AgentResult = publicationOnly
           ? ((row.context.publicationResult as
@@ -329,7 +431,7 @@ export function createAgentWorker(
               "This session reached its 10-turn limit. Reply to resume the remaining queued instructions.";
           await tx
             .update(r)
-            .set({ result, updatedAt: new Date() })
+            .set({ result, context: row.context, updatedAt: new Date() })
             .where(fence(row));
           return !queued || turnNumber >= 10;
         });
@@ -370,10 +472,103 @@ export function createAgentWorker(
             result.question =
               "Additional instructions arrived during publication. Reply to resume the saved workspace.";
           const continuing = queued && !implementation && turnNumber < 10;
+          if (row.command === "implement" && !continuing && !result.question) {
+            const comments = (row.context.feedbackComments ??
+              []) as import("@spectron/shared").FeedbackComment[];
+            const replies = new Map<string, string[]>();
+            const reportedComments = new Set<string>();
+            const validFeedback: NonNullable<typeof result.feedback> = [];
+            let droppedFeedback = 0;
+            for (const feedback of result.feedback ?? []) {
+              const selected = comments.find(
+                (c) =>
+                  c.discussionId === feedback.discussionId &&
+                  c.noteId === feedback.noteId,
+              );
+              const key = `${feedback.discussionId}:${feedback.noteId}`;
+              if (!selected || reportedComments.has(key)) {
+                droppedFeedback++;
+                continue;
+              }
+              validFeedback.push(feedback);
+              reportedComments.add(key);
+              if (feedback.reply?.trim())
+                replies.set(feedback.discussionId, [
+                  ...(replies.get(feedback.discussionId) ?? []),
+                  feedback.reply.trim(),
+                ]);
+            }
+            result.feedback = validFeedback;
+            if (droppedFeedback)
+              result.details += `\n\nIgnored ${droppedFeedback} duplicate or unselected feedback result(s). Selected comments without an outcome are reported as unresolved.`;
+            for (const [discussionId, bodies] of replies)
+              await tx
+                .insert(schema.gitReplyDraft)
+                .values({
+                  discussionId,
+                  authorId: row.requesterId,
+                  runId: row.id,
+                  body: bodies.join("\n\n").slice(0, 20000),
+                })
+                .onConflictDoNothing();
+            if (comments.length) {
+              const reported = new Set(
+                (result.feedback ?? []).map(
+                  (f) => `${f.discussionId}:${f.noteId}`,
+                ),
+              );
+              result.feedback = [
+                ...(result.feedback ?? []),
+                ...comments
+                  .filter((c) => !reported.has(`${c.discussionId}:${c.noteId}`))
+                  .map((c) => ({
+                    discussionId: c.discussionId,
+                    noteId: c.noteId,
+                    status: "unresolved" as const,
+                    explanation:
+                      "The agent did not report an outcome for this selected comment.",
+                  })),
+              ];
+            }
+          }
+          if (
+            row.command === "review-code" &&
+            !continuing &&
+            !result.question
+          ) {
+            const findings = validReviewFindings(result.findings);
+            const branch = row.context.branchReview as
+              | import("@spectron/shared").BranchReview
+              | undefined;
+            const diff = branch ?? (row.context.reviewDiff as ReviewDiff);
+            if (
+              row.repositories[0]?.commit !==
+              (branch?.head ?? row.review?.pull.head)
+            )
+              throw new Error(
+                "Review checkout was not verified at the reviewed commit.",
+              );
+            for (const [ordinal, finding] of findings.entries()) {
+              const valid = reviewLocation(diff, finding);
+              await tx
+                .insert(schema.agentReviewFinding)
+                .values({
+                  runId: row.id,
+                  ordinal,
+                  ...finding,
+                  state: valid ? "draft" : "stale",
+                  error: valid
+                    ? null
+                    : "Location is outside a verifiable changed line. Run a fresh review.",
+                })
+                .onConflictDoNothing();
+            }
+          }
           await tx
             .update(r)
             .set({
               result,
+              context: row.context,
               state: continuing
                 ? "working"
                 : result.question
@@ -455,6 +650,7 @@ export function createAgentWorker(
           .where(
             and(
               or(isNull(r.claim), lt(r.leaseUntil, new Date())),
+              sql`(${r.stopRequested} OR ${r.handoffFromId} IS NULL OR EXISTS (SELECT 1 FROM agent_runs old WHERE old.id=${r.handoffFromId} AND old.claim IS NULL AND NOT old.container_retained AND old.state IN ('completed','failed','stopped')))`,
               or(
                 eq(r.state, "queued"),
                 inArray(r.state, ["preparing", "working"]),

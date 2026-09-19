@@ -155,7 +155,8 @@ export const projectMember = pgTable(
     userId: text("user_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
-    role: projectRole("role").notNull(),
+    canMerge: boolean("can_merge").default(false).notNull(),
+  role: projectRole("role").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -826,6 +827,7 @@ export const gitConnection = pgTable("git_connections", {
   commitAuthorEmail: text("commit_author_email").default("").notNull(),
   checkStatus: text("check_status").$type<"untested" | "passed" | "failed">().default("untested").notNull(),
   checkedAt: timestamp("checked_at", { withTimezone: true }),
+  webhookSecret: text("webhook_secret"),
   ...dates(),
 }, t => [uniqueIndex("git_connections_project_id_unique").on(t.projectId, t.id),
   check("git_connections_provider", sql`${t.provider} IN ('github', 'gitlab')`)]);
@@ -861,9 +863,11 @@ export const agentRun = pgTable('agent_runs', {
   command: text('command').$type<import('@spectron/shared').AgentCommand>().notNull(),
   message: text('message').notNull(),
   repositories: jsonb('repositories').$type<(import('@spectron/shared').GitRepository & { commit?: string })[]>().notNull(),
+  review: jsonb('review').$type<import('@spectron/shared').ReviewTarget>(),
   implementation: jsonb('implementation').$type<import('@spectron/shared').ImplementationOutcome[]>().default([]).notNull(),
   context: jsonb('context').$type<Record<string, unknown>>().notNull(),
   instructions: text('instructions').notNull(), connectionId: text('connection_id').notNull(),
+  handoffFromId: text('handoff_from_id'),
   state: text('state').$type<import('@spectron/shared').AgentRunState>().default('queued').notNull(),
   stopRequested: boolean('stop_requested').default(false).notNull(),
   result: jsonb('result').$type<import('@spectron/shared').AgentResult>(), error: text('error'),
@@ -882,6 +886,7 @@ export const agentRunInput = pgTable('agent_run_inputs', {
   id: text('id').$defaultFn(createId).primaryKey(), runId: text('run_id').notNull().references(() => agentRun.id, { onDelete: 'cascade' }),
   userId: text('user_id').notNull().references(() => user.id, { onDelete: 'restrict' }), requestId: text('request_id').notNull(),
   message: text('message').notNull(), state: text('state').$type<'queued' | 'delivered'>().default('queued').notNull(),
+  feedback: jsonb('feedback').$type<import('@spectron/shared').FeedbackComment[]>().default([]).notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 }, t => [uniqueIndex('agent_run_inputs_request_unique').on(t.userId, t.requestId)]);
 export const agentRunEvent = pgTable('agent_run_events', {
@@ -901,9 +906,65 @@ export const agentWorkspace = pgTable("agent_workspaces", {
   baseCommit: text("base_commit"), headCommit: text("head_commit"), remoteCommit: text("remote_commit"),
   pull: jsonb("pull").$type<import('@spectron/shared').GitPullRequest>(),
   pending: jsonb("pending").$type<{ commit: string; expectedRemote: string | null; title: string; body: string; runId: string }>(),
+  successorRunId: text("successor_run_id").references(() => agentRun.id, { onDelete: "restrict" }),
+  operationId: text("operation_id"),
+  activity: jsonb("activity").$type<import('@spectron/shared').GitActivity>(),
+  syncClaim: text("sync_claim"), syncLeaseUntil: timestamp("sync_lease_until", { withTimezone: true }),
+  syncedAt: timestamp("synced_at", { withTimezone: true }), nextSyncAt: timestamp("next_sync_at", { withTimezone: true }).defaultNow(),
+  syncedVersion: integer("synced_version").default(0).notNull(),
+  syncError: text("sync_error"), syncVersion: integer("sync_version").default(0).notNull(),
   ...dates(),
 }, t => [
   foreignKey({ columns: [t.projectId, t.issueId], foreignColumns: [issue.projectId, issue.id], name: "agent_workspaces_issue_fk" }).onDelete("restrict"),
   uniqueIndex("agent_workspaces_issue_repo_unique").on(t.issueId, t.repositoryId),
   uniqueIndex("agent_workspaces_branch_unique").on(t.repositoryId, t.branch),
+  index("agent_workspaces_sync_due").on(t.nextSyncAt),
 ]);
+
+export const agentReviewFinding = pgTable("agent_review_findings", {
+  id: text("id").$defaultFn(createId).primaryKey(),
+  runId: text("run_id").notNull().references(() => agentRun.id, { onDelete: "cascade" }),
+  ordinal: integer("ordinal").notNull(),
+  path: text("path").notNull(), line: integer("line").notNull(),
+  side: text("side").$type<"LEFT" | "RIGHT">().notNull(),
+  explanation: text("explanation").notNull(), suggestedFix: text("suggested_fix").notNull().default(""),
+  revision: integer("revision").notNull().default(1),
+  state: text("state").$type<import('@spectron/shared').ReviewFinding["state"]>().notNull().default("draft"),
+  error: text("error"), externalId: text("external_id"), externalURL: text("external_url"),
+  publishedBy: text("published_by").references(() => user.id, { onDelete: "restrict" }),
+  ...dates(),
+}, t => [uniqueIndex("agent_review_findings_run_ordinal").on(t.runId, t.ordinal),
+  check("agent_review_findings_state_valid", sql`${t.state} IN ('draft','dismissed','publishing','published','stale','uncertain')`),
+  check("agent_review_findings_location_valid", sql`${t.line} > 0 AND ${t.side} IN ('LEFT','RIGHT')`)]);
+
+export const gitDiscussion = pgTable("git_discussions", {
+  id: text("id").$defaultFn(createId).primaryKey(),
+  workspaceId: text("workspace_id").notNull().references(() => agentWorkspace.id, { onDelete: "cascade" }),
+  externalId: text("external_id").notNull(),
+  data: jsonb("data").$type<import('@spectron/shared').GitDiscussionData>().notNull(),
+  ...dates(),
+}, t => [uniqueIndex("git_discussions_external_unique").on(t.workspaceId, t.externalId)]);
+export const gitReplyDraft = pgTable("git_reply_drafts", {
+  discardedAt: timestamp("discarded_at", { withTimezone: true }),
+  id: text("id").$defaultFn(createId).primaryKey(),
+  discussionId: text("discussion_id").notNull().references(() => gitDiscussion.id, { onDelete: "cascade" }),
+  authorId: text("author_id").notNull().references(() => user.id, { onDelete: "restrict" }),
+  runId: text("run_id").references(() => agentRun.id, { onDelete: "restrict" }),
+  body: text("body").notNull(), revision: integer("revision").default(1).notNull(),
+  state: text("state").$type<import('@spectron/shared').GitReplyDraft['state']>().default("draft").notNull(),
+  externalId: text("external_id"), error: text("error"), ...dates(),
+}, t => [uniqueIndex("git_reply_drafts_run_thread").on(t.runId, t.discussionId)]);
+export const gitOperation = pgTable("git_operations", {
+  attemptId: text("attempt_id").$defaultFn(createId).notNull(),
+  id: text("id").$defaultFn(createId).primaryKey(),
+  workspaceId: text("workspace_id").notNull().references(() => agentWorkspace.id, { onDelete: "restrict" }),
+  requesterId: text("requester_id").notNull().references(() => user.id, { onDelete: "restrict" }), requestId: text("request_id").notNull(),
+  kind: text("kind").$type<import('@spectron/shared').GitOperationKind>().notNull(),
+  state: text("state").$type<import('@spectron/shared').GitOperation['state']>().default("dispatching").notNull(),
+  payload: jsonb("payload").$type<{ expectedHead: string; discussionId?: string; replyId?: string; body?: string; mergeMethod?: 'merge' | 'squash' | 'rebase' }>().notNull(),
+  error: text("error"), ...dates(),
+}, t => [uniqueIndex("git_operations_request_unique").on(t.requesterId, t.requestId)]);
+export const gitWebhookDelivery = pgTable("git_webhook_deliveries", {
+  connectionId: text("connection_id").notNull().references(() => gitConnection.id, { onDelete: "cascade" }),
+  deliveryId: text("delivery_id").notNull(), createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, t => [uniqueIndex("git_webhook_delivery_unique").on(t.connectionId, t.deliveryId)]);

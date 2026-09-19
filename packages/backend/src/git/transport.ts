@@ -14,7 +14,7 @@ export function normalizeGitBaseURL(provider: GitProvider, input: string) {
     return url.href.replace(/\/+$/, "");
   } catch { throw new IssueInputError(provider === "github" ? "Use https://github.com for GitHub." : "Enter your GitLab HTTPS instance URL without credentials, query parameters, or fragments."); }
 }
-export type GitTransport = (url: URL, headers: Record<string, string>, options?: { method: "POST"; body: unknown; signal?: AbortSignal }) => Promise<unknown>;
+export type GitTransport = (url: URL, headers: Record<string, string>, options?: { method: "POST" | "PUT" | "PATCH"; body: unknown; signal?: AbortSignal }) => Promise<unknown>;
 export function gitStatusError(status: number) {
   return new IssueInputError(status === 401 || status === 403
     ? "The provider rejected this token or its permissions. Check expiry, repository access, and organization approval."
@@ -64,10 +64,10 @@ export function createGitTransport(
           path: url.pathname + url.search, agent: false, signal, method: options?.method ?? "GET",
           headers: { ...headers, ...(body ? { "Content-Type": "application/json", "Content-Length": String(Buffer.byteLength(body)) } : {}), Host: url.host, "Accept-Encoding": "identity", "User-Agent": "Spectron" } }, res => {
           res.on("error", reject);
-          if (res.statusCode !== 200 && res.statusCode !== 201) { res.destroy(); reject(gitStatusError(res.statusCode ?? 500)); return; }
+          if (res.statusCode !== 200 && res.statusCode !== 201 && res.statusCode !== 204) { res.destroy(); reject(gitStatusError(res.statusCode ?? 500)); return; }
           let size = 0; const chunks: Buffer[] = [];
           res.on("data", (chunk: Buffer) => { size += chunk.length; if (size > 2 * 1024 * 1024) res.destroy(new Error("size")); else chunks.push(chunk); });
-          res.on("end", () => { try { resolve(JSON.parse(Buffer.concat(chunks).toString("utf8"))); } catch { reject(new Error("json")); } });
+          res.on("end", () => { try { resolve(res.statusCode === 204 ? null : JSON.parse(Buffer.concat(chunks).toString("utf8"))); } catch { reject(new Error("json")); } });
         });
         req.on("error", reject); req.end(body);
       });
