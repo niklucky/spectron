@@ -1,2 +1,2 @@
-@layer screens, theme, base, components, utilities;
+@layer theme, base, screens, components, utilities;
 @import "./styles/tokens/index.css" layer(screens);

@@ -212,72 +212,72 @@ function WorkspaceCard({
                   Close {prLabel}
                 </Button>
               )}
-              <Disclosure
-                label={row.discussions.length ? `${row.discussions.length} comment${row.discussions.length === 1 ? "" : "s"}${open ? `, ${open} open` : ""}` : "No comments yet"}
-                defaultOpen={open > 0}
-                panelClassName="border-0 bg-transparent"
-              >
-                {(error || row.error) && <p role="alert" className="px-3 py-2 text-sm text-bad">{error || row.error}</p>}
-                {row.discussions.map((thread) => {
-                  const noteChecked = (noteId: string) => selected.some((s) => s.discussionId === thread.id && s.noteId === noteId);
-                  const first = thread.notes[0];
-                  if (!first) return null;
-                  return (
-                    <ReviewThread
-                      key={thread.id}
-                      author={{ name: first.author.name }}
-                      time={<a href={first.url} target="_blank" rel="noreferrer" className="hover:underline">on {row.provider === "github" ? "GitHub" : "GitLab"} · {new Date(first.createdAt).toLocaleString([], { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "short" })}</a>}
-                      location={thread.path ? `${thread.path}${thread.line ? `:${thread.line}` : ""}` : undefined}
-                      resolved={thread.resolvable && thread.resolved}
-                      actions={
-                        <>
-                          {writable && thread.resolvable && (
-                            <Button size="sm" variant="ghost" icon={thread.resolved ? "refresh" : "check"} disabled={busy || pending} onClick={() => void run(() => actions.act({ ...ref, requestId: createId(), kind: thread.resolved ? "reopen" : "resolve", expectedHead: row.pull.head, discussionId: thread.id }))}>
-                              {thread.resolved ? "Reopen" : "Resolve"}
-                            </Button>
-                          )}
-                          {writable && (
-                            <Button size="sm" variant="ghost" icon="sparkle" disabled={busy} aria-pressed={noteChecked(first.id)} className={noteChecked(first.id) ? "bg-accent-soft text-accent-ink" : undefined} onClick={() => setSelected((old) => noteChecked(first.id) ? old.filter((s) => !(s.discussionId === thread.id && s.noteId === first.id)) : [...old, { discussionId: thread.id, noteId: first.id }])}>
-                              {noteChecked(first.id) ? "Selected for agent" : "Ask agent to address"}
-                            </Button>
-                          )}
-                        </>
-                      }
-                      replies={
-                        <div className="mt-1.5 flex flex-col gap-1.5">
-                          {thread.notes.slice(1).map((note) => (
-                            <div key={note.id} className="grid grid-cols-[20px_minmax(0,1fr)] gap-2 rounded-lg bg-surface-2 px-2.5 py-2 text-sm text-ink-2">
-                              <Avatar name={note.author.name} size="xs" />
-                              <div>
-                                <span className="flex items-center gap-2"><b className="font-semibold text-ink">{note.author.name}</b><a href={note.url} target="_blank" rel="noreferrer" className="text-xs text-ink-3">{new Date(note.createdAt).toLocaleString([], { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "short" })}</a>
-                                  {writable && <label className="ml-auto inline-flex items-center gap-1 text-xs text-ink-3"><input type="checkbox" className="accent-accent" disabled={busy} checked={noteChecked(note.id)} onChange={(e) => setSelected((old) => e.target.checked ? [...old, { discussionId: thread.id, noteId: note.id }] : old.filter((s) => !(s.discussionId === thread.id && s.noteId === note.id)))} />for agent</label>}
-                                </span>
-                                <div className="prose-chat text-base text-ink"><MessageMarkdown text={note.body.replace(/<!-- spectron-(?:reply|review):[^>]*-->/g, "")} /></div>
-                              </div>
-                            </div>
-                          ))}
-                          {row.replies.filter((r) => r.discussionId === thread.id && r.state !== "published").map((draft) => (
-                            <ReplyEditor key={`${draft.id}:${draft.revision}:${draft.state}`} draft={draft} editable={writable && (row.canManage || draft.authorId === currentUserId)} busy={busy} pending={pending}
-                              save={(body) => run(() => actions.saveReply({ ...ref, discussionId: thread.id, id: draft.id, revision: draft.revision, body }))}
-                              discard={() => run(() => actions.discardReply({ ...ref, id: draft.id, revision: draft.revision }))}
-                              publish={() => run(() => actions.publishReply({ ...ref, id: draft.id, revision: draft.revision, requestId: createId() }))} />
-                          ))}
-                          {writable && (
-                            <ReplyEditor key={`new:${thread.id}`} editable busy={busy} pending={pending} save={(body) => run(() => actions.saveReply({ ...ref, discussionId: thread.id, body }))} />
-                          )}
-                        </div>
-                      }
-                    >
-                      <MessageMarkdown text={first.body.replace(/<!-- spectron-(?:reply|review):[^>]*-->/g, "")} />
-                    </ReviewThread>
-                  );
-                })}
-                {!row.discussions.length && <p className="px-3 py-2 text-sm text-ink-3">No provider discussions yet.</p>}
-              </Disclosure>
             </span>
+            <Disclosure
+              label={row.discussions.length ? `${row.discussions.length} comment${row.discussions.length === 1 ? "" : "s"}${open ? `, ${open} open` : ""}` : "No comments yet"}
+              defaultOpen={open > 0}
+              panelClassName="border-0 bg-transparent"
+            >
+              {row.discussions.map((thread) => {
+                const noteChecked = (noteId: string) => selected.some((s) => s.discussionId === thread.id && s.noteId === noteId);
+                const first = thread.notes[0];
+                if (!first) return null;
+                return (
+                  <ReviewThread
+                    key={thread.id}
+                    author={{ name: first.author.name }}
+                    time={<a href={first.url} target="_blank" rel="noreferrer" className="hover:underline">on {row.provider === "github" ? "GitHub" : "GitLab"} · {new Date(first.createdAt).toLocaleString([], { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "short" })}</a>}
+                    location={thread.path ? `${thread.path}${thread.line ? `:${thread.line}` : ""}` : undefined}
+                    resolved={thread.resolvable && thread.resolved}
+                    actions={
+                      <>
+                        {writable && thread.resolvable && (
+                          <Button size="sm" variant="ghost" icon={thread.resolved ? "refresh" : "check"} disabled={busy || pending} onClick={() => void run(() => actions.act({ ...ref, requestId: createId(), kind: thread.resolved ? "reopen" : "resolve", expectedHead: row.pull.head, discussionId: thread.id }))}>
+                            {thread.resolved ? "Reopen" : "Resolve"}
+                          </Button>
+                        )}
+                        {writable && (
+                          <Button size="sm" variant="ghost" icon="sparkle" disabled={busy} aria-pressed={noteChecked(first.id)} className={noteChecked(first.id) ? "bg-accent-soft text-accent-ink" : undefined} onClick={() => setSelected((old) => noteChecked(first.id) ? old.filter((s) => !(s.discussionId === thread.id && s.noteId === first.id)) : [...old, { discussionId: thread.id, noteId: first.id }])}>
+                            {noteChecked(first.id) ? "Selected for agent" : "Ask agent to address"}
+                          </Button>
+                        )}
+                      </>
+                    }
+                    replies={
+                      <div className="mt-1.5 flex flex-col gap-1.5">
+                        {thread.notes.slice(1).map((note) => (
+                          <div key={note.id} className="grid grid-cols-[20px_minmax(0,1fr)] gap-2 rounded-lg bg-surface-2 px-2.5 py-2 text-sm text-ink-2">
+                            <Avatar name={note.author.name} size="xs" />
+                            <div>
+                              <span className="flex items-center gap-2"><b className="font-semibold text-ink">{note.author.name}</b><a href={note.url} target="_blank" rel="noreferrer" className="text-xs text-ink-3">{new Date(note.createdAt).toLocaleString([], { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "short" })}</a>
+                                {writable && <label className="ml-auto inline-flex items-center gap-1 text-xs text-ink-3"><input type="checkbox" className="accent-accent" disabled={busy} checked={noteChecked(note.id)} onChange={(e) => setSelected((old) => e.target.checked ? [...old, { discussionId: thread.id, noteId: note.id }] : old.filter((s) => !(s.discussionId === thread.id && s.noteId === note.id)))} />for agent</label>}
+                              </span>
+                              <div className="prose-chat text-base text-ink"><MessageMarkdown text={note.body.replace(/<!-- spectron-(?:reply|review):[^>]*-->/g, "")} /></div>
+                            </div>
+                          </div>
+                        ))}
+                        {row.replies.filter((r) => r.discussionId === thread.id && r.state !== "published").map((draft) => (
+                          <ReplyEditor key={`${draft.id}:${draft.revision}:${draft.state}`} draft={draft} editable={writable && (row.canManage || draft.authorId === currentUserId)} busy={busy} pending={pending}
+                            save={(body) => run(() => actions.saveReply({ ...ref, discussionId: thread.id, id: draft.id, revision: draft.revision, body }))}
+                            discard={() => run(() => actions.discardReply({ ...ref, id: draft.id, revision: draft.revision }))}
+                            publish={() => run(() => actions.publishReply({ ...ref, id: draft.id, revision: draft.revision, requestId: createId() }))} />
+                        ))}
+                        {writable && (
+                          <ReplyEditor key={`new:${thread.id}`} editable busy={busy} pending={pending} save={(body) => run(() => actions.saveReply({ ...ref, discussionId: thread.id, body }))} />
+                        )}
+                      </div>
+                    }
+                  >
+                    <MessageMarkdown text={first.body.replace(/<!-- spectron-(?:reply|review):[^>]*-->/g, "")} />
+                  </ReviewThread>
+                );
+              })}
+              {!row.discussions.length && <p className="px-3 py-2 text-sm text-ink-3">No provider discussions yet.</p>}
+            </Disclosure>
           </>
         }
       >
+        {(error || row.error) && <p role="alert" className="px-3 py-2 text-sm text-bad">{error || row.error}</p>}
         {!!selected.length && writable && (
           <form
             className="flex flex-col gap-2 bg-surface px-3 py-3 hairline-t"

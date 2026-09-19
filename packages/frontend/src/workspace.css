@@ -1,5 +1,5 @@
 /* Screens not yet on the design system: project settings, AI settings, dialogs. */
-@layer screens, theme, base, components, utilities;
+@layer theme, base, screens, components, utilities;
 @import "./components/feature/project/project.css" layer(screens);
 @import "./components/feature/task/new-task-dialog.css" layer(screens);
 @import "./components/feature/workspace/workspace-dialogs.css" layer(screens);

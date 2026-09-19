@@ -4,6 +4,7 @@ import {
   type MarkdownMention,
 } from "../../ui/message-markdown";
 import { Icon } from "../../ui/icon";
+import { ChatComposer } from "./chat-composer";
 import { useDictation } from "./use-dictation";
 import { useEffect, useRef, useState } from "react";
 import {
@@ -62,6 +63,7 @@ export function CommentItem({
   extraFiles?: ProjectFileSummary[] | undefined;
 }) {
   const [jiraFeedback, setJiraFeedback] = useState("");
+  const [replying, setReplying] = useState(false);
   const [editing, setEditing] = useState(false),
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
@@ -121,8 +123,8 @@ export function CommentItem({
         </>
       )}
       {jiraFeedback && <p role="status" className="mt-1 text-xs text-ink-3">{jiraFeedback}</p>}
-      {!row.deletedAt && !context.deleted && !editing && (
-        <div className="absolute -top-8 right-0 hidden gap-px rounded-lg bg-surface p-0.5 shadow-soft hairline group-hover:flex">
+      {!row.deletedAt && !context.deleted && !editing && !replying && (
+        <div className="absolute -top-8 right-0 flex gap-px rounded-lg bg-surface p-0.5 shadow-soft hairline opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto focus-within:opacity-100 focus-within:pointer-events-auto">
           {(row.jiraSync === "unsynced" || row.jiraSync === "failed") && context.actions.pushJira && context.actions.canPublish?.(context.scope.projectId) && (
             <Button variant="ghost" size="sm" icon="jira" className={actionButton} disabled={busy} aria-label="Send comment to Jira" title="Send comment to Jira"
               onClick={async () => {
@@ -135,6 +137,7 @@ export function CommentItem({
                 finally { setBusy(false); }
               }}><span>Jira</span></Button>
           )}
+          <IconButton icon="reply" label="Reply" size="sm" className="size-7" disabled={busy} onClick={() => setReplying(true)} />
           {row.canEdit && <IconButton icon="edit" label="Edit message" size="sm" className="size-7" disabled={busy} onClick={() => setEditing(true)} />}
           {row.canDelete && (
             <IconButton icon="trash" label="Delete message" size="sm" className="size-7" disabled={busy}
@@ -145,6 +148,15 @@ export function CommentItem({
                 finally { setBusy(false); }
               }} />
           )}
+        </div>
+      )}
+      {replying && !context.deleted && (
+        <div className="mt-2 flex flex-col gap-2">
+          <div className="flex items-center justify-between gap-2 text-sm text-ink-2">
+            <span>Reply to {row.authorName}</span>
+            <Button variant="ghost" size="sm" onClick={() => setReplying(false)}>Cancel reply</Button>
+          </div>
+          <ChatComposer context={context} parentId={row.id} onSent={() => setReplying(false)} />
         </div>
       )}
       {error && (

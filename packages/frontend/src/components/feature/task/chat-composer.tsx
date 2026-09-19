@@ -48,9 +48,13 @@ const optionClass =
 export function ChatComposer({
   context,
   agentActions,
+  parentId = null,
+  onSent,
 }: {
   context: CommentContext;
   agentActions?: AgentRunActions | undefined;
+  parentId?: string | null;
+  onSent?: () => void;
 }) {
   const [agents, setAgents] = useState<AgentIdentity[]>([]),
     [repositories, setRepositories] = useState<GitRepository[]>([]);
@@ -80,7 +84,7 @@ export function ChatComposer({
     return () => {
       alive = false;
     };
-  }, [agentActions, command, context.scope]);
+  }, [agentActions, command, context.scope.projectId, context.scope.issueId]);
   useEffect(() => {
     if (!agentActions) return;
     let alive = true;
@@ -294,7 +298,7 @@ export function ChatComposer({
                 ...context.scope,
                 body: commentBodyFromText(draft.text, draft.mentions),
                 files: files.map((f) => ({ projectId: f.projectId, projectFileId: f.projectFileId })),
-                parentId: null,
+                parentId,
               });
             if (active.current) {
               context.changed();
@@ -306,6 +310,7 @@ export function ChatComposer({
               setReviewWorkspaceId("");
               setPreview(false);
               requestId.current = createId();
+              onSent?.();
             }
           } catch (cause) {
             if (active.current) setError(cause instanceof Error ? cause.message : "Could not send message.");
@@ -378,12 +383,12 @@ export function ChatComposer({
               {agent && <Chip onRemove={() => { setAgentId(""); setCommand("discuss"); }} removeLabel="Remove agent"><Avatar name={agent.name} image={agent.avatar} kind="agent" size="xs" className="mr-0.5 rounded-[30%]" />{agent.name}</Chip>}
               {command !== "discuss" && <Chip mono onRemove={() => setCommand("discuss")} removeLabel="Remove command">/{command}</Chip>}
               {agent && (command !== "review-code" || !reviewWorkspaceId) && repositories.filter((r) => repositoryIds.includes(r.id)).map((repo) => (
-                <Chip key={repo.id} tone="neutral" mono className="hidden dev:inline-flex" onRemove={repositories.length > 1 ? () => setRepositoryIds((ids) => ids.filter((id) => id !== repo.id)) : undefined} removeLabel={`Remove ${repo.fullName}`}>
+                <Chip key={repo.id} tone="neutral" mono onRemove={repositories.length > 1 ? () => setRepositoryIds((ids) => ids.filter((id) => id !== repo.id)) : undefined} removeLabel={`Remove ${repo.fullName}`}>
                   <Icon name="branch" size={12} />{repo.fullName}
                 </Chip>
               ))}
               {agent && repositories.length > 1 && (command !== "review-code" || !reviewWorkspaceId) && (
-                <Menu label="Repositories" icon="plus" className="hidden size-6 dev:inline-grid" items={repositories.map((repo) => ({ label: `${repositoryIds.includes(repo.id) ? "✓ " : ""}${repo.fullName}`, icon: "branch" as const, onSelect: () => setRepositoryIds((ids) => ids.includes(repo.id) ? ids.filter((id) => id !== repo.id) : [...ids, repo.id]) }))} />
+                <Menu label="Repositories" icon="plus" className="size-6" items={repositories.map((repo) => ({ label: `${repositoryIds.includes(repo.id) ? "✓ " : ""}${repo.fullName}`, icon: "branch" as const, onSelect: () => setRepositoryIds((ids) => ids.includes(repo.id) ? ids.filter((id) => id !== repo.id) : [...ids, repo.id]) }))} />
               )}
             </>
           ) : undefined
@@ -428,6 +433,7 @@ export function ChatComposer({
           <textarea
             ref={area}
             rows={1}
+            autoFocus={parentId !== null}
             aria-label="Your message"
             maxLength={100000}
             disabled={busy || voice.listening}

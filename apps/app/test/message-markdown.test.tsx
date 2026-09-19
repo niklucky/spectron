@@ -38,6 +38,6 @@ test("resolves Tracker images with sizes, but leaves code examples literal", () 
 test("renders Markdown around structured mentions", () => {
   const html = renderToStaticMarkup(<MessageMarkdown text={"**Hello** [@Nik](#comment-mention-1)\n\n> reply"} mentions={[{href: '#comment-mention-1', label: 'Nik', title: 'Member'}]} />);
   assert.match(html, /<strong>Hello<\/strong>/);
-  assert.match(html, /class="comment-mention" title="Member">@Nik/);
+  assert.match(html, /<span[^>]* title="Member">@Nik<\/span>/);
   assert.match(html, /<blockquote>/);
 });

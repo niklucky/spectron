@@ -116,7 +116,7 @@ export function AgentRunCard({
   const failedChecks = verification.filter((v) => v.outcome === "failed").length;
   const skipped = verification.filter((v) => v.outcome === "not_run").length;
   const pulls = (run.implementation ?? []).filter((o) => o.pull);
-  const humanFooter = waiting || failed || stopped || !!run.result?.rewrite;
+  const humanFooter = run.canControl || waiting || failed || stopped || !!run.result?.rewrite;
   const commandLabel =
     run.command === "discuss" ? <Pill tone="accent">discussion</Pill> : <Command>{run.command}</Command>;
   const repoLabel = run.repositories.length ? (
@@ -259,51 +259,53 @@ export function AgentRunCard({
         {/* Footer with actions */}
         {(run.canControl || run.events.length > 0) && (
           <ResultFooter keep={humanFooter}>
-            <Disclosure label="Details" count={run.events.length || undefined} panelClassName="hidden dev:block">
-              <Tabs value={tab} onChange={setTab} tabs={[
-                { value: "result", label: "Result" },
-                ...(verification.length ? [{ value: "checks" as const, label: `Checks · ${verification.length}` }] : []),
-                { value: "activity", label: `Activity · ${run.events.length}` },
-                { value: "context", label: "Context" },
-              ]} />
-              <div className="px-3.5 pt-3 pb-3.5 text-base">
-                {tab === "result" && (
-                  run.result?.details ? <div className="prose-chat"><MessageMarkdown text={run.result.details} /></div> : <p className="text-sm text-ink-3">No detailed report yet.</p>
-                )}
-                {tab === "checks" && (
-                  <div className="flex flex-col gap-1.5">
-                    {verification.map((check, i) => (
-                      <CheckRow key={i} outcome={check.outcome} command={check.command} note={check.details} />
-                    ))}
-                  </div>
-                )}
-                {tab === "activity" && (
-                  <>
-                    <LogBlock lines={run.events.map((e) => ({ time: timeOf(e.createdAt), text: e.message }))} />
-                    <p className="mt-2 text-sm text-ink-3">
-                      {run.containerRetained ? "Container retained temporarily; workspace and results are saved." : "Results and workspace are saved independently of the container."}
-                    </p>
-                  </>
-                )}
-                {tab === "context" && (
-                  <dl className="grid grid-cols-[110px_minmax(0,1fr)] gap-x-3 gap-y-1.5 text-sm">
-                    <dt className="text-ink-3">Requested by</dt><dd>{run.requesterName} · {formatDateTime(run.createdAt)}</dd>
-                    <dt className="text-ink-3">Message</dt><dd className="prose-chat"><MessageMarkdown text={run.message} /></dd>
-                    <dt className="text-ink-3">Repositories</dt>
-                    <dd className="flex flex-wrap gap-1.5">
-                      {run.repositories.map((repo) => (
-                        <a key={repo.id} href={repo.webURL} target="_blank" rel="noreferrer" className="mono rounded-sm bg-code px-1.5 text-xs text-ink-2">
-                          {repo.fullName} · {repo.commit?.slice(0, 8) ?? repo.targetBranch}
-                        </a>
+            <div className="hidden dev:contents">
+              <Disclosure label="Details" count={run.events.length || undefined} panelClassName="hidden dev:block">
+                <Tabs value={tab} onChange={setTab} tabs={[
+                  { value: "result", label: "Result" },
+                  ...(verification.length ? [{ value: "checks" as const, label: `Checks · ${verification.length}` }] : []),
+                  { value: "activity", label: `Activity · ${run.events.length}` },
+                  { value: "context", label: "Context" },
+                ]} />
+                <div className="px-3.5 pt-3 pb-3.5 text-base">
+                  {tab === "result" && (
+                    run.result?.details ? <div className="prose-chat"><MessageMarkdown text={run.result.details} /></div> : <p className="text-sm text-ink-3">No detailed report yet.</p>
+                  )}
+                  {tab === "checks" && (
+                    <div className="flex flex-col gap-1.5">
+                      {verification.map((check, i) => (
+                        <CheckRow key={i} outcome={check.outcome} command={check.command} note={check.details} />
                       ))}
-                      {!run.repositories.length && "—"}
-                    </dd>
-                    {!!run.attachments?.length && (<><dt className="text-ink-3">Attachments</dt><dd className="flex flex-wrap gap-2">{run.attachments.map((file) => <a key={file.id} className="text-accent-ink" href={projectFileURL(run.projectId, file.id)} target="_blank" rel="noreferrer">{file.name}</a>)}</dd></>)}
-                    {!!run.inputs.length && (<><dt className="text-ink-3">Instructions</dt><dd className="flex flex-col gap-1.5">{run.inputs.map((input) => <div key={input.id}><span className="text-xs text-ink-3">{input.state === "queued" ? "Queued for next session turn" : "Delivered"}</span><div className="prose-chat"><MessageMarkdown text={input.message} /></div></div>)}</dd></>)}
-                  </dl>
-                )}
-              </div>
-            </Disclosure>
+                    </div>
+                  )}
+                  {tab === "activity" && (
+                    <>
+                      <LogBlock lines={run.events.map((e) => ({ time: timeOf(e.createdAt), text: e.message }))} />
+                      <p className="mt-2 text-sm text-ink-3">
+                        {run.containerRetained ? "Container retained temporarily; workspace and results are saved." : "Results and workspace are saved independently of the container."}
+                      </p>
+                    </>
+                  )}
+                  {tab === "context" && (
+                    <dl className="grid grid-cols-[110px_minmax(0,1fr)] gap-x-3 gap-y-1.5 text-sm">
+                      <dt className="text-ink-3">Requested by</dt><dd>{run.requesterName} · {formatDateTime(run.createdAt)}</dd>
+                      <dt className="text-ink-3">Message</dt><dd className="prose-chat"><MessageMarkdown text={run.message} /></dd>
+                      <dt className="text-ink-3">Repositories</dt>
+                      <dd className="flex flex-wrap gap-1.5">
+                        {run.repositories.map((repo) => (
+                          <a key={repo.id} href={repo.webURL} target="_blank" rel="noreferrer" className="mono rounded-sm bg-code px-1.5 text-xs text-ink-2">
+                            {repo.fullName} · {repo.commit?.slice(0, 8) ?? repo.targetBranch}
+                          </a>
+                        ))}
+                        {!run.repositories.length && "—"}
+                      </dd>
+                      {!!run.attachments?.length && (<><dt className="text-ink-3">Attachments</dt><dd className="flex flex-wrap gap-2">{run.attachments.map((file) => <a key={file.id} className="text-accent-ink" href={projectFileURL(run.projectId, file.id)} target="_blank" rel="noreferrer">{file.name}</a>)}</dd></>)}
+                      {!!run.inputs.length && (<><dt className="text-ink-3">Instructions</dt><dd className="flex flex-col gap-1.5">{run.inputs.map((input) => <div key={input.id}><span className="text-xs text-ink-3">{input.state === "queued" ? "Queued for next session turn" : "Delivered"}</span><div className="prose-chat"><MessageMarkdown text={input.message} /></div></div>)}</dd></>)}
+                    </dl>
+                  )}
+                </div>
+              </Disclosure>
+            </div>
             <span className="flex-1" />
             {run.canControl && (
               <>

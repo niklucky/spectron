@@ -1,4 +1,4 @@
-@layer screens, theme, base, components, utilities;
+@layer theme, base, screens, components, utilities;
 @import "./styles/fonts.css";
 @import "./styles/tokens/index.css" layer(screens);
 @import "./styles/design-tokens.css";
