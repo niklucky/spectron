@@ -91,7 +91,7 @@ export function useWorkspace(
       /* Storage may be disabled. */
     }
   }, [filters, storageKey]);
-  const { theme, setTheme } = useTheme();
+  const { theme, setTheme, palette, setPalette } = useTheme();
   const [modal, setModal] = useState<WorkspaceDialogName>(null);
   const [image] = useState("");
   const [name, setName] = useState(initialName);
@@ -300,6 +300,8 @@ export function useWorkspace(
     setFilter,
     theme,
     setTheme,
+    palette,
+    setPalette,
     modal,
     setModal,
     image,

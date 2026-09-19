@@ -1,7 +1,2 @@
-@import "./theme.css";
-@import "./styles/controls.css";
-@import "./components/ui/avatar/avatar.css";
-@import "./components/ui/button/button.css";
-@import "./components/ui/dialog/dialog.css";
-@import "./components/ui/input/input.css";
-@import "./components/ui/toast/toast.css";
+@layer screens, theme, base, components, utilities;
+@import "./styles/tokens/index.css" layer(screens);

@@ -8,3 +8,8 @@ export { Dialog } from "./components/ui/dialog";
 export { IntegrationTabs, type IntegrationTab } from "./components/feature/project/integration-tabs";
 export { IntegrationSyncLog } from "./components/feature/project/integration-sync-log";
 export { ExportSettings, type ExportActions } from "./components/feature/project/export-settings";
+export { Pill, Badge, Chip } from "./components/ui/pill";
+export { Segmented } from "./components/ui/segmented";
+export { StatusDot, Spinner, ProgressLine, statusColor } from "./components/ui/status";
+export { Menu } from "./components/ui/menu";
+export { cn } from "./components/ui/cn";

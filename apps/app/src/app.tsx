@@ -26,6 +26,7 @@ import {
   WorkspaceDialogs,
 } from "@spectron/frontend/components/feature/workspace";
 import { Toast } from "@spectron/frontend/components/ui/toast";
+import { Icon } from "@spectron/frontend/components/ui/icon";
 import { previewMedia } from "./fixtures/preview-metadata";
 import {
   CreateProjectDialog,
@@ -33,6 +34,7 @@ import {
   ProjectEmptyState,
 } from "@spectron/frontend/components/feature/project";
 import { InvitationPage } from "./invitation-page";
+import { DesignSystemPage } from "@spectron/frontend/components/feature/design-system";
 import { useProjects } from "./hooks/use-projects";
 import { useWorkspace } from "./hooks/use-workspace";
 import { AuthGate } from "./auth-gate";
@@ -47,6 +49,7 @@ export function App() {
     window.addEventListener("hashchange", change);
     return () => window.removeEventListener("hashchange", change);
   }, []);
+  if (hash.startsWith("#design")) return <DesignSystemPage />;
   return (
     <AuthGate>
       {(user, sessionId) =>
@@ -68,7 +71,7 @@ function Workspace({
   user,
   sessionId,
 }: {
-  user: { id: string; name: string };
+  user: { id: string; name: string; email: string };
   sessionId: string;
 }) {
   const projectState = useProjects(sessionId);
@@ -439,10 +442,15 @@ function Workspace({
             );
         }}
         onNavigate={workspace.openModal}
+        onOpenAgents={() => { if (!integrationBusy) { setSettingsId(null); setAISettings(true); } }}
         accountMenu={
           <AccountMenu
             name={workspace.name}
+            email={user.email}
+            collapsed={workspace.collapsed}
             theme={workspace.theme}
+            palette={workspace.palette}
+            onPaletteChange={workspace.setPalette}
             onThemeChange={workspace.setTheme}
             onAction={(action) => {
               if (action === "ai") {
@@ -559,14 +567,16 @@ function Workspace({
               onSelect={workspace.selectTask}
             />
           ) : (
-            <section className="chat-empty-state">
+            <section className="chat-column flex flex-col items-center justify-center gap-3 bg-surface px-6 text-center">
               <button
-                className="mobile-back"
+                type="button"
+                className="hidden text-sm text-accent-ink max-[700px]:block"
                 onClick={() => workspace.setMobileChat(false)}
               >
                 Back to tasks
               </button>
-              <p>
+              <Icon name="chats" size={28} className="text-ink-3" />
+              <p className="max-w-[36ch] text-base text-ink-2">
                 {workspace.loading
                   ? "Loading issues…"
                   : workspace.selectedId

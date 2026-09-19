@@ -1,23 +1,11 @@
-import {
-  agentCommands,
-  createId,
-  type AgentCommand,
-  type AgentIdentity,
-  type GitRepository,
-  type AgentRunActions,
-} from "@spectron/shared";
 import { formatDateTime } from "../../../lib/date-format";
-import { Menu } from "../../ui/menu";
-import { useAttachmentGallery } from "./attachment-gallery";
-import { UserInfo } from "../../ui/avatar";
-import { MessageComposer, MessageComposerActions } from "./message-composer";
 import {
   MessageMarkdown,
   type MarkdownMention,
 } from "../../ui/message-markdown";
 import { Icon } from "../../ui/icon";
 import { useDictation } from "./use-dictation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   trackerImages,
   commentDraftText,
@@ -33,28 +21,20 @@ import {
   type ProjectFileSummary,
   type ProjectMemberSummary,
 } from "@spectron/shared";
-import { Button } from "../../ui/button";
-import { FilePicker, type IssueFileActions } from "./issue-files";
+import { Button, IconButton } from "../../ui/button";
+import { Avatar } from "../../ui/avatar";
+import { Pill } from "../../ui/pill";
+import { cn } from "../../ui/cn";
+import { useAttachmentGallery } from "./attachment-gallery";
+import { FilePicker, FileTile, type IssueFileActions } from "./issue-files";
+
 export type CommentActions = {
   canPublish?: (projectId: string) => boolean;
-  pushJira?: (
-    projectId: string,
-    id: string,
-    overwriteRemote?: boolean,
-  ) => Promise<{ sent: boolean }>;
-  list: (
-    input: CommentScope & { parentId: string | null; cursor?: CommentCursor },
-  ) => Promise<CommentPage>;
-  create: (
-    input: CommentScope & CommentDraft & { parentId: string | null },
-  ) => Promise<{ id: string }>;
-  update: (
-    input: CommentScope &
-      CommentDraft & { id: string; expectedUpdatedAt: string },
-  ) => Promise<{ id: string }>;
-  delete: (
-    input: CommentScope & { id: string; expectedUpdatedAt: string },
-  ) => Promise<void>;
+  pushJira?: (projectId: string, id: string, overwriteRemote?: boolean) => Promise<{ sent: boolean }>;
+  list: (input: CommentScope & { parentId: string | null; cursor?: CommentCursor }) => Promise<CommentPage>;
+  create: (input: CommentScope & CommentDraft & { parentId: string | null }) => Promise<{ id: string }>;
+  update: (input: CommentScope & CommentDraft & { id: string; expectedUpdatedAt: string }) => Promise<{ id: string }>;
+  delete: (input: CommentScope & { id: string; expectedUpdatedAt: string }) => Promise<void>;
 };
 export type CommentContext = {
   scope: CommentScope;
@@ -65,196 +45,49 @@ export type CommentContext = {
   revision: number;
   changed: () => void;
 };
-export function IssueComments({
-  projectId,
-  issueId,
-  actions,
-  files,
-  members,
-  deleted,
-  onChange,
-  refreshKey = 0,
-}: {
-  projectId: string;
-  issueId: string;
-  actions: CommentActions;
-  files: IssueFileActions;
-  members: ProjectMemberSummary[];
-  deleted: boolean;
-  onChange: () => void;
-  refreshKey?: number;
-}) {
-  const [revision, setRevision] = useState(0),
-    [composing, setComposing] = useState(false);
-  const changed = () => {
-    setRevision((v) => v + 1);
-    onChange();
-  };
-  const context: CommentContext = {
-    scope: { projectId, issueId },
-    actions,
-    files,
-    members,
-    deleted,
-    revision: revision + refreshKey,
-    changed,
-  };
-  return (
-    <section className="issue-comments" aria-label="Comments">
-      <div className="issue-files-heading">
-        <h3>Comments</h3>
-        <Button variant="ghost" onClick={() => setRevision((v) => v + 1)}>
-          Refresh comments
-        </Button>
-      </div>
-      <CommentBranch context={context} parentId={null} depth={0} />
-      {!deleted &&
-        (composing ? (
-          <CommentEditor
-            context={context}
-            parentId={null}
-            onClose={() => setComposing(false)}
-          />
-        ) : (
-          <Button onClick={() => setComposing(true)}>Write a comment</Button>
-        ))}
-    </section>
-  );
-}
-function CommentBranch({
-  context,
-  parentId,
-  depth,
-}: {
-  context: CommentContext;
-  parentId: string | null;
-  depth: number;
-}) {
-  const { actions, scope, revision } = context;
-  const [rows, setRows] = useState<CommentSummary[]>([]),
-    [cursor, setCursor] = useState<CommentCursor | null>(null),
-    [loading, setLoading] = useState(true),
-    [error, setError] = useState("");
-  const generation = useRef(0),
-    pages = useRef(1);
-  const refresh = useCallback(async () => {
-    const version = ++generation.current;
-    setLoading(true);
-    setError("");
-    try {
-      let next: CommentCursor | null = null;
-      const items: CommentSummary[] = [];
-      for (let i = 0; i < pages.current; i++) {
-        const page = await actions.list({
-          ...scope,
-          parentId,
-          ...(next ? { cursor: next } : {}),
-        });
-        items.push(...page.comments);
-        next = page.nextCursor;
-        if (!next) break;
-      }
-      if (version === generation.current) {
-        setRows(items);
-        setCursor(next);
-      }
-    } catch (cause) {
-      if (version === generation.current)
-        setError(
-          cause instanceof Error ? cause.message : "Could not load comments.",
-        );
-    } finally {
-      if (version === generation.current) setLoading(false);
-    }
-  }, [actions, scope.projectId, scope.issueId, parentId]);
-  useEffect(() => {
-    void refresh();
-    return () => {
-      generation.current++;
-    };
-  }, [refresh, revision]);
-  return (
-    <div className="comment-branch">
-      {rows.map((row) => (
-        <CommentItem key={row.id} context={context} row={row} depth={depth} />
-      ))}
-      {loading && <p role="status">Loading comments…</p>}
-      {!loading && !rows.length && !error && (
-        <p className="muted">
-          {parentId ? "No replies yet." : "No comments yet."}
-        </p>
-      )}
-      {error && (
-        <p role="alert" className="project-error">
-          {error}{" "}
-          <Button variant="ghost" onClick={() => void refresh()}>
-            Retry comments
-          </Button>
-        </p>
-      )}
-      {cursor && (
-        <Button
-          variant="ghost"
-          disabled={loading}
-          onClick={() => {
-            pages.current++;
-            void refresh();
-          }}
-        >
-          Load more {parentId ? "replies" : "comments"}
-        </Button>
-      )}
-    </div>
-  );
-}
+
+/**
+ * One comment inside a conversation row. The row (MessageRow) provides the
+ * avatar, name and time; this renders the body, media, sync state and the
+ * hover actions.
+ */
 export function CommentItem({
   context,
   row,
-  depth,
-  flat = false,
-  hideAuthor = false,
+  extraFiles = [],
 }: {
-  flat?: boolean;
-  hideAuthor?: boolean;
   context: CommentContext;
   row: CommentSummary;
-  depth: number;
+  /** Attachments linked to this comment but not part of its body. */
+  extraFiles?: ProjectFileSummary[] | undefined;
 }) {
   const [jiraFeedback, setJiraFeedback] = useState("");
-  const [expanded, setExpanded] = useState(false),
-    [mode, setMode] = useState<"edit" | "reply" | null>(null),
+  const [editing, setEditing] = useState(false),
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
+  const attachments = [
+    ...row.attachments,
+    ...extraFiles.filter((f) => !row.attachments.some((a) => a.projectFileId === f.projectFileId)),
+  ];
+  const text = row.body.map((n) => (n.type === "text" ? n.text : "")).join("");
+  const actionButton = "size-7 justify-center px-0 [&>span]:hidden";
   return (
-    <article
-      className="comment-item"
-      aria-label={`Comment by ${row.authorName}`}
-    >
-      <header>
-        {!hideAuthor && <UserInfo name={row.authorName} />}{" "}
-        <time dateTime={row.createdAt}>{formatDateTime(row.createdAt)}</time>
-        {row.updatedAt !== row.createdAt && !row.deletedAt && (
-          <small> · edited</small>
-        )}
-      </header>
+    <div className="relative" aria-label={`Comment by ${row.authorName}`}>
       {row.deletedAt ? (
-        <p className="muted">
-          Comment deleted. Replies and history are retained.
-        </p>
-      ) : mode === "edit" ? (
+        <p className="text-sm text-ink-3 italic">Comment deleted. History is retained.</p>
+      ) : editing ? (
         <CommentEditor
           key={row.id}
           context={context}
-          parentId={row.parentId}
           existing={row}
-          onClose={() => setMode(null)}
+          onClose={() => setEditing(false)}
         />
       ) : (
         <>
           {row.body.some((n) => n.type !== "text" || n.text.trim()) && (
-            <div className="comment-body">
+            <div className="prose-chat max-w-[66ch] text-lg">
               <AttachmentMarkdown
-                files={row.attachments}
+                files={attachments}
                 text={row.body
                   .map((node, index) =>
                     node.type === "text"
@@ -264,196 +97,74 @@ export function CommentItem({
                   .join("")}
                 mentions={row.body.flatMap((node, index) =>
                   node.type === "mention"
-                    ? [
-                        {
-                          href: `#comment-mention-${index}`,
-                          label: node.label,
-                          title:
-                            context.members.find(
-                              (member) => member.id === node.userId,
-                            )?.email ?? "Former project member",
-                        },
-                      ]
+                    ? [{
+                        href: `#comment-mention-${index}`,
+                        label: node.label,
+                        title: context.members.find((member) => member.id === node.userId)?.email ?? "Former project member",
+                      }]
                     : [],
                 )}
               />
             </div>
           )}
-          <CommentMedia
-            files={nonInlineFiles(
-              row.body.map((n) => (n.type === "text" ? n.text : "")).join(""),
-              row.attachments,
-            )}
-          />
+          <CommentMedia files={nonInlineFiles(text, attachments)} />
+          {(row.updatedAt !== row.createdAt || (row.jiraSync && row.jiraSync !== "synced")) && (
+            <div className="mt-0.5 flex flex-wrap gap-2 text-xs text-ink-3">
+              {row.updatedAt !== row.createdAt && <span title={formatDateTime(row.updatedAt)}>edited</span>}
+              {row.jiraSync && row.jiraSync !== "synced" && (
+                <span role="status" className={row.jiraSync === "failed" ? "text-bad" : undefined}>
+                  {row.jiraSync === "pending" ? "Waiting to sync with Jira" : row.jiraSync === "syncing" ? "Syncing with Jira…" : row.jiraSync === "failed" ? "Jira sync failed" : "Not synced with Jira"}
+                </span>
+              )}
+            </div>
+          )}
         </>
       )}
-      {jiraFeedback && <p role="status">{jiraFeedback}</p>}
-      {!row.deletedAt && row.jiraSync && row.jiraSync !== "synced" && (
-        <p className="comment-sync-state" role="status">
-          {row.jiraSync === "pending"
-            ? "Waiting to sync with Jira"
-            : row.jiraSync === "syncing"
-              ? "Syncing with Jira…"
-              : row.jiraSync === "failed"
-                ? "Jira sync failed"
-                : "Not synced with Jira"}
-        </p>
-      )}
-      <div className="comment-actions message-actions">
-        {!row.deletedAt &&
-          !context.deleted &&
-          (row.jiraSync === "unsynced" || row.jiraSync === "failed") &&
-          context.actions.pushJira &&
-          context.actions.canPublish?.(context.scope.projectId) && (
-            <Button
-              variant="ghost"
-              disabled={busy}
-              aria-label="Send comment to Jira"
-              title="Send comment to Jira"
+      {jiraFeedback && <p role="status" className="mt-1 text-xs text-ink-3">{jiraFeedback}</p>}
+      {!row.deletedAt && !context.deleted && !editing && (
+        <div className="absolute -top-8 right-0 hidden gap-px rounded-lg bg-surface p-0.5 shadow-soft hairline group-hover:flex">
+          {(row.jiraSync === "unsynced" || row.jiraSync === "failed") && context.actions.pushJira && context.actions.canPublish?.(context.scope.projectId) && (
+            <Button variant="ghost" size="sm" icon="jira" className={actionButton} disabled={busy} aria-label="Send comment to Jira" title="Send comment to Jira"
               onClick={async () => {
-                setBusy(true);
-                setError("");
+                setBusy(true); setError("");
                 try {
-                  const result = await context.actions.pushJira!(
-                    context.scope.projectId,
-                    row.id,
-                  );
+                  const result = await context.actions.pushJira!(context.scope.projectId, row.id);
                   context.changed();
-                  setJiraFeedback(
-                    result.sent
-                      ? "Comment saved to Jira."
-                      : "Comment is already up to date.",
-                  );
-                } catch (e) {
-                  setError(
-                    e instanceof Error ? e.message : "Could not send comment.",
-                  );
-                } finally {
-                  setBusy(false);
-                }
-              }}
-            >
-              <Icon name="jira" size={14} />{" "}
-              <span className="message-action-label">Send comment to Jira</span>
-            </Button>
+                  setJiraFeedback(result.sent ? "Comment saved to Jira." : "Comment is already up to date.");
+                } catch (e) { setError(e instanceof Error ? e.message : "Could not send comment."); }
+                finally { setBusy(false); }
+              }}><span>Jira</span></Button>
           )}
-        {!context.deleted && (
-          <Button
-            variant="ghost"
-            disabled={busy || mode !== null}
-            aria-label="Reply"
-            title="Reply"
-            onClick={() => setMode("reply")}
-          >
-            <Icon name="reply" size={16} />{" "}
-            <span className="message-action-label">Reply</span>
-          </Button>
-        )}
-        {row.canEdit && !context.deleted && (
-          <Button
-            variant="ghost"
-            disabled={busy || mode !== null}
-            aria-label="Edit comment"
-            title="Edit comment"
-            onClick={() => setMode("edit")}
-          >
-            <Icon name="edit" size={14} />{" "}
-            <span className="message-action-label">Edit comment</span>
-          </Button>
-        )}
-        {row.canDelete && !context.deleted && (
-          <Button
-            variant="ghost"
-            disabled={busy || mode !== null}
-            aria-label="Delete comment"
-            title="Delete comment"
-            onClick={async () => {
-              setBusy(true);
-              setError("");
-              try {
-                await context.actions.delete({
-                  ...context.scope,
-                  id: row.id,
-                  expectedUpdatedAt: row.updatedAt,
-                });
-                context.changed();
-              } catch (cause) {
-                setError(
-                  cause instanceof Error
-                    ? cause.message
-                    : "Could not delete comment.",
-                );
-              } finally {
-                setBusy(false);
-              }
-            }}
-          >
-            <Icon name="close" size={14} />{" "}
-            <span className="message-action-label">Delete comment</span>
-          </Button>
-        )}
-        {!flat && (row.replyCount > 0 || expanded) && (
-          <Button variant="ghost" onClick={() => setExpanded((v) => !v)}>
-            {expanded ? "Hide replies" : `Show replies (${row.replyCount})`}
-          </Button>
-        )}
-      </div>
-      {error && (
-        <p role="alert" className="project-error">
-          {error}
-          {error.includes("This Jira comment changed") &&
-            context.actions.pushJira && (
-              <Button
-                variant="ghost"
-                disabled={busy}
-                onClick={async () => {
-                  setBusy(true);
-                  try {
-                    await context.actions.pushJira!(
-                      context.scope.projectId,
-                      row.id,
-                      true,
-                    );
-                    setError("");
-                    setJiraFeedback("Replaced Jira comment with local text.");
-                  } catch (e) {
-                    setError(
-                      e instanceof Error
-                        ? e.message
-                        : "Could not send comment.",
-                    );
-                  } finally {
-                    setBusy(false);
-                  }
-                }}
-              >
-                Replace Jira comment with local text
-              </Button>
-            )}
-        </p>
-      )}
-      {mode === "reply" && (
-        <CommentEditor
-          context={context}
-          parentId={row.id}
-          onClose={() => {
-            setMode(null);
-            setExpanded(true);
-          }}
-        />
-      )}
-      {!flat && expanded && (
-        <div className={depth < 3 ? "comment-replies" : "comment-replies-flat"}>
-          <CommentBranch
-            context={context}
-            parentId={row.id}
-            depth={depth + 1}
-          />
+          {row.canEdit && <IconButton icon="edit" label="Edit message" size="sm" className="size-7" disabled={busy} onClick={() => setEditing(true)} />}
+          {row.canDelete && (
+            <IconButton icon="trash" label="Delete message" size="sm" className="size-7" disabled={busy}
+              onClick={async () => {
+                setBusy(true); setError("");
+                try { await context.actions.delete({ ...context.scope, id: row.id, expectedUpdatedAt: row.updatedAt }); context.changed(); }
+                catch (cause) { setError(cause instanceof Error ? cause.message : "Could not delete comment."); }
+                finally { setBusy(false); }
+              }} />
+          )}
         </div>
       )}
-    </article>
+      {error && (
+        <p role="alert" className="mt-1 flex flex-wrap items-center gap-2 text-sm text-bad">
+          {error}
+          {error.includes("This Jira comment changed") && context.actions.pushJira && (
+            <Button variant="ghost" size="sm" disabled={busy}
+              onClick={async () => {
+                setBusy(true);
+                try { await context.actions.pushJira!(context.scope.projectId, row.id, true); setError(""); setJiraFeedback("Replaced Jira comment with local text."); }
+                catch (e) { setError(e instanceof Error ? e.message : "Could not send comment."); }
+                finally { setBusy(false); }
+              }}>Replace Jira comment with local text</Button>
+          )}
+        </p>
+      )}
+    </div>
   );
 }
+
 export function AttachmentMarkdown({
   text,
   files,
@@ -469,37 +180,19 @@ export function AttachmentMarkdown({
       text={text}
       mentions={mentions ?? []}
       renderImage={(image) => {
-        const file = files.find(
-          (file) =>
-            file.inlineExternalId === image.id &&
-            filePreviewKind(file.contentType) === "image",
-        );
-        if (!file) return null;
+        const file = files.find((file) => file.inlineExternalId === image.id && filePreviewKind(file.contentType) === "image");
+        if (!file)
+          return (
+            <span className="inline-flex items-center gap-1.5 rounded-md bg-surface-3 px-2 py-1 text-sm text-ink-3" title={`${image.filename || "Image"} is not available in this workspace`}>
+              <Icon name="image" size={13} />
+              {image.filename || "Image"} unavailable
+            </span>
+          );
         const url = projectFileURL(file.projectId, file.projectFileId);
         return (
-          <a
-            href={url}
-            title={file.filename}
-            target="_blank"
-            rel="noreferrer"
-            onClick={(event) => {
-              if (openGallery && !event.metaKey && !event.ctrlKey) {
-                event.preventDefault();
-                openGallery(file);
-              }
-            }}
-          >
-            <img
-              src={url}
-              alt={image.filename || file.filename}
-              loading="lazy"
-              style={{
-                maxWidth: "100%",
-                height: "auto",
-                width: image.width || undefined,
-                verticalAlign: "middle",
-              }}
-            />
+          <a href={url} title={file.filename} target="_blank" rel="noreferrer"
+            onClick={(event) => { if (openGallery && !event.metaKey && !event.ctrlKey) { event.preventDefault(); openGallery(file); } }}>
+            <img src={url} alt={image.filename || file.filename} loading="lazy" style={{ maxWidth: "100%", height: "auto", width: image.width || undefined, verticalAlign: "middle" }} />
           </a>
         );
       }}
@@ -508,188 +201,44 @@ export function AttachmentMarkdown({
 }
 export function nonInlineFiles(text: string, files: ProjectFileSummary[]) {
   const ids = new Set(trackerImages(text).map((image) => image.id));
-  return files.filter(
-    (file) =>
-      !file.inlineExternalId ||
-      !ids.has(file.inlineExternalId) ||
-      filePreviewKind(file.contentType) !== "image",
-  );
+  return files.filter((file) => !file.inlineExternalId || !ids.has(file.inlineExternalId) || filePreviewKind(file.contentType) !== "image");
 }
+/** Attachments shown under a message: images as tiles, media inline, files as chips. */
 export function CommentMedia({ files }: { files: ProjectFileSummary[] }) {
-  const openGallery = useAttachmentGallery();
   if (!files.length) return null;
   return (
-    <ul className="issue-file-grid message-file-grid">
-      {files.map((file) => {
-        const url = projectFileURL(file.projectId, file.projectFileId),
-          kind = filePreviewKind(file.contentType);
-        return (
-          <li key={file.projectFileId}>
-            {kind === "image" && (
-              <a
-                href={url}
-                onClick={(event) => {
-                  if (openGallery && !event.metaKey && !event.ctrlKey) {
-                    event.preventDefault();
-                    openGallery(file);
-                  }
-                }}
-                target="_blank"
-                rel="noreferrer"
-                title={file.filename}
-              >
-                <img
-                  className="issue-file-image"
-                  src={url}
-                  alt={file.filename}
-                  loading="lazy"
-                />
-              </a>
-            )}
-            {kind === "audio" && (
-              <audio
-                controls
-                preload="metadata"
-                src={url}
-                aria-label={file.filename}
-              />
-            )}
-            {kind === "video" && (
-              <video
-                controls
-                preload="metadata"
-                src={url}
-                aria-label={file.filename}
-              />
-            )}
-            {kind !== "image" && (
-              <a
-                className="message-file-download"
-                href={projectFileURL(file.projectId, file.projectFileId, true)}
-              >
-                <Icon name="file" size={16} />
-                <span>{file.filename}</span>
-              </a>
-            )}
-          </li>
-        );
-      })}
-    </ul>
+    <div className="mt-2 flex flex-wrap gap-2.5">
+      {files.map((file) => <FileTile key={file.projectFileId} file={file} />)}
+    </div>
   );
 }
+
+/** Inline editor for an existing message. New messages use ChatComposer. */
 export function CommentEditor({
   context,
-  parentId,
   existing,
   onClose,
-  chat = false,
-  agentActions,
 }: {
   context: CommentContext;
-  parentId: string | null;
-  existing?: CommentSummary;
+  existing: CommentSummary;
   onClose: () => void;
-  chat?: boolean;
-  agentActions?: AgentRunActions | undefined;
 }) {
-  const [agents, setAgents] = useState<AgentIdentity[]>([]),
-    [repositories, setRepositories] = useState<GitRepository[]>([]);
-  const [agentId, setAgentId] = useState(""),
-    [command, setCommand] = useState<AgentCommand>("discuss"),
-    [repositoryIds, setRepositoryIds] = useState<string[]>([]);
-  const [reviewBranch, setReviewBranch] = useState("");
-  const [reviewTargets, setReviewTargets] = useState<
-    import("@spectron/shared").ReviewTarget[]
-  >([]);
-  const [reviewWorkspaceId, setReviewWorkspaceId] = useState("");
-  useEffect(() => {
-    if (!agentActions || command !== "review-code") return;
-    let alive = true;
-    void agentActions.reviewTargets(context.scope).then(
-      (targets) => {
-        if (!alive) return;
-        setReviewTargets(targets);
-        setReviewWorkspaceId((id) =>
-          targets.some((t) => t.workspaceId === id)
-            ? id
-            : targets.length === 1
-              ? targets[0]!.workspaceId
-              : "",
-        );
-      },
-      (e) => {
-        if (alive)
-          setAgentError(
-            e instanceof Error ? e.message : "Could not load PR/MRs.",
-          );
-      },
-    );
-    return () => {
-      alive = false;
-    };
-  }, [agentActions, command, context.scope.projectId, context.scope.issueId]);
-  const [agentError, setAgentError] = useState("");
-  const requestId = useRef(createId());
-  useEffect(() => {
-    if (!agentActions || existing || parentId) return;
-    let alive = true;
-    void Promise.all([
-      agentActions.available(context.scope.projectId),
-      agentActions.repositories(context.scope.projectId),
-    ]).then(
-      ([a, repos]) => {
-        if (alive) {
-          setAgents(a);
-          setRepositories(repos);
-          setRepositoryIds(
-            repos
-              .filter((r) => repos.length === 1 || r.isDefault)
-              .map((r) => r.id),
-          );
-        }
-      },
-      (e) => {
-        if (alive)
-          setAgentError(
-            e instanceof Error ? e.message : "Agent settings could not load.",
-          );
-      },
-    );
-    return () => {
-      alive = false;
-    };
-  }, [agentActions, context.scope.projectId, existing, parentId]);
   const baseline = useRef(existing);
-  const [draft, setDraft] = useState(() =>
-      commentDraftText(existing?.body ?? []),
-    ),
-    [files, setFiles] = useState<ProjectFileSummary[]>(
-      existing?.attachments ?? [],
-    ),
+  const [draft, setDraft] = useState(() => commentDraftText(existing.body)),
+    [files, setFiles] = useState<ProjectFileSummary[]>(existing.attachments),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
     [status, setStatus] = useState(""),
     [picker, setPicker] = useState(false),
     [caret, setCaret] = useState(0),
     [dismissed, setDismissed] = useState(false);
-  const [preview, setPreview] = useState(false);
-  const [language, setLanguage] = useState(() =>
-    navigator.language.startsWith("ru") ? "ru-RU" : "en-US",
-  );
-  const [dragging, setDragging] = useState(false);
+  const [language] = useState(() => (navigator.language.startsWith("ru") ? "ru-RU" : "en-US"));
   const voice = useDictation((text) =>
     setDraft((previous) => {
-      const next = `${previous.text}${previous.text ? " " : ""}${text}`.slice(
-        0,
-        100000,
-      );
-      return {
-        text: next,
-        mentions: moveMentionRanges(previous.text, next, previous.mentions),
-      };
+      const next = `${previous.text}${previous.text ? " " : ""}${text}`.slice(0, 100000);
+      return { text: next, mentions: moveMentionRanges(previous.text, next, previous.mentions) };
     }),
   );
-  const Composer = chat ? MessageComposer : "form";
   const area = useRef<HTMLTextAreaElement>(null),
     upload = useRef<HTMLInputElement>(null),
     active = useRef(true);
@@ -699,38 +248,17 @@ export function CommentEditor({
       active.current = false;
     };
   }, []);
-  const match = !dismissed
-    ? /(?:^|\s)@([^@\s]*)$/.exec(draft.text.slice(0, caret))
-    : null;
+  const match = !dismissed ? /(?:^|\s)@([^@\s]*)$/.exec(draft.text.slice(0, caret)) : null;
   const people = match
-    ? context.members
-        .filter((m) =>
-          `${m.name} ${m.email}`
-            .toLowerCase()
-            .includes(match[1]!.toLowerCase()),
-        )
-        .slice(0, 8)
+    ? context.members.filter((m) => `${m.name} ${m.email}`.toLowerCase().includes(match[1]!.toLowerCase())).slice(0, 8)
     : [];
   function selectMention(person: ProjectMemberSummary) {
     if (!match) return;
     const start = caret - match[1]!.length - 1,
       token = `@${person.name}`,
       text = draft.text.slice(0, start) + token + " " + draft.text.slice(caret);
-    const mentions = moveMentionRanges(draft.text, text, draft.mentions).filter(
-      (m) => m.end <= start || m.start >= start + token.length,
-    );
-    setDraft({
-      text,
-      mentions: [
-        ...mentions,
-        {
-          start,
-          end: start + token.length,
-          userId: person.id,
-          label: person.name,
-        },
-      ],
-    });
+    const mentions = moveMentionRanges(draft.text, text, draft.mentions).filter((m) => m.end <= start || m.start >= start + token.length);
+    setDraft({ text, mentions: [...mentions, { start, end: start + token.length, userId: person.id, label: person.name }] });
     setDismissed(true);
     const end = start + token.length + 1;
     setCaret(end);
@@ -744,22 +272,17 @@ export function CommentEditor({
     setBusy(true);
     setError("");
     try {
-      if (files.length + selected.length > 20)
-        throw new Error("Attach up to 20 files per comment.");
+      if (files.length + selected.length > 20) throw new Error("Attach up to 20 files per message.");
       const limits = await context.files.limits();
       for (const f of selected) {
         if (!active.current) break;
-        if (!f.size || f.size > limits.maxBytes)
-          throw new Error(
-            `${f.name}: choose a non-empty file up to ${Math.round(limits.maxBytes / 1024 / 1024)} MB.`,
-          );
+        if (!f.size || f.size > limits.maxBytes) throw new Error(`${f.name}: choose a non-empty file up to ${Math.round(limits.maxBytes / 1024 / 1024)} MB.`);
         setStatus(`Uploading ${f.name}…`);
         const result = await context.files.upload(context.scope.projectId, f);
         if (active.current) setFiles((previous) => [...previous, result]);
       }
     } catch (cause) {
-      if (active.current)
-        setError(cause instanceof Error ? cause.message : "Upload failed.");
+      if (active.current) setError(cause instanceof Error ? cause.message : "Upload failed.");
     } finally {
       if (active.current) {
         setBusy(false);
@@ -768,487 +291,104 @@ export function CommentEditor({
     }
   }
   return (
-    <div className="comment-editor">
-      <Composer
-        className={dragging ? "is-dragging" : ""}
-        onDragOver={(event) => {
-          if (chat && event.dataTransfer.types.includes("Files")) {
-            event.preventDefault();
-            if (!busy) setDragging(true);
-          }
-        }}
-        onDragLeave={(event) => {
-          if (!event.currentTarget.contains(event.relatedTarget as Node | null))
-            setDragging(false);
-        }}
-        onDrop={(event) => {
-          if (chat && event.dataTransfer.types.includes("Files")) {
-            event.preventDefault();
-            setDragging(false);
-            void uploadFiles(Array.from(event.dataTransfer.files));
-          }
-        }}
-        onSubmit={async (event) => {
-          event.preventDefault();
-          if (busy || voice.listening || (!draft.text.trim() && !files.length))
-            return;
-          setBusy(true);
-          setError("");
-          const input = {
+    <form
+      className="relative flex max-w-[66ch] flex-col gap-2 rounded-xl bg-surface p-2.5 shadow-soft hairline"
+      onSubmit={async (event) => {
+        event.preventDefault();
+        if (busy || voice.listening || (!draft.text.trim() && !files.length)) return;
+        setBusy(true);
+        setError("");
+        try {
+          await context.actions.update({
             ...context.scope,
             body: commentBodyFromText(draft.text, draft.mentions),
-            files: files.map((f) => ({
-              projectId: f.projectId,
-              projectFileId: f.projectFileId,
-            })),
-          };
-          try {
-            if (agentActions && command !== "discuss" && !agentId)
-              throw new Error("Select an agent for this command.");
-            if (agentId && agentActions) {
-              if (
-                command === "review-code" &&
-                !reviewWorkspaceId &&
-                (!reviewBranch.trim() || repositoryIds.length !== 1)
-              )
-                throw new Error(
-                  "Select a linked PR/MR, or enter a branch and select exactly one repository.",
-                );
-              if (command !== "review-code" && !repositoryIds.length)
-                throw new Error("Select at least one project repository.");
-              await agentActions.invoke({
-                ...context.scope,
-                requestId: requestId.current,
-                agentId,
-                command,
-                repositoryIds:
-                  command === "review-code" && reviewWorkspaceId
-                    ? [
-                        reviewTargets.find(
-                          (t) => t.workspaceId === reviewWorkspaceId,
-                        )!.repositoryId,
-                      ]
-                    : repositoryIds,
-                ...(command === "review-code"
-                  ? reviewWorkspaceId
-                    ? { reviewWorkspaceId }
-                    : { reviewBranch: reviewBranch.trim() }
-                  : {}),
-                message: draft.text,
-                fileIds: files.map((f) => f.projectFileId),
-              });
-            } else if (existing)
-              await context.actions.update({
-                ...input,
-                id: existing.id,
-                expectedUpdatedAt: baseline.current!.updatedAt,
-              });
-            else await context.actions.create({ ...input, parentId });
-            if (active.current) {
-              context.changed();
-              onClose();
-            }
-          } catch (cause) {
-            if (active.current)
-              setError(
-                cause instanceof Error
-                  ? cause.message
-                  : "Could not save comment.",
-              );
-          } finally {
-            if (active.current) setBusy(false);
+            files: files.map((f) => ({ projectId: f.projectId, projectFileId: f.projectFileId })),
+            id: existing.id,
+            expectedUpdatedAt: baseline.current.updatedAt,
+          });
+          if (active.current) {
+            context.changed();
+            onClose();
+          }
+        } catch (cause) {
+          if (active.current) setError(cause instanceof Error ? cause.message : "Could not save comment.");
+        } finally {
+          if (active.current) setBusy(false);
+        }
+      }}
+    >
+      {match && (
+        <div className="absolute bottom-[calc(100%+6px)] left-0 z-20 w-72 rounded-xl bg-surface p-1.5 shadow-pop hairline" aria-label="Mention a person" role="listbox">
+          {people.length ? people.map((person) => (
+            <button type="button" key={person.id} role="option" className="mention-option grid w-full grid-cols-[28px_minmax(0,1fr)] items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left hover:bg-surface-2 focus-visible:bg-surface-2 focus-visible:outline-none" onClick={() => selectMention(person)}>
+              <Avatar name={person.name} size="md" />
+              <span className="min-w-0"><b className="block truncate text-base font-semibold">{person.name}</b><span className="block truncate text-sm text-ink-3">{person.email}</span></span>
+            </button>
+          )) : <p className="px-2.5 py-2 text-sm text-ink-3">No matching people.</p>}
+        </div>
+      )}
+      <textarea
+        ref={area}
+        aria-label="Edit message"
+        autoFocus
+        rows={3}
+        maxLength={100000}
+        disabled={busy || voice.listening}
+        value={draft.text}
+        className="block w-full resize-y bg-transparent px-1 text-lg text-ink outline-none placeholder:text-ink-3"
+        onChange={(event) => {
+          const text = event.target.value;
+          setDraft((previous) => ({ text, mentions: moveMentionRanges(previous.text, text, previous.mentions) }));
+          setCaret(event.target.selectionStart);
+          setDismissed(false);
+        }}
+        onSelect={(event) => setCaret(event.currentTarget.selectionStart)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing && !match) {
+            event.preventDefault();
+            event.currentTarget.form?.requestSubmit();
+          }
+          if (event.key === "Escape") {
+            if (match) setDismissed(true);
+            else onClose();
+          }
+          if (event.key === "ArrowDown" && people.length) {
+            event.preventDefault();
+            event.currentTarget.closest("form")?.querySelector<HTMLButtonElement>(".mention-option")?.focus();
           }
         }}
-      >
-        {dragging && (
-          <div className="new-issue-drop-hint">Drop files to attach</div>
-        )}
-        {agentActions && !existing && !parentId && (
-          <div className="agent-composer-controls">
-            <label>
-              Agent
-              <select
-                aria-label="Agent"
-                disabled={busy}
-                value={agentId}
-                onChange={(e) => setAgentId(e.target.value)}
-              >
-                <option value="">Human discussion</option>
-                {agents.map((agent) => (
-                  <option key={agent.id} value={agent.id}>
-                    @{agent.name} · AI
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Command
-              <select
-                aria-label="Agent command"
-                disabled={busy}
-                value={command}
-                onChange={(e) => setCommand(e.target.value as AgentCommand)}
-              >
-                {agentCommands.map((c) => (
-                  <option key={c} value={c}>
-                    {c === "discuss" ? "Discuss code" : `/${c}`}
-                  </option>
-                ))}
-              </select>
-            </label>
-            {command === "implement" && agentId && (
-              <small>
-                Implements changes and automatically publishes a draft PR/MR for
-                each selected repository.
-              </small>
-            )}
-            {command !== "discuss" && !agentId && (
-              <small>Select an agent to run this command.</small>
-            )}
-            {agentId && command === "review-code" && (
-              <label>
-                PR/MR to review
-                <select
-                  aria-label="PR/MR to review"
-                  value={reviewWorkspaceId}
-                  disabled={busy}
-                  onChange={(e) => setReviewWorkspaceId(e.target.value)}
-                >
-                  <option value="">
-                    {reviewTargets.length
-                      ? "Choose a PR/MR or review a branch"
-                      : "Review a branch below"}
-                  </option>
-                  {reviewTargets.map((t) => (
-                    <option key={t.workspaceId} value={t.workspaceId}>
-                      {t.repositoryName} #{t.pull.number} ·{" "}
-                      {t.pull.sourceBranch} → {t.pull.targetBranch}
-                    </option>
-                  ))}
-                </select>
-                <small>
-                  Reviews a fixed revision. Findings stay here until you publish
-                  them.
-                </small>
-              </label>
-            )}
-            {agentId && command === "review-code" && !reviewWorkspaceId && (
-              <label>
-                Source branch
-                <input
-                  className="input"
-                  value={reviewBranch}
-                  onChange={(e) => setReviewBranch(e.target.value)}
-                  maxLength={255}
-                  disabled={busy}
-                  placeholder="feature/my-change"
-                />
-                <small>
-                  Compare against the selected repository's target branch.
-                  Choose exactly one repository.
-                </small>
-              </label>
-            )}
-            {agentId && (command !== "review-code" || !reviewWorkspaceId) && (
-              <div className="agent-repo-chips">
-                {repositories.map((repo) => (
-                  <label key={repo.id}>
-                    <input
-                      type="checkbox"
-                      checked={repositoryIds.includes(repo.id)}
-                      disabled={busy}
-                      onChange={(e) =>
-                        setRepositoryIds((ids) =>
-                          e.target.checked
-                            ? [...ids, repo.id]
-                            : ids.filter((id) => id !== repo.id),
-                        )
-                      }
-                    />
-                    {repo.fullName}
-                  </label>
-                ))}
-                {!repositories.length && (
-                  <span>
-                    Add a repository in Project settings → Integrations.
-                  </span>
-                )}
-              </div>
-            )}
-            {agentError && <p role="alert">{agentError}</p>}
-          </div>
-        )}
-        {preview && (
-          <div className="message-preview">
-            <MessageMarkdown
-              text={draft.text || "Your message preview appears here."}
-            />
-          </div>
-        )}
-        <label hidden={preview}>
-          {!chat &&
-            (existing
-              ? "Edit comment"
-              : parentId
-                ? "Your reply"
-                : chat
-                  ? "Your message"
-                  : "Your comment")}
-          <textarea
-            ref={area}
-            className={chat ? "" : "input comment-textarea"}
-            aria-label={chat ? "Your message" : "Comment"}
-            autoFocus
-            rows={4}
-            maxLength={100000}
-            disabled={busy || voice.listening}
-            value={draft.text}
-            placeholder="Write a comment… Type @ to mention someone."
-            onChange={(event) => {
-              const text = event.target.value;
-              setDraft((previous) => ({
-                text,
-                mentions: moveMentionRanges(
-                  previous.text,
-                  text,
-                  previous.mentions,
-                ),
-              }));
-              setCaret(event.target.selectionStart);
-              setDismissed(false);
-            }}
-            onSelect={(event) => setCaret(event.currentTarget.selectionStart)}
-            onKeyDown={(event) => {
-              if (
-                chat &&
-                event.key === "Enter" &&
-                !event.shiftKey &&
-                !event.nativeEvent.isComposing &&
-                !match
-              ) {
-                event.preventDefault();
-                event.currentTarget.form?.requestSubmit();
-              }
-              if (event.key === "Escape") setDismissed(true);
-              if (event.key === "ArrowDown" && people.length) {
-                event.preventDefault();
-                event.currentTarget
-                  .closest("form")
-                  ?.querySelector<HTMLButtonElement>(".mention-picker button")
-                  ?.focus();
-              }
-            }}
-          />
-        </label>
-        {agentActions &&
-          /(?:^|\s)\/[^\s]*$/.test(draft.text.slice(0, caret)) && (
-            <div className="mention-picker" aria-label="Agent commands">
-              {agentCommands
-                .filter((c) => c !== "discuss")
-                .map((c) => (
-                  <button
-                    type="button"
-                    key={c}
-                    onClick={() => {
-                      setCommand(c);
-                      const text =
-                        draft.text.slice(0, caret).replace(/\/[^\s]*$/, "") +
-                        draft.text.slice(caret);
-                      setDraft({
-                        text,
-                        mentions: moveMentionRanges(
-                          draft.text,
-                          text,
-                          draft.mentions,
-                        ),
-                      });
-                      area.current?.focus();
-                    }}
-                  >{`/${c}`}</button>
-                ))}
-            </div>
-          )}
-        {match && (
-          <div
-            className="mention-picker"
-            aria-label="Mention a person or agent"
-          >
-            {agents
-              .filter((a) =>
-                a.name.toLowerCase().includes(match[1]!.toLowerCase()),
-              )
-              .map((agent) => (
-                <button
-                  type="button"
-                  key={agent.id}
-                  onClick={() => {
-                    setAgentId(agent.id);
-                    const start = caret - match[1]!.length - 1;
-                    const text =
-                      draft.text.slice(0, start) + draft.text.slice(caret);
-                    setDraft({
-                      text,
-                      mentions: moveMentionRanges(
-                        draft.text,
-                        text,
-                        draft.mentions,
-                      ),
-                    });
-                    setDismissed(true);
-                    area.current?.focus();
-                  }}
-                >
-                  @{agent.name}
-                  <small>AI · {agent.role}</small>
-                </button>
-              ))}
-            {people.length ? (
-              people.map((person) => (
-                <button
-                  type="button"
-                  key={person.id}
-                  onClick={() => selectMention(person)}
-                >
-                  {person.name}
-                  <small>{person.email}</small>
-                </button>
-              ))
-            ) : agents.some((a) =>
-                a.name.toLowerCase().includes(match[1]!.toLowerCase()),
-              ) ? null : (
-              <p>No matching people or agents.</p>
-            )}
-          </div>
-        )}
-        {!!draft.mentions.length && (
-          <p className="muted">
-            Mentions:{" "}
-            {[...new Set(draft.mentions.map((m) => `@${m.label}`))].join(", ")}
-          </p>
-        )}
-        <ul className="comment-draft-files">
-          {files.map((f) => (
-            <li key={f.id}>
-              {f.filename}{" "}
-              <Button
-                variant="ghost"
-                disabled={busy}
-                aria-label={`Remove ${f.filename} from comment`}
-                onClick={() =>
-                  setFiles((previous) =>
-                    previous.filter((item) => item.id !== f.id),
-                  )
-                }
-              >
-                Remove
-              </Button>
-            </li>
-          ))}
-        </ul>
-        {chat ? (
-          <div className="new-issue-toolbar">
-            <Menu
-              label="Add attachments"
-              icon="plus"
-              className="new-issue-attach"
-              disabled={busy || files.length >= 20}
-              items={[
-                { label: "Upload", onSelect: () => upload.current?.click() },
-                {
-                  label: "Choose from gallery",
-                  onSelect: () => setPicker(true),
-                },
-              ]}
-            />
-            <MessageComposerActions
-              preview={preview}
-              setPreview={setPreview}
-              language={language}
-              setLanguage={setLanguage}
-              voice={voice}
-              busy={busy}
-              canSend={!!draft.text.trim() || !!files.length}
-            />
-          </div>
-        ) : (
-          <div className="comment-actions">
-            <Button
-              variant="ghost"
-              disabled={busy || files.length >= 20}
-              onClick={() => upload.current?.click()}
-            >
-              Upload comment files
-            </Button>
-            <Button
-              variant="ghost"
-              disabled={busy || files.length >= 20}
-              onClick={() => setPicker(true)}
-            >
-              Reuse comment file
-            </Button>
-            <Button variant="ghost" disabled={busy} onClick={onClose}>
-              Cancel
-            </Button>
-            <Button
-              type="submit"
-              disabled={busy || (!draft.text.trim() && !files.length)}
-            >
-              {busy
-                ? "Saving…"
-                : existing
-                  ? "Save comment"
-                  : parentId
-                    ? "Post reply"
-                    : chat
-                      ? "Send message"
-                      : "Post comment"}
-            </Button>
-          </div>
-        )}
-        {voice.listening && (
-          <p role="status" className="dictation-status">
-            {voice.interim || "Listening…"}
-          </p>
-        )}
-        {voice.error && (
-          <p role="alert" className="project-error">
-            {voice.error}
-          </p>
-        )}
-        {status && <p role="status">{status}</p>}
-        {error && (
-          <p role="alert" className="project-error">
-            {error}
-          </p>
-        )}
-        <input
-          ref={upload}
-          type="file"
-          multiple
-          hidden
-          aria-label="Upload comment attachments"
-          onChange={async (event) => {
-            const selected = Array.from(event.target.files ?? []);
-            event.target.value = "";
-            await uploadFiles(selected);
-          }}
-        />
-      </Composer>
+      />
+      {!!files.length && (
+        <div className="flex flex-wrap gap-2.5 px-1">
+          {files.map((f) => <FileTile key={f.id} file={f} size="sm" busy={busy} onRemove={() => setFiles((previous) => previous.filter((item) => item.id !== f.id))} />)}
+        </div>
+      )}
+      {voice.listening && <p role="status" className="px-1 text-sm text-ink-2">{voice.interim || "Listening…"}</p>}
+      {status && <p role="status" className="px-1 text-sm text-ink-3">{status}</p>}
+      {(error || voice.error) && <p role="alert" className="px-1 text-sm text-bad">{error || voice.error}</p>}
+      <div className="flex items-center gap-0.5">
+        <IconButton icon="paperclip" label="Upload files" className="text-ink-3" disabled={busy || files.length >= 20} onClick={() => upload.current?.click()} />
+        <IconButton icon="files" label="Reuse a project file" className="text-ink-3" disabled={busy || files.length >= 20} onClick={() => setPicker(true)} />
+        <IconButton icon={voice.listening ? "pause" : "mic"} label={voice.listening ? "Stop dictation" : "Dictate"} className={cn("text-ink-3", voice.listening && "bg-bad-soft text-bad")} disabled={busy} onClick={() => voice.toggle(language)} />
+        <span className="ml-auto flex items-center gap-1.5">
+          <Pill className="hidden sm:inline-flex">Editing</Pill>
+          <Button variant="ghost" size="sm" disabled={busy} onClick={onClose}>Cancel</Button>
+          <Button variant="primary" size="sm" type="submit" disabled={busy || (!draft.text.trim() && !files.length)}>{busy ? "Saving…" : "Save"}</Button>
+        </span>
+      </div>
+      <input ref={upload} type="file" multiple hidden aria-label="Upload comment attachments" onChange={async (event) => { const selected = Array.from(event.target.files ?? []); event.target.value = ""; await uploadFiles(selected); }} />
       {picker && (
         <FilePicker
           projectId={context.scope.projectId}
           actions={context.files}
           onClose={() => setPicker(false)}
           onSelect={async (file) => {
-            setFiles((previous) =>
-              previous.some((f) => f.id === file.id)
-                ? previous
-                : [...previous, file],
-            );
+            setFiles((previous) => (previous.some((f) => f.id === file.id) ? previous : [...previous, file]));
             setPicker(false);
           }}
         />
       )}
-    </div>
+      <Icon name="edit" size={12} className="absolute -top-2 -left-2 hidden" />
+    </form>
   );
 }

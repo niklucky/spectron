@@ -1,8 +1,7 @@
 import { formatDateTime } from "../../../lib/date-format";
 import { messagePlainText } from "@spectron/shared";
-import { Avatar, UserInfo } from "../../ui/avatar";
-import { ProjectMark } from "../project";
-import { StatusDot } from "./status-dot";
+import { Avatar } from "../../ui/avatar";
+import { IssueRow } from "../../ui/list";
 import type { Project, TaskListItem } from "./types";
 
 export function formatIssueDate(value: string, now = new Date()): string {
@@ -17,98 +16,60 @@ export function formatIssueDate(value: string, now = new Date()): string {
     return date.toLocaleDateString("en-US", { weekday: "short" });
   return `${String(date.getDate()).padStart(2, "0")}.${String(date.getMonth() + 1).padStart(2, "0")}.${date.getFullYear()}`;
 }
+
+/** Latest activity timestamp shown on the row. */
+export function taskActivityTime(item: TaskListItem): string {
+  const activity = item.lastActivity;
+  return activity && activity.createdAt > item.updatedAt
+    ? activity.createdAt
+    : item.updatedAt;
+}
+
 export function TaskItem({
   item,
   project,
-  isFlow,
   selectedId,
   onSelect,
 }: {
   item: TaskListItem;
   project: Project;
-  isFlow: boolean;
+  isFlow?: boolean;
   selectedId: string;
   onSelect: (id: string, project: string) => void;
 }) {
   const activity = item.lastActivity;
-  const updatedAt =
-    activity && activity.createdAt > item.updatedAt
-      ? activity.createdAt
-      : item.updatedAt;
-  return (
-    <button
-      className={`task-item ${selectedId === item.id ? "selected" : ""}`}
-      onClick={() => onSelect(item.id, item.project)}
-      aria-current={selectedId === item.id ? "true" : undefined}
-    >
-      <span
-        className="task-author"
-        title={`Author: ${item.author?.name ?? "Unknown author"}`}
-      >
-        <UserInfo
-          name={item.author?.name ?? "Unknown author"}
-          image={item.author?.image}
-          label="Author"
-        />
+  const updatedAt = taskActivityTime(item);
+  const description = item.description.trim()
+    ? messagePlainText(item.description).replace(/\s+/g, " ")
+    : "";
+  const preview = activity ? (
+    <>
+      <Avatar name={activity.actorName} image={activity.actorImage} size="sm" />
+      <span className="truncate">
+        <b>{activity.actorName}:</b> {activity.preview}
       </span>
-      <div className="task-title-row">
-        {isFlow && <ProjectMark project={project} />}
-        <span className="task-key">{item.key}</span>
-        <h2 title={item.title}>{item.title}</h2>
-        {!!item.unread && (
-          <span
-            className="unread-count"
-            aria-label={`${item.unread} unread messages`}
-          >
-            {item.unread}
-          </span>
-        )}
-      </div>
-      {item.description.trim() && <p className="task-description">
-        {messagePlainText(item.description).replace(/\s+/g, " ")}
-      </p>}
-      <div className="task-status">
-        <span
-          className="task-assignee"
-          title={`Assignee: ${item.assignee?.name ?? "Unassigned"}`}
-        >
-          {item.assignee ? (
-            <UserInfo
-              name={item.assignee.name}
-              image={item.assignee.image}
-              label="Assignee"
-            />
-          ) : (
-            <span>Unassigned</span>
-          )}
-        </span>
-        <StatusDot status={item.statusTrigger} color={item.stateColor} />
-        <span>{item.deletedAt ? "Deleted" : item.status}</span>
-        <time dateTime={updatedAt} title={formatDateTime(updatedAt)}>
-          {formatIssueDate(updatedAt)}
-        </time>
-      </div>
-      {activity && (
-        <div className="task-preview">
-          <span title={activity.actorImage ? activity.actorName : `${activity.actorName} has no profile photo`}>
-          {activity.actorImage ? (
-            <img
-              className="task-actor-image"
-              src={activity.actorImage}
-              alt=""
-            />
-          ) : (
-            <Avatar
-              initials={activity.actorName.slice(0, 1).toUpperCase()}
-              color={item.color}
-              small
-            />
-          )}
-          </span>
-          <span className="task-actor">{activity.actorName}</span>
-          <span className="task-update">{activity.preview}</span>
-        </div>
-      )}
-    </button>
+    </>
+  ) : description ? (
+    <span className="truncate">{description}</span>
+  ) : undefined;
+  return (
+    <IssueRow
+      author={{
+        name: item.author?.name ?? "Unknown author",
+        image: item.author?.image,
+      }}
+      project={project}
+      statusTrigger={item.statusTrigger}
+      statusColor={item.stateColor}
+      issueKey={item.deletedAt ? `${item.key} · deleted` : item.key}
+      time={formatIssueDate(updatedAt)}
+      timeTitle={formatDateTime(updatedAt)}
+      title={item.title}
+      preview={preview}
+      unread={item.unread ?? 0}
+      active={selectedId === item.id}
+      ariaCurrent={selectedId === item.id}
+      onClick={() => onSelect(item.id, item.project)}
+    />
   );
 }

@@ -1,0 +1,152 @@
+/*
+ * Spectron design tokens.
+ *
+ * Runtime semantic variables (--sp-*) switch with the two data attributes the
+ * theme hook stamps on <html>:
+ *   data-theme="light" | "dark"
+ *   data-palette="warm" | "slate"
+ * Tailwind utilities read these through @theme inline in tailwind.css, so
+ * `bg-surface`, `text-ink-2`, `border-line-soft` etc. follow the active theme.
+ */
+:root {
+  /* warm · light (default) */
+  --sp-bg: #f3f2ed;
+  --sp-surface: #ffffff;
+  --sp-surface-2: #f7f6f2;
+  --sp-surface-3: #efede7;
+  --sp-ink: #1b1a17;
+  --sp-ink-2: #5f5d57;
+  --sp-ink-3: #95928a;
+  --sp-line: #e8e5de;
+  --sp-line-2: #d8d4cb;
+  --sp-accent: #0f766e;
+  --sp-accent-ink: #0b5c56;
+  --sp-accent-soft: #e2f0ed;
+  --sp-accent-soft-2: #cfe6e1;
+  --sp-own: #edf4f2;
+  --sp-ok: #2f8a55;
+  --sp-ok-soft: #e3f2e9;
+  --sp-warn: #b27a1e;
+  --sp-warn-soft: #faf0dc;
+  --sp-bad: #c2413a;
+  --sp-bad-soft: #fbe7e5;
+  --sp-merged: #8250df;
+  --sp-merged-soft: #efe7fb;
+  --sp-code: #f1efea;
+  --sp-shadow-rgb: 27 26 23;
+  --sp-project-default: #1f6f68;
+  --sp-scale: 1;
+
+  /* derived */
+  --sp-line-soft: color-mix(in srgb, var(--sp-line) 55%, transparent);
+  --sp-shadow-soft: 0 1px 2px rgb(var(--sp-shadow-rgb) / 0.04),
+    0 6px 18px rgb(var(--sp-shadow-rgb) / 0.045);
+  --sp-shadow-pop: 0 1px 2px rgb(var(--sp-shadow-rgb) / 0.06),
+    0 8px 24px rgb(var(--sp-shadow-rgb) / 0.08);
+  --sp-font-sans: "Inter Variable", "Inter", system-ui, -apple-system,
+    "Segoe UI", sans-serif;
+  --sp-font-mono: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace,
+    SFMono-Regular, Menlo, monospace;
+  color-scheme: light;
+}
+:root[data-theme="dark"] {
+  --sp-bg: #121211;
+  --sp-surface: #1a1a19;
+  --sp-surface-2: #212120;
+  --sp-surface-3: #282826;
+  --sp-ink: #eceae3;
+  --sp-ink-2: #a9a69d;
+  --sp-ink-3: #72706a;
+  --sp-line: #2a2a28;
+  --sp-line-2: #3a3936;
+  --sp-accent: #3fb5a8;
+  --sp-accent-ink: #8ad9cf;
+  --sp-accent-soft: #16332f;
+  --sp-accent-soft-2: #1e453f;
+  --sp-own: #172a28;
+  --sp-ok: #5cbe82;
+  --sp-ok-soft: #163324;
+  --sp-warn: #e0a44a;
+  --sp-warn-soft: #382b12;
+  --sp-bad: #e4756e;
+  --sp-bad-soft: #3b1d1b;
+  --sp-merged: #b08cf5;
+  --sp-merged-soft: #2c2140;
+  --sp-code: #232321;
+  --sp-shadow-rgb: 0 0 0;
+  --sp-shadow-soft: 0 1px 2px rgb(0 0 0 / 0.35), 0 6px 18px rgb(0 0 0 / 0.3);
+  --sp-shadow-pop: 0 1px 2px rgb(0 0 0 / 0.4), 0 8px 24px rgb(0 0 0 / 0.35);
+  color-scheme: dark;
+}
+:root[data-palette="slate"] {
+  --sp-bg: #f0f1f3;
+  --sp-surface: #ffffff;
+  --sp-surface-2: #f6f7f8;
+  --sp-surface-3: #e9ebee;
+  --sp-ink: #1a1d22;
+  --sp-ink-2: #55595f;
+  --sp-ink-3: #8d9198;
+  --sp-line: #e3e5e8;
+  --sp-line-2: #cdd0d5;
+  --sp-accent: #3b5ba9;
+  --sp-accent-ink: #2f4a8c;
+  --sp-accent-soft: #e7ebf3;
+  --sp-accent-soft-2: #d3dbea;
+  --sp-own: #ebeef4;
+  --sp-code: #eef0f3;
+  --sp-shadow-rgb: 26 29 34;
+  --sp-project-default: #3f5c92;
+}
+:root[data-palette="slate"][data-theme="dark"] {
+  --sp-bg: #131416;
+  --sp-surface: #1a1b1e;
+  --sp-surface-2: #212226;
+  --sp-surface-3: #292b30;
+  --sp-ink: #e6e7ea;
+  --sp-ink-2: #a2a6ad;
+  --sp-ink-3: #6e7278;
+  --sp-line: #26282c;
+  --sp-line-2: #35383e;
+  --sp-accent: #84a4da;
+  --sp-accent-ink: #aec4e8;
+  --sp-accent-soft: #1f2632;
+  --sp-accent-soft-2: #283244;
+  --sp-own: #1e242e;
+  --sp-code: #212226;
+}
+
+/*
+ * Bridge for the previous token names, still read by screens that are not on
+ * the design system yet (project settings, AI settings, auth). Pointing them at
+ * the palette keeps the whole app on one color system until those screens move.
+ */
+:root,
+:root[data-theme="dark"] {
+  --color-page-text: var(--sp-ink);
+  --color-page-background: var(--sp-surface);
+  --color-composer: var(--sp-surface);
+  --color-surface: var(--sp-surface);
+  --color-sidebar: var(--sp-bg);
+  --color-list: var(--sp-surface);
+  --color-hover: var(--sp-surface-3);
+  --color-selected: var(--sp-surface-2);
+  --color-bubble: var(--sp-surface-2);
+  --color-own-bubble: var(--sp-own);
+  --color-line: var(--sp-line);
+  --color-line-active: var(--sp-line-2);
+  --color-text-primary: var(--sp-ink);
+  --color-text-secondary: var(--sp-ink-2);
+  --color-text-muted: var(--sp-ink-3);
+  --color-accent: var(--sp-accent-ink);
+  --color-text-danger: var(--sp-bad);
+  --color-action: var(--sp-ink);
+  --color-on-action: var(--sp-surface);
+  --color-menu: var(--sp-surface);
+  --color-nav-active: var(--sp-surface);
+  --color-focus: var(--sp-accent);
+  --color-status-todo: var(--sp-ink-3);
+  --color-status-progress: var(--sp-warn);
+  --color-status-review: var(--sp-merged);
+  --color-status-done: var(--sp-ok);
+  --font-family-sans: var(--sp-font-sans);
+}

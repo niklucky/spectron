@@ -1,41 +1,35 @@
-import { useState } from "react";
-import { Avatar } from "./avatar";
+import { Avatar, type AvatarKind, type AvatarSize } from "./avatar";
+import { cn } from "../cn";
 export function UserInfo({
   name,
   image,
   label,
   avatarOnly = false,
+  kind = "person",
+  size = "sm",
+  className = "",
 }: {
   name: string;
   image?: string | null | undefined;
-  label?: string;
-  avatarOnly?: boolean;
+  label?: string | undefined;
+  avatarOnly?: boolean | undefined;
+  kind?: AvatarKind | undefined;
+  size?: AvatarSize | undefined;
+  className?: string | undefined;
 }) {
-  const [failed, setFailed] = useState<string | null>(null);
   return (
     <span
-      className="user-info"
+      className={cn(
+        "inline-flex min-w-0 items-center gap-1.5 align-middle",
+        className,
+      )}
       title={label ? `${label}: ${name}` : name}
       aria-label={label ? `${label}: ${name}` : name}
     >
-      {image && failed !== image ? (
-        <img src={image} alt="" onError={() => setFailed(image)} />
-      ) : (
-        <Avatar
-          name={name}
-          initials={
-            name
-              .trim()
-              .split(/\s+/)
-              .slice(0, 2)
-              .map((part) => part[0])
-              .join("")
-              .toUpperCase() || "?"
-          }
-          small
-        />
+      <Avatar name={name} image={image} size={size} kind={kind} />
+      {!avatarOnly && (
+        <span className="truncate font-medium text-ink">{name}</span>
       )}
-      {!avatarOnly && <span className="user-info-name">{name}</span>}
     </span>
   );
 }

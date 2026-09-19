@@ -10,7 +10,15 @@ import {
   type GitWorkspaceView,
 } from "@spectron/shared";
 import { Button } from "../../ui/button";
+import { Icon } from "../../ui/icon";
+import { Pill } from "../../ui/pill";
 import { MessageMarkdown } from "../../ui/message-markdown";
+import { Disclosure, PullCard, ReviewThread } from "../../ui/chat";
+import { Avatar } from "../../ui/avatar";
+import { cn } from "../../ui/cn";
+
+const field =
+  "mt-1 block w-full rounded-md bg-surface px-2.5 py-1.5 text-base text-ink hairline focus:border-line focus:outline-none";
 
 export function GitActivityCards({
   scope,
@@ -66,18 +74,11 @@ export function GitActivityCards({
       live = false;
       clearTimeout(timer);
     };
-  }, [
-    active,
-    actions,
-    agents,
-    scope.projectId,
-    scope.issueId,
-    revision,
-    reload,
-  ]);
+  }, [active, actions, agents, scope.projectId, scope.issueId, revision, reload]);
+  if (!rows.length && !error) return null;
   return (
-    <section aria-label="Current Git activity" className="git-activity-cards">
-      {error && <p role="alert">{error}</p>}
+    <section aria-label="Current Git activity" className="flex flex-col gap-2 py-2">
+      {error && <p role="alert" className="text-sm text-bad">{error}</p>}
       {rows.map((row) => (
         <WorkspaceCard
           key={row.id}
@@ -96,6 +97,7 @@ export function GitActivityCards({
     </section>
   );
 }
+
 function WorkspaceCard({
   row,
   scope,
@@ -145,432 +147,237 @@ function WorkspaceCard({
       changed();
     }
   }
+  const checks = a?.checks ?? [];
+  const checksFailed = checks.filter((c) => c.state === "failed").length;
+  const checksPending = checks.filter((c) => c.state === "pending" || c.state === "unknown").length;
+  const open = row.discussions.filter((d) => d.resolvable && !d.resolved).length;
+  const prLabel = row.provider === "github" ? "PR" : "MR";
+  const state =
+    row.pull.state === "open" && row.pull.draft
+      ? "draft"
+      : (row.pull.state as "open" | "merged" | "closed");
   return (
-    <article className="agent-run-card git-workspace-card">
-      <header>
-        <strong>{row.repositoryName}</strong>
-        <a href={row.pull.url} target="_blank" rel="noreferrer">
-          {row.provider === "github" ? "PR" : "MR"} #{row.pull.number}
-        </a>
-        <span>
-          {row.pull.state}
-          {row.pull.draft && row.pull.state === "open" ? " · Draft" : ""}
-        </span>
-      </header>
-      <p>{a?.title}</p>
-      <p>
-        <code>{row.pull.sourceBranch}</code> →{" "}
-        <code>{row.pull.targetBranch}</code> ·{" "}
-        <code>{row.pull.head.slice(0, 12)}</code>
-      </p>
-      <p className="muted">
-        {row.syncing
-          ? "Synchronizing…"
-          : row.syncedAt
-            ? `Updated ${new Date(row.syncedAt).toLocaleString()}`
-            : "Awaiting first synchronization"}
-      </p>
-      <Button
-        variant="ghost"
-        disabled={busy || row.syncing}
-        onClick={() => void run(() => actions.refresh(ref))}
-      >
-        Refresh provider activity
-      </Button>
-      {(error || row.error) && <p role="alert">{error || row.error}</p>}
-      {a && (
-        <>
-          <details>
-            <summary>Checks ({a.checks.length})</summary>
-            {a.checks.length ? (
-              a.checks.map((c, i) => (
-                <p key={i}>
-                  {c.url ? (
-                    <a href={c.url} target="_blank" rel="noreferrer">
-                      {c.name}
-                    </a>
-                  ) : (
-                    c.name
-                  )}
-                  : {c.state}
-                </p>
-              ))
-            ) : (
-              <p>No checks reported.</p>
-            )}
-          </details>
-          <details>
-            <summary>Commits ({a.commits.length})</summary>
-            {a.commits.map((c) => (
-              <p key={c.sha}>
-                <code>{c.sha.slice(0, 12)}</code> {c.message} · {c.author}
-              </p>
-            ))}
-          </details>
-          <details>
-            <summary>Participants and reviewers</summary>
-            <p>
-              Participants:{" "}
-              {a.participants.map((p) => p.name).join(", ") || "None"}
-            </p>
-            {a.reviewers.map((r, i) => (
-              <p key={`${r.login}:${i}`}>
-                {r.name}: {r.state}
-              </p>
-            ))}
-          </details>
-        </>
-      )}
-      {!!selected.length && writable && (
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            void run(async () => {
-              await actions.address({
-                ...scope,
-                requestId: createId(),
-                agentId,
-                comments: selected,
-                message,
-              });
-              setSelected([]);
-              setMessage("");
-            });
-          }}
-        >
-          <p>
-            {selected.length} comments selected. An active run by this agent
-            receives instructions; otherwise a new run starts. Use Take over on
-            the active run to change agents.
-          </p>
-          <label>
-            Agent
-            <select
-              className="input"
-              value={agentId}
-              onChange={(e) => setAgentId(e.target.value)}
-              required
-              disabled={busy}
-            >
-              <option value="">Choose an agent</option>
-              {available.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Additional instructions
-            <textarea
-              className="input"
-              maxLength={100000}
-              value={message}
-              onChange={(e) => setMessage(e.target.value)}
-              disabled={busy}
-            />
-          </label>
-          <Button type="submit" disabled={busy || !agentId || pending}>
-            Address selected comments
-          </Button>
-        </form>
-      )}
-      <details open>
-        <summary>Discussions ({row.discussions.length})</summary>
-        {!row.discussions.length && <p>No provider discussions yet.</p>}
-        {row.discussions.map((thread) => (
-          <section className="git-discussion" key={thread.id}>
-            <header>
-              <a href={thread.url} target="_blank" rel="noreferrer">
-                {thread.path
-                  ? `${thread.path}${thread.line ? `:${thread.line}` : ""}`
-                  : "Discussion"}
-              </a>
-              <span>
-                {thread.resolvable
-                  ? thread.resolved
-                    ? "Resolved"
-                    : "Unresolved"
-                  : "Comment"}
-              </span>
-            </header>
-            {thread.notes.map((note) => (
-              <div key={note.id} className="git-note">
-                <label>
-                  {writable && (
-                    <input
-                      type="checkbox"
-                      disabled={busy}
-                      checked={selected.some(
-                        (s) =>
-                          s.discussionId === thread.id && s.noteId === note.id,
-                      )}
-                      onChange={(e) =>
-                        setSelected((old) =>
-                          e.target.checked
-                            ? [
-                                ...old,
-                                { discussionId: thread.id, noteId: note.id },
-                              ]
-                            : old.filter(
-                                (s) =>
-                                  !(
-                                    s.discussionId === thread.id &&
-                                    s.noteId === note.id
-                                  ),
-                              ),
-                        )
-                      }
-                    />
-                  )}{" "}
-                  {note.author.name} ·{" "}
-                  <a href={note.url} target="_blank" rel="noreferrer">
-                    {new Date(note.createdAt).toLocaleString()}
-                  </a>
-                </label>
-                <MessageMarkdown
-                  text={note.body.replace(
-                    /<!-- spectron-(?:reply|review):[^>]*-->/g,
-                    "",
-                  )}
-                />
-              </div>
-            ))}
-            {row.replies
-              .filter(
-                (r) => r.discussionId === thread.id && r.state !== "published",
-              )
-              .map((draft) => (
-                <ReplyEditor
-                  key={`${draft.id}:${draft.revision}:${draft.state}`}
-                  draft={draft}
-                  editable={
-                    writable &&
-                    (row.canManage || draft.authorId === currentUserId)
-                  }
-                  busy={busy}
-                  pending={pending}
-                  save={(body) =>
-                    run(() =>
-                      actions.saveReply({
-                        ...ref,
-                        discussionId: thread.id,
-                        id: draft.id,
-                        revision: draft.revision,
-                        body,
-                      }),
-                    )
-                  }
-                  discard={() =>
-                    run(() =>
-                      actions.discardReply({
-                        ...ref,
-                        id: draft.id,
-                        revision: draft.revision,
-                      }),
-                    )
-                  }
-                  publish={() =>
-                    run(() =>
-                      actions.publishReply({
-                        ...ref,
-                        id: draft.id,
-                        revision: draft.revision,
-                        requestId: createId(),
-                      }),
-                    )
-                  }
-                />
-              ))}
-            {writable && (
-              <ReplyEditor
-                key={`new:${thread.id}`}
-                editable
-                busy={busy}
-                pending={pending}
-                save={(body) =>
-                  run(() =>
-                    actions.saveReply({
-                      ...ref,
-                      discussionId: thread.id,
-                      body,
-                    }),
-                  )
-                }
-              />
-            )}
-            {writable && thread.resolvable && (
-              <Button
-                variant="ghost"
-                disabled={busy || pending}
-                onClick={() =>
-                  void run(() =>
-                    actions.act({
-                      ...ref,
-                      requestId: createId(),
-                      kind: thread.resolved ? "reopen" : "resolve",
-                      expectedHead: row.pull.head,
-                      discussionId: thread.id,
-                    }),
-                  )
-                }
-              >
-                {thread.resolved ? "Reopen discussion" : "Resolve discussion"}
-              </Button>
-            )}
-          </section>
-        ))}
-      </details>
-      {row.writerRunId && (
-        <p>
-          A writer owns this workspace. PR/MR state controls unlock after its
-          tools stop.
-        </p>
-      )}
-      {writable && (
-        <div className="agent-run-controls">
-          {row.canManage && row.pull.draft && (
-            <Button
-              disabled={busy || pending || !!row.writerRunId}
-              onClick={() => setConfirm({ kind: "ready", head: row.pull.head })}
-            >
-              Mark ready
-            </Button>
-          )}
-          {row.canMerge && (
-            <Button
-              disabled={busy || pending || !!row.writerRunId || !a?.mergeable}
-              onClick={() => {
-                setMethod(a?.mergeMethods[0] ?? "merge");
-                setConfirm({ kind: "merge", head: row.pull.head });
-              }}
-            >
-              Merge
-            </Button>
-          )}
-          {row.canManage && (
-            <Button
-              variant="ghost"
-              disabled={busy || pending || !!row.writerRunId}
-              onClick={() => setConfirm({ kind: "close", head: row.pull.head })}
-            >
-              Close PR/MR
-            </Button>
-          )}
-          {a && !a.mergeable && <p className="muted">{a.mergeReason}</p>}
-        </div>
-      )}
-      {confirm && writable && (
-        <section aria-label="Confirm provider action">
-          <p>
-            {confirm.kind === "merge"
-              ? "Merge"
-              : confirm.kind === "ready"
-                ? "Mark ready"
-                : "Close"}{" "}
-            {row.provider === "github" ? "PR" : "MR"} #{row.pull.number} at{" "}
-            <code>{confirm.head.slice(0, 12)}</code>?
-          </p>
-          {confirm.kind === "merge" && (
-            <label>
-              Merge method
-              <select
-                className="input"
-                value={method}
-                onChange={(e) => setMethod(e.target.value as typeof method)}
-              >
-                {a?.mergeMethods.map((m) => (
-                  <option key={m} value={m}>
-                    {m}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
-          {confirm.head !== row.pull.head && (
-            <p role="alert">
-              The commit changed. Cancel and review the updated activity.
-            </p>
-          )}
-          <Button
-            disabled={
-              busy ||
-              pending ||
-              !!row.writerRunId ||
-              confirm.head !== row.pull.head
-            }
-            onClick={() =>
-              void run(async () => {
-                await actions.act({
-                  ...ref,
-                  requestId: createId(),
-                  kind: confirm.kind,
-                  expectedHead: confirm.head,
-                  ...(confirm.kind === "merge" ? { mergeMethod: method } : {}),
-                });
-                setConfirm(null);
-              })
-            }
-          >
-            Confirm {confirm.kind}
-          </Button>
-          <Button
-            variant="ghost"
-            disabled={busy}
-            onClick={() => setConfirm(null)}
-          >
-            Cancel
-          </Button>
-        </section>
-      )}
-      {!!row.operations.length && (
-        <details open={row.operations.some((o) => o.state === "uncertain")}>
-          <summary>Provider actions</summary>
-          {row.operations.map((o) => (
-            <div key={o.id}>
-              <p>
-                {o.kind} · {o.state} · {o.requesterName}
-                {o.error ? ` · ${o.error}` : ""}
-              </p>
-              {["dispatching", "uncertain"].includes(o.state) && (
-                <>
-                  <Button
-                    variant="ghost"
-                    disabled={busy}
-                    onClick={() =>
-                      void run(() => actions.reconcile({ ...ref, id: o.id }))
-                    }
-                  >
-                    Reconcile {o.kind}
-                  </Button>
-                  {writable &&
-                    o.state === "uncertain" &&
-                    o.kind !== "reply" && (
-                      <Button
-                        variant="ghost"
-                        disabled={busy}
-                        onClick={() =>
-                          void run(() =>
-                            actions.reconcile({
-                              ...ref,
-                              id: o.id,
-                              retry: true,
-                            }),
-                          )
-                        }
-                      >
-                        Retry original {o.kind}
-                      </Button>
-                    )}
-                </>
+    <div className="mx-0">
+      <PullCard
+        className="mx-0 bg-surface"
+        title={a?.title ?? row.repositoryName}
+        number={row.pull.number}
+        state={state}
+        provider={row.provider}
+        branch={row.pull.sourceBranch}
+        target={row.pull.targetBranch}
+        url={row.pull.url}
+        actions={
+          writable ? (
+            <>
+              {row.canManage && row.pull.draft && (
+                <Button variant="secondary" size="sm" disabled={busy || pending || !!row.writerRunId} onClick={() => setConfirm({ kind: "ready", head: row.pull.head })}>
+                  Mark ready
+                </Button>
               )}
+              {row.canMerge && (
+                <Button size="sm" variant="primary" disabled={busy || pending || !!row.writerRunId || !a?.mergeable} title={a && !a.mergeable ? a.mergeReason : undefined} onClick={() => { setMethod(a?.mergeMethods[0] ?? "merge"); setConfirm({ kind: "merge", head: row.pull.head }); }}>
+                  Merge
+                </Button>
+              )}
+            </>
+          ) : undefined
+        }
+        footer={
+          <>
+            {checks.length > 0 && (
+              <span className={cn("inline-flex items-center gap-1.5", checksFailed ? "text-bad" : checksPending ? "text-ink-2" : "text-ok")}>
+                <Icon name={checksFailed ? "alert" : checksPending ? "clock" : "check-circle"} size={13} />
+                {checksFailed ? `${checksFailed} check${checksFailed === 1 ? "" : "s"} failed` : checksPending ? "Checks running" : "Checks passing"}
+              </span>
+            )}
+            {!!a?.reviewers.length && (
+              <span className="inline-flex items-center gap-1.5">
+                <span className="flex [&>*+*]:-ml-1.5 [&>*]:ring-2 [&>*]:ring-surface-2">
+                  {a.reviewers.slice(0, 3).map((r, i) => <Avatar key={`${r.login}:${i}`} name={r.name} size="xs" />)}
+                </span>
+                {a.reviewers.length === 1 ? `${a.reviewers[0]!.name} ${a.reviewers[0]!.state.toLowerCase().replace(/_/g, " ")}` : `${a.reviewers.length} reviewers`}
+              </span>
+            )}
+            <span className="hidden text-ink-3 dev:inline">
+              {row.syncing ? "Synchronizing…" : row.syncedAt ? `Updated ${new Date(row.syncedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : "Awaiting first synchronization"}
+            </span>
+            <button type="button" className="hidden text-ink-3 hover:text-ink dev:inline-flex" title="Refresh provider activity" disabled={busy || row.syncing} onClick={() => void run(() => actions.refresh(ref))}>
+              <Icon name="refresh" size={13} />
+            </button>
+            {row.writerRunId && <span className="text-ink-3">An agent is working on this branch</span>}
+            <span className="ml-auto flex items-center gap-1">
+              {writable && row.canManage && (
+                <Button size="sm" variant="ghost" disabled={busy || pending || !!row.writerRunId} onClick={() => setConfirm({ kind: "close", head: row.pull.head })}>
+                  Close {prLabel}
+                </Button>
+              )}
+              <Disclosure
+                label={row.discussions.length ? `${row.discussions.length} comment${row.discussions.length === 1 ? "" : "s"}${open ? `, ${open} open` : ""}` : "No comments yet"}
+                defaultOpen={open > 0}
+                panelClassName="border-0 bg-transparent"
+              >
+                {(error || row.error) && <p role="alert" className="px-3 py-2 text-sm text-bad">{error || row.error}</p>}
+                {row.discussions.map((thread) => {
+                  const noteChecked = (noteId: string) => selected.some((s) => s.discussionId === thread.id && s.noteId === noteId);
+                  const first = thread.notes[0];
+                  if (!first) return null;
+                  return (
+                    <ReviewThread
+                      key={thread.id}
+                      author={{ name: first.author.name }}
+                      time={<a href={first.url} target="_blank" rel="noreferrer" className="hover:underline">on {row.provider === "github" ? "GitHub" : "GitLab"} · {new Date(first.createdAt).toLocaleString([], { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "short" })}</a>}
+                      location={thread.path ? `${thread.path}${thread.line ? `:${thread.line}` : ""}` : undefined}
+                      resolved={thread.resolvable && thread.resolved}
+                      actions={
+                        <>
+                          {writable && thread.resolvable && (
+                            <Button size="sm" variant="ghost" icon={thread.resolved ? "refresh" : "check"} disabled={busy || pending} onClick={() => void run(() => actions.act({ ...ref, requestId: createId(), kind: thread.resolved ? "reopen" : "resolve", expectedHead: row.pull.head, discussionId: thread.id }))}>
+                              {thread.resolved ? "Reopen" : "Resolve"}
+                            </Button>
+                          )}
+                          {writable && (
+                            <Button size="sm" variant="ghost" icon="sparkle" disabled={busy} aria-pressed={noteChecked(first.id)} className={noteChecked(first.id) ? "bg-accent-soft text-accent-ink" : undefined} onClick={() => setSelected((old) => noteChecked(first.id) ? old.filter((s) => !(s.discussionId === thread.id && s.noteId === first.id)) : [...old, { discussionId: thread.id, noteId: first.id }])}>
+                              {noteChecked(first.id) ? "Selected for agent" : "Ask agent to address"}
+                            </Button>
+                          )}
+                        </>
+                      }
+                      replies={
+                        <div className="mt-1.5 flex flex-col gap-1.5">
+                          {thread.notes.slice(1).map((note) => (
+                            <div key={note.id} className="grid grid-cols-[20px_minmax(0,1fr)] gap-2 rounded-lg bg-surface-2 px-2.5 py-2 text-sm text-ink-2">
+                              <Avatar name={note.author.name} size="xs" />
+                              <div>
+                                <span className="flex items-center gap-2"><b className="font-semibold text-ink">{note.author.name}</b><a href={note.url} target="_blank" rel="noreferrer" className="text-xs text-ink-3">{new Date(note.createdAt).toLocaleString([], { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "short" })}</a>
+                                  {writable && <label className="ml-auto inline-flex items-center gap-1 text-xs text-ink-3"><input type="checkbox" className="accent-accent" disabled={busy} checked={noteChecked(note.id)} onChange={(e) => setSelected((old) => e.target.checked ? [...old, { discussionId: thread.id, noteId: note.id }] : old.filter((s) => !(s.discussionId === thread.id && s.noteId === note.id)))} />for agent</label>}
+                                </span>
+                                <div className="prose-chat text-base text-ink"><MessageMarkdown text={note.body.replace(/<!-- spectron-(?:reply|review):[^>]*-->/g, "")} /></div>
+                              </div>
+                            </div>
+                          ))}
+                          {row.replies.filter((r) => r.discussionId === thread.id && r.state !== "published").map((draft) => (
+                            <ReplyEditor key={`${draft.id}:${draft.revision}:${draft.state}`} draft={draft} editable={writable && (row.canManage || draft.authorId === currentUserId)} busy={busy} pending={pending}
+                              save={(body) => run(() => actions.saveReply({ ...ref, discussionId: thread.id, id: draft.id, revision: draft.revision, body }))}
+                              discard={() => run(() => actions.discardReply({ ...ref, id: draft.id, revision: draft.revision }))}
+                              publish={() => run(() => actions.publishReply({ ...ref, id: draft.id, revision: draft.revision, requestId: createId() }))} />
+                          ))}
+                          {writable && (
+                            <ReplyEditor key={`new:${thread.id}`} editable busy={busy} pending={pending} save={(body) => run(() => actions.saveReply({ ...ref, discussionId: thread.id, body }))} />
+                          )}
+                        </div>
+                      }
+                    >
+                      <MessageMarkdown text={first.body.replace(/<!-- spectron-(?:reply|review):[^>]*-->/g, "")} />
+                    </ReviewThread>
+                  );
+                })}
+                {!row.discussions.length && <p className="px-3 py-2 text-sm text-ink-3">No provider discussions yet.</p>}
+              </Disclosure>
+            </span>
+          </>
+        }
+      >
+        {!!selected.length && writable && (
+          <form
+            className="flex flex-col gap-2 bg-surface px-3 py-3 hairline-t"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void run(async () => {
+                await actions.address({ ...scope, requestId: createId(), agentId, comments: selected, message });
+                setSelected([]);
+                setMessage("");
+              });
+            }}
+          >
+            <p className="text-sm text-ink-2">
+              {selected.length} comment{selected.length === 1 ? "" : "s"} selected. An active run by this agent receives instructions; otherwise a new run starts.
+            </p>
+            <div className="grid gap-2 md:grid-cols-[220px_minmax(0,1fr)]">
+              <label><span className="block text-sm text-ink-2">Agent</span>
+                <select className={field} value={agentId} onChange={(e) => setAgentId(e.target.value)} required disabled={busy}>
+                  <option value="">Choose an agent</option>
+                  {available.map((ag) => <option key={ag.id} value={ag.id}>{ag.name}</option>)}
+                </select>
+              </label>
+              <label><span className="block text-sm text-ink-2">Additional instructions</span>
+                <input className={field} maxLength={100000} value={message} onChange={(e) => setMessage(e.target.value)} disabled={busy} placeholder="Optional" />
+              </label>
             </div>
-          ))}
-        </details>
-      )}
-    </article>
+            <div className="flex justify-end gap-1.5">
+              <Button variant="ghost" disabled={busy} onClick={() => setSelected([])}>Clear selection</Button>
+              <Button variant="primary" icon="sparkle" type="submit" disabled={busy || !agentId || pending}>Address selected comments</Button>
+            </div>
+          </form>
+        )}
+        {confirm && writable && (
+          <section aria-label="Confirm provider action" className="flex flex-col gap-2 bg-surface px-3 py-3 hairline-t">
+            <p className="text-base">
+              {confirm.kind === "merge" ? "Merge" : confirm.kind === "ready" ? "Mark ready" : "Close"} {prLabel} #{row.pull.number} at <span className="mono text-sm">{confirm.head.slice(0, 12)}</span>?
+            </p>
+            {confirm.kind === "merge" && (
+              <label className="max-w-60"><span className="block text-sm text-ink-2">Merge method</span>
+                <select className={field} value={method} onChange={(e) => setMethod(e.target.value as typeof method)}>
+                  {a?.mergeMethods.map((m) => <option key={m} value={m}>{m}</option>)}
+                </select>
+              </label>
+            )}
+            {confirm.head !== row.pull.head && <p role="alert" className="text-sm text-bad">The commit changed. Cancel and review the updated activity.</p>}
+            <div className="flex justify-end gap-1.5">
+              <Button variant="ghost" disabled={busy} onClick={() => setConfirm(null)}>Cancel</Button>
+              <Button variant={confirm.kind === "close" ? "danger" : "primary"} disabled={busy || pending || !!row.writerRunId || confirm.head !== row.pull.head} onClick={() => void run(async () => { await actions.act({ ...ref, requestId: createId(), kind: confirm.kind, expectedHead: confirm.head, ...(confirm.kind === "merge" ? { mergeMethod: method } : {}) }); setConfirm(null); })}>
+                Confirm {confirm.kind}
+              </Button>
+            </div>
+          </section>
+        )}
+        {a && (
+          <div className="hidden flex-wrap gap-1 px-3 py-1.5 hairline-t dev:flex">
+            <Disclosure label="Checks" count={checks.length} panelClassName="border-0 bg-transparent">
+              <div className="flex flex-col gap-1 px-3 pb-2 text-sm">
+                {checks.length ? checks.map((c, i) => (
+                  <div key={i} className="flex items-center gap-2">
+                    <Icon name={c.state === "passed" ? "check-circle" : c.state === "failed" ? "alert" : "clock"} size={13} className={c.state === "passed" ? "text-ok" : c.state === "failed" ? "text-bad" : "text-ink-3"} />
+                    {c.url ? <a href={c.url} target="_blank" rel="noreferrer" className="text-ink hover:underline">{c.name}</a> : c.name}
+                    <span className="text-ink-3">{c.state}</span>
+                  </div>
+                )) : <p className="text-ink-3">No checks reported.</p>}
+              </div>
+            </Disclosure>
+            <Disclosure label="Commits" count={a.commits.length} panelClassName="border-0 bg-transparent">
+              <div className="mono flex flex-col gap-1 px-3 pb-2 text-xs text-ink-2">
+                {a.commits.map((c) => <div key={c.sha}><span className="text-ink-3">{c.sha.slice(0, 8)}</span> {c.message} <span className="text-ink-3">· {c.author}</span></div>)}
+              </div>
+            </Disclosure>
+            {!!row.operations.length && (
+              <Disclosure label="Provider actions" count={row.operations.length} defaultOpen={row.operations.some((o) => o.state === "uncertain")} panelClassName="border-0 bg-transparent">
+                <div className="flex flex-col gap-1.5 px-3 pb-2 text-sm">
+                  {row.operations.map((o) => (
+                    <div key={o.id} className="flex flex-wrap items-center gap-2">
+                      <Pill tone={o.state === "completed" ? "ok" : o.state === "failed" ? "bad" : "warn"} className="capitalize">{o.state}</Pill>
+                      <span className="capitalize">{o.kind}</span>
+                      <span className="text-ink-3">· {o.requesterName}{o.error ? ` · ${o.error}` : ""}</span>
+                      {["dispatching", "uncertain"].includes(o.state) && (
+                        <>
+                          <Button size="sm" variant="ghost" disabled={busy} onClick={() => void run(() => actions.reconcile({ ...ref, id: o.id }))}>Reconcile</Button>
+                          {writable && o.state === "uncertain" && o.kind !== "reply" && (
+                            <Button size="sm" variant="ghost" disabled={busy} onClick={() => void run(() => actions.reconcile({ ...ref, id: o.id, retry: true }))}>Retry original {o.kind}</Button>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </Disclosure>
+            )}
+            {a && !a.mergeable && <span className="ml-auto self-center text-sm text-ink-3">{a.mergeReason}</span>}
+          </div>
+        )}
+      </PullCard>
+    </div>
   );
 }
+
 function ReplyEditor({
   discard,
   draft,
@@ -592,71 +399,51 @@ function ReplyEditor({
     [open, setOpen] = useState(!!draft);
   if (!open)
     return (
-      <Button
-        variant="ghost"
-        disabled={!editable || busy}
-        onClick={() => setOpen(true)}
-      >
-        Draft a reply
-      </Button>
+      <div>
+        <Button size="sm" variant="ghost" icon="reply" disabled={!editable || busy} onClick={() => setOpen(true)}>
+          Reply
+        </Button>
+      </div>
     );
+  const locked = !editable || busy || (!!draft && draft.state !== "draft");
   return (
-    <div className="git-reply-draft">
-      <p>
-        {draft?.runId ? "Agent reply draft" : "Reply draft"}
-        {draft && draft.state !== "draft" ? ` · ${draft.state}` : ""}
-      </p>
-      <textarea
-        aria-label="Reply draft"
-        className="input"
-        maxLength={20000}
-        value={body}
-        onChange={(e) => setBody(e.target.value)}
-        disabled={!editable || busy || (!!draft && draft.state !== "draft")}
-      />
-      {draft?.error && <p role="alert">{draft.error}</p>}
-      {draft?.state === "uncertain" && discard && (
-        <>
-          <p>
-            Discard hides this local draft after checking the provider. It does
-            not resend or remove a provider comment; a delayed publication may
-            still appear.
-          </p>
-          <Button
-            variant="ghost"
-            disabled={!editable || busy}
-            onClick={() => void discard()}
-          >
-            Check provider and discard draft
-          </Button>
-        </>
-      )}
-      {(!draft || draft.state === "draft") && (
-        <>
-          <Button
-            variant="ghost"
-            disabled={!editable || busy || !body.trim() || body === draft?.body}
-            onClick={() =>
-              void save(body).then((saved) => {
-                if (saved && !draft) {
-                  setBody("");
-                  setOpen(false);
-                }
-              })
-            }
-          >
-            Save draft
-          </Button>
-          {draft && publish && (
-            <Button
-              disabled={!editable || busy || pending || body !== draft.body}
-              onClick={() => void publish()}
-            >
-              Publish reply
+    <div className="grid grid-cols-[20px_minmax(0,1fr)] gap-2 rounded-lg bg-surface-2 px-2.5 py-2 text-sm">
+      <Icon name={draft?.runId ? "sparkle" : "reply"} size={14} className="mt-1 text-ink-3" />
+      <div className="flex flex-col gap-1.5">
+        <div className="flex items-center gap-2 text-ink-2">
+          <b className="font-semibold text-ink">{draft?.runId ? "Agent reply" : "Your reply"}</b>
+          <Pill tone={draft?.state === "uncertain" ? "warn" : draft?.state === "publishing" ? "accent" : "warn"}>{draft ? draft.state === "draft" ? "Draft" : draft.state : "Draft"}</Pill>
+        </div>
+        <textarea
+          aria-label="Reply draft"
+          className={cn(field, "mt-0 min-h-14 bg-surface")}
+          maxLength={20000}
+          value={body}
+          onChange={(e) => setBody(e.target.value)}
+          disabled={locked}
+          placeholder="Write a reply. It stays here until you publish it."
+        />
+        {draft?.error && <p role="alert" className="text-bad">{draft.error}</p>}
+        {draft?.state === "uncertain" && discard && (
+          <div className="flex flex-wrap items-center gap-2 text-ink-3">
+            <span>Discard hides this local draft after checking the provider. It does not remove a provider comment.</span>
+            <Button size="sm" variant="ghost" disabled={!editable || busy} onClick={() => void discard()}>Check provider and discard</Button>
+          </div>
+        )}
+        {(!draft || draft.state === "draft") && (
+          <div className="flex justify-end gap-1.5">
+            {!draft && <Button size="sm" variant="ghost" disabled={busy} onClick={() => { setBody(""); setOpen(false); }}>Cancel</Button>}
+            <Button variant="secondary" size="sm" disabled={!editable || busy || !body.trim() || body === draft?.body} onClick={() => void save(body).then((saved) => { if (saved && !draft) { setBody(""); setOpen(false); } })}>
+              Save draft
             </Button>
-          )}
-        </>
-      )}
+            {draft && publish && (
+              <Button size="sm" variant="primary" disabled={!editable || busy || pending || body !== draft.body} onClick={() => void publish()}>
+                Publish reply
+              </Button>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 export type Theme = "light" | "dark" | "system";
+export type Palette = "warm" | "slate";
 const readTheme = (): Theme => {
   try {
     const value = localStorage.getItem("spectron-theme");
@@ -8,9 +9,19 @@ const readTheme = (): Theme => {
     return "light";
   }
 };
+const readPalette = (): Palette => {
+  try {
+    return localStorage.getItem("spectron-palette") === "slate"
+      ? "slate"
+      : "warm";
+  } catch {
+    return "warm";
+  }
+};
 
 export function useTheme() {
   const [theme, setTheme] = useState<Theme>(readTheme);
+  const [palette, setPalette] = useState<Palette>(readPalette);
   useEffect(() => {
     const media = window.matchMedia("(prefers-color-scheme: dark)");
     const apply = () => {
@@ -26,6 +37,14 @@ export function useTheme() {
     }
     return () => media.removeEventListener("change", apply);
   }, [theme]);
+  useEffect(() => {
+    document.documentElement.dataset.palette = palette;
+    try {
+      localStorage.setItem("spectron-palette", palette);
+    } catch {
+      /* Palette still works without storage. */
+    }
+  }, [palette]);
 
-  return { theme, setTheme };
+  return { theme, setTheme, palette, setPalette };
 }
