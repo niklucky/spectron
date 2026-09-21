@@ -1,13 +1,14 @@
+import type { ReactNode } from "react";
 import { EmptyState, PageBody, PageHeader, PageShell, WidgetSlot } from "../../ui/page-shell";
 
 /**
  * Personal dashboard across all projects. Starts empty: the user composes it
  * from widgets, nothing is pre-filled.
  */
-export function OverviewPage() {
+export function OverviewPage({ actions }: { actions?: ReactNode }) {
   return (
     <PageShell label="Overview">
-      <PageHeader breadcrumbs={[{ label: "Overview", icon: "overview" }]} />
+      <PageHeader breadcrumbs={[{ label: "Overview", icon: "overview" }]} actions={actions} />
       <PageBody className="p-6">
         <div className="mx-auto flex max-w-[1100px] flex-col gap-6">
           <EmptyState

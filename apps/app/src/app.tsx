@@ -30,6 +30,9 @@ import { Toast } from "@spectron/frontend/components/ui/toast";
 import { Icon } from "@spectron/frontend/components/ui/icon";
 import { Button, IconButton } from "@spectron/frontend/components/ui/button";
 import { PageBody } from "@spectron/frontend/components/ui/page-shell";
+import { CommandPalette, CommandTrigger, type CommandGroup } from "@spectron/frontend/components/ui/command";
+import { HotkeysProvider, useHotkey } from "@tanstack/react-hotkeys";
+import { ProjectMark } from "@spectron/frontend/components/feature/project";
 import { cn } from "@spectron/frontend/components/ui/cn";
 import { previewMedia } from "./fixtures/preview-metadata";
 import {
@@ -37,6 +40,7 @@ import {
   ProjectSettingsPage,
   ProjectEmptyState,
   ProjectPage,
+  type ProjectSection,
 } from "@spectron/frontend/components/feature/project";
 import { InvitationPage } from "./invitation-page";
 import { DesignSystemPage } from "@spectron/frontend/components/feature/design-system";
@@ -56,6 +60,7 @@ export function App() {
   }, []);
   if (hash.startsWith("#design")) return <DesignSystemPage />;
   return (
+    <HotkeysProvider defaultOptions={{ hotkey: { preventDefault: true } }}>
     <AuthGate>
       {(user, sessionId) =>
         hash.startsWith("#invite/") ? (
@@ -69,6 +74,7 @@ export function App() {
         )
       }
     </AuthGate>
+    </HotkeysProvider>
   );
 }
 
@@ -208,6 +214,91 @@ function Workspace({
   );
   const project = projects.find((item) => item.id === workspace.project);
   const task = workspace.task;
+  const [commandOpen, setCommandOpen] = useState(false);
+  useHotkey("Mod+K", () => setCommandOpen((open) => !open), { ignoreInputs: false });
+  const commandGroups = useMemo<CommandGroup[]>(() => {
+    const go = (section: ProjectSection) => () => {
+      if (!integrationBusy && project) workspace.selectProject(project.id, section);
+    };
+    const sections: { section: ProjectSection; label: string; icon: "overview" | "book" | "issues" | "board" | "gantt" | "settings" }[] = [
+      { section: "overview", label: "Overview", icon: "overview" },
+      { section: "wiki", label: "Wiki", icon: "book" },
+      { section: "issues", label: "Issues", icon: "issues" },
+      { section: "board", label: "Board", icon: "board" },
+      { section: "gantt", label: "Gantt", icon: "gantt" },
+      { section: "settings", label: "Settings", icon: "settings" },
+    ];
+    const recent = [...workspace.allIssues]
+      .filter((issue) => !issue.deletedAt)
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    return [
+      {
+        id: "navigate",
+        label: "Go to",
+        items: [
+          { id: "nav:flow", label: "Flow", icon: "pulse" as const, keywords: "inbox pulse", onSelect: () => { if (!integrationBusy) { setAISettings(false); workspace.selectFlow(); } } },
+          { id: "nav:overview", label: "Overview", icon: "overview" as const, keywords: "dashboard home widgets", onSelect: () => { if (!integrationBusy) { setAISettings(false); workspace.selectOverview(); } } },
+          ...(project
+            ? sections.map((item) => ({
+                id: `nav:project:${item.section}`,
+                label: `${project.name} · ${item.label}`,
+                icon: item.icon,
+                keywords: `project ${item.label}`,
+                onSelect: go(item.section),
+              }))
+            : []),
+          { id: "nav:agents", label: "AI connections & agents", icon: "sparkle" as const, onSelect: () => { if (!integrationBusy) setAISettings(true); } },
+        ],
+        limit: 4,
+      },
+      {
+        id: "projects",
+        label: "Projects",
+        items: projects.map((item) => ({
+          id: `project:${item.id}`,
+          label: item.name,
+          mark: <ProjectMark project={item} size="sm" />,
+          keywords: "project open",
+          onSelect: () => { if (!integrationBusy) { setAISettings(false); workspace.selectProject(item.id); } },
+        })),
+        limit: 5,
+      },
+      {
+        id: "actions",
+        label: "Actions",
+        items: [
+          { id: "act:new", label: "New issue", icon: "plus" as const, keywords: "create task", onSelect: () => { if (!integrationBusy) { setAISettings(false); workspace.startNewIssue(); } } },
+          { id: "act:sidebar", label: workspace.collapsed ? "Expand sidebar" : "Collapse sidebar", icon: "sidebar" as const, onSelect: () => workspace.setCollapsed((value) => !value) },
+          { id: "act:light", label: "Theme: light", icon: "sun" as const, keywords: "appearance", onSelect: () => workspace.setTheme("light") },
+          { id: "act:dark", label: "Theme: dark", icon: "moon" as const, keywords: "appearance", onSelect: () => workspace.setTheme("dark") },
+          { id: "act:system", label: "Theme: system", icon: "globe" as const, keywords: "appearance", onSelect: () => workspace.setTheme("system") },
+          { id: "act:profile", label: "Edit profile", icon: "user" as const, onSelect: () => workspace.openModal("profile") },
+        ],
+        limit: 2,
+      },
+      {
+        id: "issues",
+        label: "Issues",
+        items: recent.map((issue) => {
+          const owner = projects.find((item) => item.id === issue.projectId);
+          return {
+            id: `issue:${issue.id}`,
+            label: issue.title,
+            hint: issue.key,
+            mark: owner ? <ProjectMark project={owner} size="xs" /> : undefined,
+            keywords: `${issue.key} ${owner?.name ?? ""} ${issue.description}`.slice(0, 400),
+            onSelect: () => {
+              if (integrationBusy) return;
+              setAISettings(false);
+              workspace.selectTask(issue.id, issue.projectId);
+            },
+          };
+        }),
+        limit: 6,
+      },
+    ];
+  }, [projects, project, workspace, integrationBusy]);
+  const commandTrigger = <CommandTrigger onClick={() => setCommandOpen(true)} />;
   const issueActions = useMemo(
     () => ({
       canCreateTag: (projectId: string) => projects.some(p => p.id === projectId && p.role === "owner"),
@@ -577,7 +668,7 @@ function Workspace({
           onCreate={projectState.openCreate}
         />
       ) : workspace.view === "overview" ? (
-        <OverviewPage />
+        <OverviewPage actions={commandTrigger} />
       ) : workspace.view === "project" && project ? (
         <ProjectPage
           project={project}
@@ -585,7 +676,9 @@ function Workspace({
           onSectionChange={(section) => { if (!integrationBusy) workspace.selectSection(section); }}
           onOpenOverview={() => { if (!integrationBusy) workspace.selectSection("overview"); }}
           actions={
-            workspace.section === "issues" ? (
+            <>
+              {commandTrigger}
+              {workspace.section === "issues" && (
               <>
                 <IconButton
                   icon="search"
@@ -596,7 +689,8 @@ function Workspace({
                 />
                 <Button variant="primary" icon="plus" onClick={workspace.startNewIssue}>New issue</Button>
               </>
-            ) : undefined
+              )}
+            </>
           }
         >
           {workspace.section === "issues" ? (
@@ -639,6 +733,7 @@ function Workspace({
         issueColumns(false)
       )}
       <Toast message={workspace.notice || projectState.error} />
+      <CommandPalette open={commandOpen} onClose={() => setCommandOpen(false)} groups={commandGroups} />
       {projectState.showCreate && (
         <CreateProjectDialog
           first={!projectState.projects.length}

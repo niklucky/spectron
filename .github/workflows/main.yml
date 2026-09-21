@@ -1,0 +1,19 @@
+name: Main
+
+# main is deliberately not a deploy trigger: production ships from a `vX.Y.Z`
+# tag, and there is no dev server yet. This runs the same checks a pull
+# request does, so a bad merge is visible immediately rather than at tag time.
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: main
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    uses: ./.github/workflows/checks.yml

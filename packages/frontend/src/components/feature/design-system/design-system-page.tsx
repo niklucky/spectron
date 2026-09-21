@@ -11,6 +11,7 @@ import { StatusDot, Spinner, ProgressLine } from "../../ui/status";
 import { ProjectMark } from "../project/project-mark";
 import { IssueRow, ListGroup } from "../../ui/list";
 import { Breadcrumbs, EmptyState, PageTabs, PageToolbar, WidgetSlot } from "../../ui/page-shell";
+import { CommandTrigger } from "../../ui/command";
 import {
   DaySeparator,
   EventLine,
@@ -238,10 +239,10 @@ export function DesignSystemPage() {
           </div>
         </Section>
 
-        <Section id="page" title="Page anatomy" lead="Every full-width page shares one quiet frame: a 44px header row with breadcrumbs, section tabs and right-aligned actions; an optional toolbar for filters and display; then the body. No page titles in large type: the last breadcrumb is the title.">
+        <Section id="page" title="Page anatomy" lead="Every full-width page shares one quiet frame: a 44px header row with breadcrumbs, section tabs and right-aligned actions (search and commands on Mod+K, then one primary button); an optional toolbar for filters and display; then the body. No page titles in large type, and the current tab is never repeated in the breadcrumbs.">
           <div className="overflow-hidden rounded-xl bg-surface hairline">
             <header className="flex h-11 items-center gap-2 px-3 hairline-b">
-              <Breadcrumbs items={[{ label: "Spectron", mark: <ProjectMark project={project} size="sm" />, onClick: () => {} }, { label: "Issues", icon: "issues" }]} />
+              <Breadcrumbs items={[{ label: "Spectron", mark: <ProjectMark project={project} size="sm" />, onClick: () => {} }]} />
               <div className="ml-2 hidden md:flex">
                 <PageTabs label="Sections" value={section} onChange={setSection} tabs={[
                   { value: "overview", label: "Overview", icon: "overview" },
@@ -253,7 +254,7 @@ export function DesignSystemPage() {
                 ]} />
               </div>
               <div className="ml-auto flex items-center gap-1">
-                <IconButton icon="search" label="Search" />
+                <CommandTrigger onClick={() => {}} />
                 <Button variant="primary" icon="plus">New issue</Button>
               </div>
             </header>
