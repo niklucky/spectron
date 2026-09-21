@@ -46,7 +46,6 @@ export function ProjectPage({
       <PageHeader
         breadcrumbs={[
           { label: project.name, mark: <ProjectMark project={project} size="sm" />, onClick: onOpenOverview },
-          { label: current.label, icon: current.icon },
         ]}
         tabs={<PageTabs label="Project sections" value={section} tabs={tabs} onChange={onSectionChange} />}
         actions={actions}

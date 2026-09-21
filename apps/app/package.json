@@ -12,6 +12,7 @@
   "dependencies": {
     "@spectron/frontend": "workspace:*",
     "@spectron/shared": "workspace:*",
+    "@tanstack/react-hotkeys": "0.10.0",
     "@trpc/client": "11.18.0",
     "better-auth": "1.7.3",
     "react": "19.2.8",

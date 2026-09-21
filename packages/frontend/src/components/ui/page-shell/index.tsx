@@ -56,11 +56,15 @@ export function Breadcrumbs({ items }: { items: Crumb[] }) {
         return (
           <span key={`${item.label}:${index}`} className="flex min-w-0 items-center gap-1">
             {index > 0 && <Icon name="chevron-right" size={13} className="shrink-0 text-ink-3" />}
-            {item.onClick && !last ? (
+            {item.onClick ? (
               <button
                 type="button"
                 onClick={item.onClick}
-                className="flex h-7 min-w-0 items-center gap-1.5 rounded-md px-1.5 text-ink-2 hover:bg-surface-3 hover:text-ink"
+                aria-current={last ? "page" : undefined}
+                className={cn(
+                  "flex h-7 min-w-0 items-center gap-1.5 rounded-md px-1.5 hover:bg-surface-3 hover:text-ink",
+                  last ? "font-semibold text-ink" : "text-ink-2",
+                )}
               >
                 {content}
               </button>
