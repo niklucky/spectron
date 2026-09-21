@@ -42,15 +42,11 @@ jobs:
       fail-fast: true
       matrix:
         include:
-          # The API and worker: the whole workspace, run with tsx.
+          # The API, the worker and the built SPA, which this image serves
+          # itself — there is no separate app image.
           - name: api
             file: Dockerfile.api
             build_args: ''
-          # The SPA, and the nginx in front of it that proxies /api/ to the
-          # API container and owns the protected-files location.
-          - name: app
-            file: Dockerfile
-            build_args: APP=app
           # The marketing site.
           - name: web
             file: Dockerfile
@@ -158,7 +154,6 @@ jobs:
           umask 077
           {
             printf 'API_IMAGE=%s/api:%s\n' "$prefix" "$IMAGE_TAG"
-            printf 'APP_IMAGE=%s/app:%s\n' "$prefix" "$IMAGE_TAG"
             printf 'WEB_IMAGE=%s/web:%s\n' "$prefix" "$IMAGE_TAG"
             printf 'POSTGRES_PASSWORD=%s\n' "$POSTGRES_PASSWORD"
             printf 'APP_URL=%s\n' "$APP_URL"
@@ -184,7 +179,7 @@ jobs:
           target="$SSH_USER@$SSH_HOST"
           ssh -i ~/.ssh/id_deploy -p "$SSH_PORT" "$target" "mkdir -p '$DEPLOY_PATH'"
           scp -i ~/.ssh/id_deploy -P "$SSH_PORT" \
-            deployment/compose.yaml deploy.env "$target:$DEPLOY_PATH/"
+            deployment/compose.yaml deployment/deploy.sh deploy.env "$target:$DEPLOY_PATH/"
 
       - name: Migrate and restart
         env:
@@ -196,21 +191,13 @@ jobs:
           # one, and the images it already pulled keep working without it.
           printf '%s' "$GHCR_TOKEN" | ssh -i ~/.ssh/id_deploy -p "$SSH_PORT" "$target" \
             "docker login ghcr.io --username '${{ github.actor }}' --password-stdin"
+          # Run the script that was just shipped, rather than piping one in
+          # on stdin: `docker compose run` inside it attaches the container's
+          # stdin, and would consume the remaining lines of a piped script —
+          # silently skipping the restart and still exiting 0. See the comment
+          # at the top of deployment/deploy.sh.
           ssh -i ~/.ssh/id_deploy -p "$SSH_PORT" "$target" \
-            "DEPLOY_PATH='$DEPLOY_PATH' bash -euo pipefail" <<'REMOTE'
-            cd "$DEPLOY_PATH"
-            mv deploy.env .env
-            chmod 600 .env
-            docker compose pull --quiet
-            # Migrations run to completion before anything is restarted: a
-            # failure here leaves the previous API serving the old schema
-            # rather than restarting it against a half-migrated database.
-            # `run` starts the database first and waits for it to be healthy.
-            docker compose run --rm migrate
-            docker compose up --detach --wait --remove-orphans
-            docker compose ps
-            docker image prune -f --filter 'until=168h'
-          REMOTE
+            "bash '$DEPLOY_PATH/deploy.sh'"
 
       - name: Verify the deploy answers
         run: |

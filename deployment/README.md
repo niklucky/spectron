@@ -5,21 +5,29 @@ its own corner of it: `/opt/spectron` for the stack, `/data/spectron` for the
 data, two nginx sites, and loopback ports 4500–4502. The `github` account is
 the deploy user for both projects and gets one extra authorized key here.
 
-| Hostname             | Serves                        | Container | Loopback |
-| -------------------- | ----------------------------- | --------- | -------- |
-| `spectron.dev`       | the marketing site, `apps/web` | `web`     | `:4501`  |
-| `app.spectron.dev`   | the SPA and `/api`, `apps/app` | `app`     | `:4500`  |
+| Hostname             | Serves                         | Container      | Loopback |
+| -------------------- | ------------------------------ | -------------- | -------- |
+| `spectron.dev`       | the marketing site, `apps/web`  | `spectron-web` | `:4501`  |
+| `app.spectron.dev`   | the SPA and `/api`, `apps/app`  | `spectron-api` | `:4500`  |
 
-Only `app` talks to the API: its own nginx proxies `/api/` to the `api`
-container and owns the `/_protected_files/` location that serves attachments
-after the API has authorised the request. The host nginx terminates TLS and
-proxies to those two ports and nothing else.
+The application is one container. The API image carries the built SPA and the
+API process serves it: `/api` is answered by the router, and every other path
+falls through to `index.html` for client-side routing. Attachments stream from
+the same process — `FILE_DELIVERY` is `stream`, so there is no nginx beside the
+API to hand an `X-Accel-Redirect` to. That path is complete (ETags, conditional
+requests, byte ranges); it only gives up `sendfile`. The code still supports
+`nginx` delivery, so switching back means an internal `/_protected_files/`
+location on the host nginx over `FILES_DATA`, plus making `/data/spectron`
+traversable by `www-data`.
+
+The host nginx terminates TLS and proxies to those two ports, nothing else.
 
 ## Layout
 
 ```
 deployment/
   compose.yaml           the production stack; shipped to /opt/spectron
+  deploy.sh              pull, migrate, restart; shipped and run on the box
   provision-app.sh       run this from your machine
   provision-server.sh    the remote half; not run by hand
   github-env.sh          pushes .env.<environment> to a GitHub environment
@@ -137,6 +145,20 @@ cd /opt/spectron
 docker compose ps
 docker compose logs -f api
 ```
+
+`deploy.sh` is the same script the workflow runs, so a deploy can be repeated
+by hand without reconstructing the commands:
+
+```bash
+cd /opt/spectron && bash deploy.sh
+```
+
+It is a file on the box rather than a heredoc piped into ssh on purpose.
+`docker compose run` attaches the container's stdin; when the script itself
+arrives on stdin, `run` eats the rest of it, the restart never happens, and
+bash reaches EOF and exits 0 — a deploy that reports success having started
+nothing. The header of the script says the same thing, because the fix is
+invisible once it works.
 
 The database is a bind mount at `/data/spectron/db`, so it outlives the stack
 and a `compose down -v`. Uploaded files are at `/data/spectron/files`, owned by
