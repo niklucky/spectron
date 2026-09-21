@@ -20,6 +20,7 @@ proxies to those two ports and nothing else.
 ```
 deployment/
   compose.yaml           the production stack; shipped to /opt/spectron
+  deploy.sh              pull, migrate, restart; shipped and run on the box
   provision-app.sh       run this from your machine
   provision-server.sh    the remote half; not run by hand
   github-env.sh          pushes .env.<environment> to a GitHub environment
@@ -137,6 +138,20 @@ cd /opt/spectron
 docker compose ps
 docker compose logs -f api
 ```
+
+`deploy.sh` is the same script the workflow runs, so a deploy can be repeated
+by hand without reconstructing the commands:
+
+```bash
+cd /opt/spectron && bash deploy.sh
+```
+
+It is a file on the box rather than a heredoc piped into ssh on purpose.
+`docker compose run` attaches the container's stdin; when the script itself
+arrives on stdin, `run` eats the rest of it, the restart never happens, and
+bash reaches EOF and exits 0 — a deploy that reports success having started
+nothing. The header of the script says the same thing, because the fix is
+invisible once it works.
 
 The database is a bind mount at `/data/spectron/db`, so it outlives the stack
 and a `compose down -v`. Uploaded files are at `/data/spectron/files`, owned by
