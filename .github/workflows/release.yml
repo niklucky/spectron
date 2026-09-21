@@ -1,0 +1,225 @@
+name: Release
+
+# Production ships from a version tag and nothing else:
+#
+#   pull request  -> checks
+#   main          -> checks
+#   v1.2.3        -> checks, three images to ghcr.io, deploy to spectron.dev
+#
+# There is no dev server yet. When there is, copy the deploy job, point it at a
+# `dev` environment and trigger it from the dev branch; everything it needs is
+# already an environment variable or secret rather than hardcoded here.
+on:
+  push:
+    tags: ['v*']
+  # Re-running a deploy that failed after the images were pushed, without
+  # moving the tag.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # One deploy at a time, and queued rather than cancelled: two `compose up`
+  # racing on the box is worse than waiting.
+  group: production
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  verify:
+    uses: ./.github/workflows/checks.yml
+
+  build:
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          # The API and worker: the whole workspace, run with tsx.
+          - name: api
+            file: Dockerfile.api
+            build_args: ''
+          # The SPA, and the nginx in front of it that proxies /api/ to the
+          # API container and owns the protected-files location.
+          - name: app
+            file: Dockerfile
+            build_args: APP=app
+          # The marketing site.
+          - name: web
+            file: Dockerfile
+            build_args: APP=web
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set image reference
+        id: image
+        run: |
+          repo=$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')
+          echo "name=${REGISTRY}/${repo}/${{ matrix.name }}" >> "$GITHUB_OUTPUT"
+
+      # Tagged with the commit sha, which is what the deploy pins, so what is
+      # running is unambiguous and a rollback is the same deploy with an older
+      # sha. The version and `production` tags are for reading the registry.
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.file }}
+          platforms: linux/amd64
+          push: true
+          build-args: ${{ matrix.build_args }}
+          tags: |
+            ${{ steps.image.outputs.name }}:${{ github.sha }}
+            ${{ steps.image.outputs.name }}:${{ github.ref_type == 'tag' && github.ref_name || 'edge' }}
+            ${{ steps.image.outputs.name }}:production
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,scope=${{ matrix.name }},mode=max
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+      packages: read
+    env:
+      SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+      SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+      SSH_HOST: ${{ secrets.SSH_HOST }}
+      SSH_USER: ${{ vars.SSH_USER || 'github' }}
+      SSH_PORT: ${{ vars.SSH_PORT || '22' }}
+      DEPLOY_PATH: ${{ vars.DEPLOY_PATH || '/opt/spectron' }}
+      APP_URL: ${{ vars.APP_URL }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Configure SSH
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          if [ -n "$SSH_KNOWN_HOSTS" ]; then
+            printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          else
+            # Trust on first use. github-env.sh pins the real keys as
+            # SSH_KNOWN_HOSTS; this is the fallback for a hand-configured
+            # environment, and it is worth saying so in the log.
+            echo "::warning::SSH_KNOWN_HOSTS is not set; falling back to ssh-keyscan."
+            ssh-keyscan -T 10 -p "$SSH_PORT" "$SSH_HOST" > ~/.ssh/known_hosts 2>/dev/null
+          fi
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Write the deployment environment
+        env:
+          # Pinned to this commit rather than to `production`, so the box can
+          # only run what this workflow just verified and built.
+          IMAGE_TAG: ${{ github.sha }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          BETTER_AUTH_SECRET: ${{ secrets.BETTER_AUTH_SECRET }}
+          INTEGRATION_SECRET: ${{ secrets.INTEGRATION_SECRET }}
+          INTEGRATION_ENCRYPTION_KEY: ${{ secrets.INTEGRATION_ENCRYPTION_KEY }}
+          AI_CREDENTIAL_SECRET: ${{ secrets.AI_CREDENTIAL_SECRET }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          EMAIL_FROM: ${{ vars.EMAIL_FROM }}
+          GIT_PROVIDER_DNS: ${{ vars.GIT_PROVIDER_DNS || 'system' }}
+          PROJECT_LOGO_DNS: ${{ vars.PROJECT_LOGO_DNS || 'system' }}
+          GITLAB_ALLOWED_PRIVATE_ORIGINS: ${{ vars.GITLAB_ALLOWED_PRIVATE_ORIGINS }}
+          FILES_MAX_BYTES: ${{ vars.FILES_MAX_BYTES || '52428800' }}
+          APP_PORT: ${{ vars.APP_PORT || '4500' }}
+          WEB_PORT: ${{ vars.WEB_PORT || '4501' }}
+          DB_PORT: ${{ vars.DB_PORT || '4502' }}
+          DB_DATA: ${{ vars.DB_DATA || '/data/spectron/db' }}
+          FILES_DATA: ${{ vars.FILES_DATA || '/data/spectron/files' }}
+        run: |
+          : "${APP_URL:?Set the APP_URL variable on the production environment}"
+          repo=$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')
+          prefix="ghcr.io/${repo}"
+          umask 077
+          {
+            printf 'API_IMAGE=%s/api:%s\n' "$prefix" "$IMAGE_TAG"
+            printf 'APP_IMAGE=%s/app:%s\n' "$prefix" "$IMAGE_TAG"
+            printf 'WEB_IMAGE=%s/web:%s\n' "$prefix" "$IMAGE_TAG"
+            printf 'POSTGRES_PASSWORD=%s\n' "$POSTGRES_PASSWORD"
+            printf 'APP_URL=%s\n' "$APP_URL"
+            printf 'BETTER_AUTH_SECRET=%s\n' "$BETTER_AUTH_SECRET"
+            printf 'INTEGRATION_SECRET=%s\n' "$INTEGRATION_SECRET"
+            printf 'INTEGRATION_ENCRYPTION_KEY=%s\n' "$INTEGRATION_ENCRYPTION_KEY"
+            printf 'AI_CREDENTIAL_SECRET=%s\n' "$AI_CREDENTIAL_SECRET"
+            printf 'RESEND_API_KEY=%s\n' "$RESEND_API_KEY"
+            printf 'EMAIL_FROM=%s\n' "$EMAIL_FROM"
+            printf 'GIT_PROVIDER_DNS=%s\n' "$GIT_PROVIDER_DNS"
+            printf 'PROJECT_LOGO_DNS=%s\n' "$PROJECT_LOGO_DNS"
+            printf 'GITLAB_ALLOWED_PRIVATE_ORIGINS=%s\n' "$GITLAB_ALLOWED_PRIVATE_ORIGINS"
+            printf 'FILES_MAX_BYTES=%s\n' "$FILES_MAX_BYTES"
+            printf 'APP_PORT=%s\n' "$APP_PORT"
+            printf 'WEB_PORT=%s\n' "$WEB_PORT"
+            printf 'DB_PORT=%s\n' "$DB_PORT"
+            printf 'DB_DATA=%s\n' "$DB_DATA"
+            printf 'FILES_DATA=%s\n' "$FILES_DATA"
+          } > deploy.env
+
+      - name: Ship the stack
+        run: |
+          target="$SSH_USER@$SSH_HOST"
+          ssh -i ~/.ssh/id_deploy -p "$SSH_PORT" "$target" "mkdir -p '$DEPLOY_PATH'"
+          scp -i ~/.ssh/id_deploy -P "$SSH_PORT" \
+            deployment/compose.yaml deploy.env "$target:$DEPLOY_PATH/"
+
+      - name: Migrate and restart
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          target="$SSH_USER@$SSH_HOST"
+          # The registry credential is this run's token: short-lived, and
+          # re-established by every deploy. The box never holds a long-lived
+          # one, and the images it already pulled keep working without it.
+          printf '%s' "$GHCR_TOKEN" | ssh -i ~/.ssh/id_deploy -p "$SSH_PORT" "$target" \
+            "docker login ghcr.io --username '${{ github.actor }}' --password-stdin"
+          ssh -i ~/.ssh/id_deploy -p "$SSH_PORT" "$target" \
+            "DEPLOY_PATH='$DEPLOY_PATH' bash -euo pipefail" <<'REMOTE'
+            cd "$DEPLOY_PATH"
+            mv deploy.env .env
+            chmod 600 .env
+            docker compose pull --quiet
+            # Migrations run to completion before anything is restarted: a
+            # failure here leaves the previous API serving the old schema
+            # rather than restarting it against a half-migrated database.
+            # `run` starts the database first and waits for it to be healthy.
+            docker compose run --rm migrate
+            docker compose up --detach --wait --remove-orphans
+            docker compose ps
+            docker image prune -f --filter 'until=168h'
+          REMOTE
+
+      - name: Verify the deploy answers
+        run: |
+          for attempt in $(seq 1 20); do
+            if curl -fsS --max-time 5 "$APP_URL/api/health" | grep -q '"ok"'; then
+              echo "healthy after $attempt attempt(s)"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::$APP_URL/api/health never became healthy"
+          exit 1

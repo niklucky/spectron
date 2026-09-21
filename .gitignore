@@ -8,3 +8,9 @@ dist/
 .DS_Store
 
 data/
+
+# The deploy key lives beside the provisioning scripts. Only the public half
+# is ever committed; the private half goes to GitHub as SSH_PRIVATE_KEY.
+deployment/deploy_key
+deployment/*_id_rsa
+deployment/*_id_ed25519
