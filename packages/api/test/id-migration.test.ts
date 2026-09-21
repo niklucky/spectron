@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import { test } from "node:test";
 import { createDatabase } from "@spectron/db";
 import { createProjectService } from "@spectron/backend";
@@ -36,6 +36,15 @@ test("NanoID migration preserves legacy records, references and access", async (
   await pool.query("COMMIT");
   await migration("0005_tricky_smiling_tiger");
   await migration("0006_nasty_puma");
+  // The rest, in order. The point of this test is that records written before
+  // the NanoID migration survive it and stay usable by current code — and
+  // "current code" queries columns that later migrations add, so stopping at
+  // 0006 tests the services against a schema they no longer target.
+  const folder = new URL("../../db/migrations/", import.meta.url);
+  const rest = (await readdir(folder))
+    .filter((file) => file.endsWith(".sql") && file > "0006_nasty_puma.sql")
+    .sort();
+  for (const file of rest) await migration(file.slice(0, -".sql".length));
   const service = createProjectService(db);
   assert.equal((await service.get("legacy-user", projectId)).id, projectId);
   assert.equal((await service.update("legacy-user", projectId, { name: "Still editable", key: "LG" })).name, "Still editable");

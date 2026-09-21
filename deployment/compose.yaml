@@ -1,0 +1,130 @@
+# The production stack for spectron.dev.
+#
+# Shipped to /opt/spectron by .github/workflows/release.yml, which writes the
+# .env beside it. Nothing here is built on the box: every image reference is
+# pinned by the workflow to the commit it verified, so `docker compose up`
+# cannot pull something newer than what passed CI.
+#
+# `name` keeps the project, its network and its container names apart from
+# testron, which shares this host.
+name: spectron
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      # getDatabaseURL() in packages/db hardcodes the spectron role and
+      # database when it assembles a URL from DATABASE_HOST, so these are not
+      # configurable without changing that too.
+      POSTGRES_DB: spectron
+      POSTGRES_USER: spectron
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    # On the host, so the cluster outlives `compose down -v` and is somewhere
+    # a backup can find it.
+    volumes:
+      - ${DB_DATA:-/data/spectron/db}:/var/lib/postgresql/data
+    # Loopback only: for psql over an SSH tunnel, nothing else.
+    ports:
+      - '127.0.0.1:${DB_PORT:-4502}:5432'
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U spectron -d spectron']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # One-shot, and held behind a profile so `up` never starts it. The deploy
+  # runs it with `compose run` between the database and the API: a migration
+  # that fails stops the deploy with the previous API still serving, rather
+  # than restarting the API against a half-migrated schema.
+  migrate:
+    image: ${API_IMAGE:?API_IMAGE is required}
+    profiles: ['tools']
+    command: ['pnpm', 'db:migrate']
+    environment:
+      DATABASE_HOST: db
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: 'no'
+
+  api:
+    image: ${API_IMAGE:?API_IMAGE is required}
+    restart: unless-stopped
+    environment:
+      DATABASE_HOST: db
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      APP_URL: ${APP_URL:?APP_URL is required (the public https origin of the app)}
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?BETTER_AUTH_SECRET is required}
+      # Fall back to BETTER_AUTH_SECRET, as the API itself does. Both are
+      # stable-or-nothing: rotating one invalidates stored credentials.
+      INTEGRATION_SECRET: ${INTEGRATION_SECRET:-}
+      INTEGRATION_ENCRYPTION_KEY: ${INTEGRATION_ENCRYPTION_KEY:-}
+      AI_CREDENTIAL_SECRET: ${AI_CREDENTIAL_SECRET:-}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      EMAIL_FROM: ${EMAIL_FROM:-}
+      GIT_PROVIDER_DNS: ${GIT_PROVIDER_DNS:-system}
+      GITLAB_ALLOWED_PRIVATE_ORIGINS: ${GITLAB_ALLOWED_PRIVATE_ORIGINS:-}
+      PROJECT_LOGO_DNS: ${PROJECT_LOGO_DNS:-system}
+      # nginx in the app container serves the bytes after the API authorises
+      # the request, via X-Accel-Redirect into /_protected_files/.
+      FILES_ROOT: /data/files
+      FILE_DELIVERY: nginx
+      FILES_MAX_BYTES: ${FILES_MAX_BYTES:-52428800}
+      # Two reverse proxies are in front (host nginx, then the app container),
+      # so the client address has to come from the forwarded headers.
+      TRUST_PROXY: 'true'
+    # uid/gid 1000 is `node` in the image. Provisioning chowns the host files
+    # directory to match, which a bind mount would otherwise not respect.
+    user: '1000:1000'
+    volumes:
+      - ${FILES_DATA:-/data/spectron/files}:/data/files
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:3001/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  # The SPA. Its own nginx serves the bundle, proxies /api/ to the api
+  # service, and owns the /_protected_files/ internal location — which is why
+  # the same files directory is mounted here read-only.
+  app:
+    image: ${APP_IMAGE:?APP_IMAGE is required}
+    restart: unless-stopped
+    ports:
+      - '127.0.0.1:${APP_PORT:-4500}:80'
+    volumes:
+      - ${FILES_DATA:-/data/spectron/files}:/data/files:ro
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -q -O /dev/null http://127.0.0.1/ || exit 1']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+  # The marketing site at the apex. Static, no API.
+  web:
+    image: ${WEB_IMAGE:?WEB_IMAGE is required}
+    restart: unless-stopped
+    ports:
+      - '127.0.0.1:${WEB_PORT:-4501}:80'
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -q -O /dev/null http://127.0.0.1/ || exit 1']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
