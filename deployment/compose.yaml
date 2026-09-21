@@ -12,6 +12,7 @@ name: spectron
 services:
   db:
     image: postgres:17-alpine
+    container_name: spectron-db
     restart: unless-stopped
     environment:
       # getDatabaseURL() in packages/db hardcodes the spectron role and
@@ -49,8 +50,12 @@ services:
         condition: service_healthy
     restart: 'no'
 
+  # The API, the SPA and the attachment downloads are one process: the image
+  # carries the built app and the server hands back index.html for every
+  # client-side route. The host nginx terminates TLS and proxies here.
   api:
     image: ${API_IMAGE:?API_IMAGE is required}
+    container_name: spectron-api
     restart: unless-stopped
     environment:
       DATABASE_HOST: db
@@ -67,17 +72,24 @@ services:
       GIT_PROVIDER_DNS: ${GIT_PROVIDER_DNS:-system}
       GITLAB_ALLOWED_PRIVATE_ORIGINS: ${GITLAB_ALLOWED_PRIVATE_ORIGINS:-}
       PROJECT_LOGO_DNS: ${PROJECT_LOGO_DNS:-system}
-      # nginx in the app container serves the bytes after the API authorises
-      # the request, via X-Accel-Redirect into /_protected_files/.
       FILES_ROOT: /data/files
-      FILE_DELIVERY: nginx
+      # There is no longer an nginx beside the API to hand an X-Accel-Redirect
+      # to, so the API streams attachments itself. That path is complete —
+      # ETags, conditional requests and byte ranges — it just does not get
+      # sendfile. Switching back to `nginx` means giving the host nginx an
+      # internal /_protected_files/ location over FILES_DATA.
+      FILE_DELIVERY: stream
       FILES_MAX_BYTES: ${FILES_MAX_BYTES:-52428800}
-      # Two reverse proxies are in front (host nginx, then the app container),
-      # so the client address has to come from the forwarded headers.
+      # The host nginx is in front, so the client address has to come from
+      # the forwarded headers rather than the socket.
       TRUST_PROXY: 'true'
+      # Where `pnpm --filter @spectron/app build` put the bundle in the image.
+      STATIC_ROOT: /workspace/apps/app/dist
     # uid/gid 1000 is `node` in the image. Provisioning chowns the host files
     # directory to match, which a bind mount would otherwise not respect.
     user: '1000:1000'
+    ports:
+      - '127.0.0.1:${APP_PORT:-4500}:3001'
     volumes:
       - ${FILES_DATA:-/data/spectron/files}:/data/files
     depends_on:
@@ -96,29 +108,10 @@ services:
       retries: 10
       start_period: 20s
 
-  # The SPA. Its own nginx serves the bundle, proxies /api/ to the api
-  # service, and owns the /_protected_files/ internal location — which is why
-  # the same files directory is mounted here read-only.
-  app:
-    image: ${APP_IMAGE:?APP_IMAGE is required}
-    restart: unless-stopped
-    ports:
-      - '127.0.0.1:${APP_PORT:-4500}:80'
-    volumes:
-      - ${FILES_DATA:-/data/spectron/files}:/data/files:ro
-    depends_on:
-      api:
-        condition: service_healthy
-    healthcheck:
-      test: ['CMD-SHELL', 'wget -q -O /dev/null http://127.0.0.1/ || exit 1']
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 5s
-
   # The marketing site at the apex. Static, no API.
   web:
     image: ${WEB_IMAGE:?WEB_IMAGE is required}
+    container_name: spectron-web
     restart: unless-stopped
     ports:
       - '127.0.0.1:${WEB_PORT:-4501}:80'

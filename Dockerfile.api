@@ -3,8 +3,12 @@ WORKDIR /workspace
 RUN npm install --global pnpm@9.15.0
 COPY --chown=node:node . .
 RUN pnpm install --frozen-lockfile
+# The built SPA ships inside this image and is served by the API process, so
+# production runs one container instead of an API and an nginx beside it.
+RUN pnpm --filter @spectron/app build
 ENV NODE_ENV=production
 ENV API_HOST=0.0.0.0
+ENV STATIC_ROOT=/workspace/apps/app/dist
 USER node
 EXPOSE 3001
 CMD ["pnpm", "--filter", "@spectron/api", "start"]

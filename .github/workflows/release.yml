@@ -42,15 +42,11 @@ jobs:
       fail-fast: true
       matrix:
         include:
-          # The API and worker: the whole workspace, run with tsx.
+          # The API, the worker and the built SPA, which this image serves
+          # itself — there is no separate app image.
           - name: api
             file: Dockerfile.api
             build_args: ''
-          # The SPA, and the nginx in front of it that proxies /api/ to the
-          # API container and owns the protected-files location.
-          - name: app
-            file: Dockerfile
-            build_args: APP=app
           # The marketing site.
           - name: web
             file: Dockerfile
@@ -158,7 +154,6 @@ jobs:
           umask 077
           {
             printf 'API_IMAGE=%s/api:%s\n' "$prefix" "$IMAGE_TAG"
-            printf 'APP_IMAGE=%s/app:%s\n' "$prefix" "$IMAGE_TAG"
             printf 'WEB_IMAGE=%s/web:%s\n' "$prefix" "$IMAGE_TAG"
             printf 'POSTGRES_PASSWORD=%s\n' "$POSTGRES_PASSWORD"
             printf 'APP_URL=%s\n' "$APP_URL"

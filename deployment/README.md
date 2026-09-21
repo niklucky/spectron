@@ -5,15 +5,22 @@ its own corner of it: `/opt/spectron` for the stack, `/data/spectron` for the
 data, two nginx sites, and loopback ports 4500–4502. The `github` account is
 the deploy user for both projects and gets one extra authorized key here.
 
-| Hostname             | Serves                        | Container | Loopback |
-| -------------------- | ----------------------------- | --------- | -------- |
-| `spectron.dev`       | the marketing site, `apps/web` | `web`     | `:4501`  |
-| `app.spectron.dev`   | the SPA and `/api`, `apps/app` | `app`     | `:4500`  |
+| Hostname             | Serves                         | Container      | Loopback |
+| -------------------- | ------------------------------ | -------------- | -------- |
+| `spectron.dev`       | the marketing site, `apps/web`  | `spectron-web` | `:4501`  |
+| `app.spectron.dev`   | the SPA and `/api`, `apps/app`  | `spectron-api` | `:4500`  |
 
-Only `app` talks to the API: its own nginx proxies `/api/` to the `api`
-container and owns the `/_protected_files/` location that serves attachments
-after the API has authorised the request. The host nginx terminates TLS and
-proxies to those two ports and nothing else.
+The application is one container. The API image carries the built SPA and the
+API process serves it: `/api` is answered by the router, and every other path
+falls through to `index.html` for client-side routing. Attachments stream from
+the same process — `FILE_DELIVERY` is `stream`, so there is no nginx beside the
+API to hand an `X-Accel-Redirect` to. That path is complete (ETags, conditional
+requests, byte ranges); it only gives up `sendfile`. The code still supports
+`nginx` delivery, so switching back means an internal `/_protected_files/`
+location on the host nginx over `FILES_DATA`, plus making `/data/spectron`
+traversable by `www-data`.
+
+The host nginx terminates TLS and proxies to those two ports, nothing else.
 
 ## Layout
 
