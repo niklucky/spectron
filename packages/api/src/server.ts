@@ -2,6 +2,9 @@ import { createGitWorkflow } from "@spectron/backend";
 import { config } from "dotenv";
 import { fileURLToPath } from "node:url";
 import { serve } from "@hono/node-server";
+import { serveStatic } from "@hono/node-server/serve-static";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { createDatabase, getDatabaseURL } from "@spectron/db";
 import {
   createAuth,
@@ -88,6 +91,45 @@ const stopScheduler = createJiraScheduler(
   ),
 ).start();
 const stopExports = createExportService(db, createJiraService(db, createFileService(db, apiOptions.fileStorage), apiOptions.integrationSecret), createTrackerService(db)).start();
+// Serving the built SPA from this process is what keeps production to a
+// single container: the same server answers /api and hands back index.html
+// for every client-side route. STATIC_ROOT is unset in development, where
+// Vite serves the app and proxies /api here.
+//
+// Registered after every /api route. Hono runs matching handlers in the order
+// they were added and stops at the first that returns without calling next(),
+// so an API route always wins; these only see what it did not answer. The
+// explicit /api/ guard keeps an unknown API path a 404 rather than quietly
+// returning the application shell, which would turn a typo in a fetch URL
+// into an HTML body where JSON was expected.
+const staticRoot = process.env.STATIC_ROOT;
+if (staticRoot) {
+  if (!existsSync(staticRoot))
+    throw new Error(
+      `STATIC_ROOT is ${staticRoot}, which does not exist. Build the app first.`,
+    );
+  // Vite fingerprints everything under /assets, so those are immutable. The
+  // shell must not be, or a deploy is invisible until the cache expires.
+  const cacheFor = (path: string, c: { header: (k: string, v: string) => void }) => {
+    c.header(
+      "Cache-Control",
+      path.includes("/assets/")
+        ? "public, max-age=31536000, immutable"
+        : "no-cache",
+    );
+    c.header("Referrer-Policy", "no-referrer");
+  };
+  const asset = serveStatic({ root: staticRoot, onFound: cacheFor });
+  const shell = serveStatic({
+    path: join(staticRoot, "index.html"),
+    onFound: cacheFor,
+  });
+  const notAPI = (handler: typeof asset) => (c: Parameters<typeof asset>[0], next: Parameters<typeof asset>[1]) =>
+    c.req.path.startsWith("/api/") ? next() : handler(c, next);
+  api.use("*", notAPI(asset));
+  api.get("*", notAPI(shell));
+}
+
 const server = serve(
   { fetch: api.fetch, port, hostname: process.env.API_HOST || "127.0.0.1" },
   () => {
