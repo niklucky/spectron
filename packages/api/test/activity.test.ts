@@ -32,6 +32,8 @@ test("Unified issue activity preserves access, history and pagination", async (t
     appURL: origin,
     secret: "issue-integration-test-secret-with-32-characters",
     sendResetEmail: async () => {},
+    sendMagicLinkEmail: async () => {},
+    sendVerificationEmail: async () => {},
   });
   const api = createAPI(auth, { db, appURL: origin });
   const register = async (email: string) => {

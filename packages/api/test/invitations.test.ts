@@ -33,6 +33,8 @@ test("Project invitation lifecycle and archive", async (t) => {
     appURL: origin,
     secret: "project-integration-test-secret-with-32-characters",
     sendResetEmail: async () => {},
+    sendMagicLinkEmail: async () => {},
+    sendVerificationEmail: async () => {},
   });
   const emails: InvitationEmail[] = [];
   let failDelivery = false;

@@ -2,7 +2,7 @@
  * Tailwind v4 entry. Preflight is not imported; the base layer below carries
  * the few resets the app needs. The `screens` layer holds stylesheets of
  * screens that are not yet on the design system (project settings, AI
- * settings, auth, dialogs); it sits below everything so utilities always win.
+ * settings, dialogs); it sits below everything so utilities always win.
  */
 @layer theme, base, screens, components, utilities;
 @import "tailwindcss/theme.css" layer(theme);

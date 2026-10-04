@@ -120,7 +120,7 @@ test("Git project API, identity, defaults, authorization and concurrency", async
   const { db, pool } = createDatabase(url.toString());
   t.after(async () => { await pool.end(); await admin.pool.query(`DROP DATABASE "${databaseName}"`); await admin.pool.end(); });
   await migrateDatabase(db); await migrateDatabase(db);
-  const origin = "http://localhost:5173", auth = createAuth(db, { appURL: origin, secret, sendResetEmail: async () => {} });
+  const origin = "http://localhost:5173", auth = createAuth(db, { appURL: origin, secret, sendResetEmail: async () => {}, sendMagicLinkEmail: async () => {}, sendVerificationEmail: async () => {} });
   let calls = 0, expired = false, rateLimited = false, block: (() => Promise<void>) | null = null;
   const fakeFactory: GitAdapterFactory = (connection, token) => {
     const remote = (id: string): GitRemoteRepository => ({ externalId: id, fullName: `team/repo${id}`, defaultBranch: id === "99" ? null : "main", archived: false, webURL: `${connection.baseURL}/team/repo${id}`, cloneURL: `${connection.baseURL}/team/repo${id}.git` });

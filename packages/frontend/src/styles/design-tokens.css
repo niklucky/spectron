@@ -117,7 +117,7 @@
 
 /*
  * Bridge for the previous token names, still read by screens that are not on
- * the design system yet (project settings, AI settings, auth). Pointing them at
+ * the design system yet (project settings, AI settings). Pointing them at
  * the palette keeps the whole app on one color system until those screens move.
  */
 :root,

@@ -1,5 +1,5 @@
 import { Resend } from "resend";
-import type { ResetEmail } from "./auth";
+import type { MagicLinkEmail, ResetEmail, VerificationEmail } from "./auth";
 
 export function createResetEmailSender(
   apiKey: string | undefined,
@@ -48,5 +48,44 @@ export function createInvitationEmailSender(
       { idempotencyKey: `project-invitation/${invitationId}` },
     );
     if (error) throw new Error("Invitation email could not be sent.");
+  };
+}
+
+export function createMagicLinkEmailSender(
+  apiKey: string | undefined,
+  from: string | undefined,
+) {
+  const resend = apiKey ? new Resend(apiKey) : null;
+  return async ({ to, url }: MagicLinkEmail) => {
+    if (!resend || !from)
+      throw new Error("Login link email requires RESEND_API_KEY and EMAIL_FROM.");
+    const { error } = await resend.emails.send({
+      from,
+      to,
+      subject: "Your Spectron login link",
+      text: `Open this link to log in to Spectron:\n\n${url}\n\nIt expires in 10 minutes, works once, and signs in the device that opens it. If you didn't request it, you can ignore this email.`,
+    });
+    // Do not log the recipient, login URL, API key, or provider response body.
+    if (error) throw new Error("Login link email could not be sent.");
+  };
+}
+
+export function createVerificationEmailSender(
+  apiKey: string | undefined,
+  from: string | undefined,
+) {
+  const resend = apiKey ? new Resend(apiKey) : null;
+  return async ({ to, url }: VerificationEmail) => {
+    if (!resend || !from)
+      throw new Error(
+        "Verification email requires RESEND_API_KEY and EMAIL_FROM.",
+      );
+    const { error } = await resend.emails.send({
+      from,
+      to,
+      subject: "Verify your email for Spectron",
+      text: `Welcome to Spectron. Confirm that this address is yours:\n\n${url}\n\nThe link is valid for 24 hours. Verifying lets you log in with a link sent to this address as well as with your password. If you didn't create an account, you can ignore this email.`,
+    });
+    if (error) throw new Error("Verification email could not be sent.");
   };
 }

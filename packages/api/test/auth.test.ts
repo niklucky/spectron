@@ -2,7 +2,12 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { randomUUID } from "node:crypto";
 import { createDatabase, migrateDatabase } from "@spectron/db";
-import { createAuth, type ResetEmail } from "@spectron/backend";
+import {
+  createAuth,
+  type MagicLinkEmail,
+  type ResetEmail,
+  type VerificationEmail,
+} from "@spectron/backend";
 import { createAPI } from "../src/index";
 
 test("Postgres auth lifecycle", async (t) => {
@@ -23,12 +28,20 @@ test("Postgres auth lifecycle", async (t) => {
   });
   await migrateDatabase(db);
   const sent: ResetEmail[] = [];
+  const links: MagicLinkEmail[] = [];
+  const verifications: VerificationEmail[] = [];
   const origin = "http://localhost:5173";
   const auth = createAuth(db, {
     appURL: origin,
     secret: "integration-test-secret-with-at-least-32-characters",
     sendResetEmail: async (email) => {
       sent.push(email);
+    },
+    sendMagicLinkEmail: async (email) => {
+      links.push(email);
+    },
+    sendVerificationEmail: async (email) => {
+      verifications.push(email);
     },
   });
   const api = createAPI(auth, { db, appURL: origin });
@@ -241,6 +254,134 @@ test("Postgres auth lifecycle", async (t) => {
       400,
     );
   });
+  await t.test("sign-up sends a verification link that proves the address", async () => {
+    await clearLimits();
+    const verifier = "verifier@example.test";
+    const before = verifications.length;
+    assert.equal(
+      (
+        await call("/api/auth/sign-up/email", {
+          name: "Verifier",
+          email: verifier,
+          password,
+        })
+      ).status,
+      200,
+    );
+    assert.equal(verifications.length, before + 1);
+    assert.equal(verifications.at(-1)!.to, verifier);
+    const unverified = await pool.query(
+      "SELECT email_verified FROM users WHERE email = $1",
+      [verifier],
+    );
+    assert.equal(unverified.rows[0]?.email_verified, false);
+    const redirect = await api.request(new URL(verifications.at(-1)!.url).toString());
+    assert.equal(redirect.status, 302);
+    const verified = await pool.query(
+      "SELECT email_verified FROM users WHERE email = $1",
+      [verifier],
+    );
+    assert.equal(verified.rows[0]?.email_verified, true);
+  });
+  await t.test("a login link signs a verified account in once and keeps its password", async () => {
+    await clearLimits();
+    await pool.query("UPDATE users SET email_verified = true WHERE email = $1", [
+      email,
+    ]);
+    const before = links.length;
+    assert.equal(
+      (
+        await call("/api/auth/sign-in/magic-link", {
+          email,
+          callbackURL: "/",
+          errorCallbackURL: "/login",
+        })
+      ).status,
+      200,
+    );
+    assert.equal(links.length, before + 1);
+    assert.equal(links.at(-1)!.to, email);
+    const link = new URL(links.at(-1)!.url);
+    assert.equal(link.pathname, "/api/auth/magic-link/verify");
+    const first = await api.request(link.toString());
+    assert.equal(first.status, 302);
+    assert.equal(new URL(first.headers.get("location")!).pathname, "/");
+    assert.equal(
+      (await call("/api/me", undefined, { cookie: sessionCookie(first) }))
+        .status,
+      200,
+    );
+    const second = await api.request(link.toString());
+    assert.equal(second.status, 302);
+    const failed = new URL(second.headers.get("location")!);
+    assert.equal(failed.pathname, "/login");
+    assert.ok(failed.searchParams.has("error"));
+    assert.equal(
+      (
+        await call("/api/auth/sign-in/email", {
+          email,
+          password: "a new sufficiently long password",
+        })
+      ).status,
+      200,
+    );
+  });
+  await t.test("a login link for a new address creates a verified account", async () => {
+    await clearLimits();
+    const fresh = "newcomer@example.test";
+    assert.equal(
+      (
+        await call("/api/auth/sign-in/magic-link", {
+          email: fresh,
+          name: "newcomer",
+          callbackURL: "/",
+        })
+      ).status,
+      200,
+    );
+    const redirect = await api.request(new URL(links.at(-1)!.url).toString());
+    assert.equal(redirect.status, 302);
+    assert.equal(
+      (
+        await call("/api/me", undefined, { cookie: sessionCookie(redirect) })
+      ).status,
+      200,
+    );
+    const users = await pool.query(
+      "SELECT name, email_verified FROM users WHERE email = $1",
+      [fresh],
+    );
+    assert.equal(users.rows[0]?.name, "newcomer");
+    assert.equal(users.rows[0]?.email_verified, true);
+  });
+  await t.test("a login link on an unverified password account drops the password", async () => {
+    await clearLimits();
+    const squatted = "squatted@example.test";
+    assert.equal(
+      (
+        await call("/api/auth/sign-up/email", {
+          name: "Squatter",
+          email: squatted,
+          password,
+        })
+      ).status,
+      200,
+    );
+    assert.equal(
+      (await call("/api/auth/sign-in/magic-link", { email: squatted, callbackURL: "/" }))
+        .status,
+      200,
+    );
+    const redirect = await api.request(new URL(links.at(-1)!.url).toString());
+    assert.equal(redirect.status, 302);
+    assert.equal(new URL(redirect.headers.get("location")!).pathname, "/");
+    // The pre-existing password no longer opens the account.
+    assert.equal(
+      (await call("/api/auth/sign-in/email", { email: squatted, password }))
+        .status,
+      401,
+    );
+  });
   await t.test(
     "rate limiting survives a new auth instance and ignores spoofed IP headers",
     async () => {
@@ -254,6 +395,8 @@ test("Postgres auth lifecycle", async (t) => {
           appURL: origin,
           secret: "integration-test-secret-with-at-least-32-characters",
           sendResetEmail: async () => {},
+          sendMagicLinkEmail: async () => {},
+          sendVerificationEmail: async () => {},
         }),
         { db, appURL: origin },
       );
@@ -285,6 +428,8 @@ test("Postgres auth lifecycle", async (t) => {
           sendResetEmail: async () => {
             throw new Error("Simulated delivery failure");
           },
+          sendMagicLinkEmail: async () => {},
+          sendVerificationEmail: async () => {},
         }),
         { db, appURL: origin },
       );
@@ -314,6 +459,8 @@ test("Postgres auth lifecycle", async (t) => {
           appURL: secureOrigin,
           secret: "integration-test-secret-with-at-least-32-characters",
           sendResetEmail: async () => {},
+          sendMagicLinkEmail: async () => {},
+          sendVerificationEmail: async () => {},
         }),
         { db, appURL: secureOrigin },
       );

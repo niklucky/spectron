@@ -21,7 +21,6 @@
     "./workspace.css": "./src/workspace.css",
     "./hooks/use-theme": "./src/hooks/use-theme.ts",
     "./components/feature/auth": "./src/components/feature/auth/index.ts",
-    "./auth.css": "./src/auth.css",
     "./components/ui/pill": "./src/components/ui/pill/index.tsx",
     "./components/ui/segmented": "./src/components/ui/segmented/index.tsx",
     "./components/ui/status": "./src/components/ui/status/index.tsx",

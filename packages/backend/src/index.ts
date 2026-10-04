@@ -1,8 +1,20 @@
 export { createAuth } from "./auth";
 export { createAIService, type AIService } from "./ai";
 export type { AICredentialCheck } from "./ai-credentials";
-export type { Auth, AuthConfig, ResetEmail } from "./auth";
-export { createResetEmailSender, createInvitationEmailSender } from "./email";
+export type {
+  Auth,
+  AuthConfig,
+  ResetEmail,
+  MagicLinkEmail,
+  VerificationEmail,
+} from "./auth";
+export { MAGIC_LINK_EXPIRES_IN } from "./auth";
+export {
+  createResetEmailSender,
+  createInvitationEmailSender,
+  createMagicLinkEmailSender,
+  createVerificationEmailSender,
+} from "./email";
 export { createProjectService, ProjectAccessError } from "./projects";
 export type { ProjectService } from "./projects";
 

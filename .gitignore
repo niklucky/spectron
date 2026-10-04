@@ -14,3 +14,6 @@ data/
 deployment/deploy_key
 deployment/*_id_rsa
 deployment/*_id_ed25519
+
+# Production database dumps fetched by deployment/db-snapshot.sh.
+deployment/snapshots/

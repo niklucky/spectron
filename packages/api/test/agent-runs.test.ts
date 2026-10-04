@@ -281,6 +281,8 @@ test("durable agent runs, permissions, snapshots, steering, cancellation and rec
           appURL: origin,
           secret,
           sendResetEmail: async () => {},
+          sendMagicLinkEmail: async () => {},
+          sendVerificationEmail: async () => {},
         }),
         { db, appURL: origin },
       );

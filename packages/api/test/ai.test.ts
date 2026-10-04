@@ -134,6 +134,8 @@ test("AI account endpoints, credential replacement and project-specific sharing"
     appURL: origin,
     secret,
     sendResetEmail: async () => {},
+    sendMagicLinkEmail: async () => {},
+    sendVerificationEmail: async () => {},
   });
   const checkedKeys: string[] = [];
   let onCheck: () => Promise<void> = async () => {};

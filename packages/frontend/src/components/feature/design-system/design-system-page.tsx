@@ -4,6 +4,7 @@ import { Avatar } from "../../ui/avatar";
 import { UserInfo } from "../../ui/avatar/user-info";
 import { Button, IconButton } from "../../ui/button";
 import { Icon, type IconName } from "../../ui/icon";
+import { PasswordInput, PasswordStrength } from "../../ui/input";
 import { Menu } from "../../ui/menu";
 import { Pill, Badge, Chip } from "../../ui/pill";
 import { Segmented } from "../../ui/segmented";
@@ -120,6 +121,7 @@ export function DesignSystemPage() {
   const { theme, setTheme, palette, setPalette } = useTheme();
   const [view, setView] = useState<"simple" | "dev">("dev");
   const [seg, setSeg] = useState<"all" | "mine" | "unread">("all");
+  const [pw, setPw] = useState("");
   const [tab, setTab] = useState<"checks" | "changes" | "activity">("checks");
   const [section, setSection] = useState<"overview" | "wiki" | "issues" | "board" | "gantt" | "settings">("issues");
   const iconNames: IconName[] = [
@@ -228,6 +230,10 @@ export function DesignSystemPage() {
             <input className="h-8 w-64 rounded-md bg-surface px-2.5 text-base text-ink hairline placeholder:text-ink-3 focus:border-line focus:outline-none" placeholder="Search issues" />
             <select className="h-8 rounded-md bg-surface px-2 text-base text-ink hairline focus:outline-none"><option>In progress</option><option>Done</option></select>
             <label className="inline-flex items-center gap-2 text-base"><input type="checkbox" defaultChecked className="accent-accent" />Include deleted</label>
+          </Row>
+          <Row label="Password">
+            <div className="flex w-64 flex-col gap-1.5"><PasswordInput inputSize="lg" placeholder="New password" value={pw} onChange={(e) => setPw(e.currentTarget.value)} /><PasswordStrength password={pw} min={8} /></div>
+            <PasswordInput placeholder="Current password" className="w-56" />
           </Row>
         </Section>
 

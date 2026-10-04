@@ -7,7 +7,6 @@ import {
 import { useTheme } from "@spectron/frontend/hooks/use-theme";
 import { Button } from "@spectron/frontend/components/ui/button";
 import { authClient } from "./lib/auth-client";
-import "@spectron/frontend/auth.css";
 
 type AuthUser = { id: string; name: string; email: string };
 export function AuthGate({
@@ -26,17 +25,30 @@ export function AuthGate({
       : "login";
   const params = new URLSearchParams(window.location.search);
   const token = params.get("token");
+  const continueHash = /^#invite\/[a-f0-9]{64}$/.test(window.location.hash)
+    ? window.location.hash
+    : "";
+  // The magic-link verifier redirects here with ?error= when a link is stale.
+  const linkError =
+    mode === "login" && params.has("error")
+      ? "That login link has expired or was already used. Request a new one."
+      : "";
   if (isPending)
     return (
-      <main className="auth-loading" role="status">
+      <main
+        className="grid h-dvh place-content-center bg-surface text-ink-2"
+        role="status"
+      >
         Loading workspace…
       </main>
     );
   if (error)
     return (
-      <main className="auth-loading">
+      <main className="grid h-dvh place-content-center gap-4 bg-surface text-ink-2">
         <p role="alert">Couldn’t connect to Spectron.</p>
-        <Button onClick={() => void refetch()}>Try again</Button>
+        <Button variant="primary" onClick={() => void refetch()}>
+          Try again
+        </Button>
       </main>
     );
   if (data && mode !== "reset-password")
@@ -78,16 +90,30 @@ export function AuthGate({
     if (mode === "reset-password")
       window.history.replaceState(null, "", "/reset-password");
   }
+  async function sendMagicLink(email: string) {
+    const result = await authClient.signIn.magicLink({
+      email,
+      // Only used when the address is new: a readable name until they edit it.
+      name: email.split("@")[0] || email,
+      callbackURL: `/${continueHash}`,
+      errorCallbackURL: "/login",
+    });
+    if (result.error) {
+      if (result.error.status === 429)
+        throw new Error(
+          "Too many attempts. Please wait a minute and try again.",
+        );
+      throw new Error("The login link couldn’t be sent. Please try again.");
+    }
+  }
   return (
     <AuthScreen
       key={mode}
       mode={mode}
-      continueHash={
-        /^#invite\/[a-f0-9]{64}$/.test(window.location.hash)
-          ? window.location.hash
-          : ""
-      }
+      continueHash={continueHash}
+      notice={linkError}
       onSubmit={submit}
+      onMagicLink={sendMagicLink}
       invalidReset={
         mode === "reset-password" && (!token || params.has("error"))
       }

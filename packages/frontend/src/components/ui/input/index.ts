@@ -1,2 +1,2 @@
-export { Input, Textarea, Select, Field } from "./input";
-export type { InputProps, TextareaProps, SelectProps } from "./input";
+export { Input, PasswordInput, PasswordStrength, Textarea, Select, Field } from "./input";
+export type { InputProps, InputSize, TextareaProps, SelectProps } from "./input";

@@ -27,6 +27,8 @@ test("Project tRPC endpoints and membership isolation", async (t) => {
     appURL: origin,
     secret: "project-integration-test-secret-with-32-characters",
     sendResetEmail: async () => {},
+    sendMagicLinkEmail: async () => {},
+    sendVerificationEmail: async () => {},
   });
   const api = createAPI(auth, { db, appURL: origin });
   const register = async (email: string) => {

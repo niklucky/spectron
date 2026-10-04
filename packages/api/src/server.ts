@@ -15,6 +15,8 @@ import {
   createJiraService,
   createJiraScheduler,
   createResetEmailSender,
+  createMagicLinkEmailSender,
+  createVerificationEmailSender,
   createInvitationEmailSender,
 } from "@spectron/backend";
 import { createAPI } from "./index";
@@ -41,7 +43,7 @@ if (!Number.isInteger(port) || port < 1 || port > 65535)
   throw new Error("Invalid API_PORT.");
 if (!RESEND_API_KEY || !EMAIL_FROM)
   console.warn(
-    "Password reset email is unavailable until RESEND_API_KEY and EMAIL_FROM are configured.",
+    "Password reset, verification and login link emails are unavailable until RESEND_API_KEY and EMAIL_FROM are configured.",
   );
 const { db, pool } = createDatabase(getDatabaseURL());
 await pool.query("SELECT 1");
@@ -49,6 +51,8 @@ const auth = createAuth(db, {
   appURL: APP_URL,
   secret: BETTER_AUTH_SECRET,
   sendResetEmail: createResetEmailSender(RESEND_API_KEY, EMAIL_FROM),
+  sendMagicLinkEmail: createMagicLinkEmailSender(RESEND_API_KEY, EMAIL_FROM),
+  sendVerificationEmail: createVerificationEmailSender(RESEND_API_KEY, EMAIL_FROM),
 });
 const apiOptions = {
   db,

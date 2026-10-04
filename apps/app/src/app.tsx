@@ -43,7 +43,10 @@ import {
   type ProjectSection,
 } from "@spectron/frontend/components/feature/project";
 import { InvitationPage } from "./invitation-page";
-import { DesignSystemPage } from "@spectron/frontend/components/feature/design-system";
+import {
+  AuthPreview,
+  DesignSystemPage,
+} from "@spectron/frontend/components/feature/design-system";
 import { useProjects } from "./hooks/use-projects";
 import { useWorkspace } from "./hooks/use-workspace";
 import { AuthGate } from "./auth-gate";
@@ -58,6 +61,7 @@ export function App() {
     window.addEventListener("hashchange", change);
     return () => window.removeEventListener("hashchange", change);
   }, []);
+  if (hash.startsWith("#design/auth")) return <AuthPreview hash={hash} />;
   if (hash.startsWith("#design")) return <DesignSystemPage />;
   return (
     <HotkeysProvider defaultOptions={{ hotkey: { preventDefault: true } }}>

@@ -39,6 +39,8 @@ test("File uploads, reusable attachments and authorized delivery", async (t) => 
     appURL: origin,
     secret: "file-integration-test-secret-with-32-characters",
     sendResetEmail: async () => {},
+    sendMagicLinkEmail: async () => {},
+    sendVerificationEmail: async () => {},
   });
   const api = createAPI(auth, {
     db,
