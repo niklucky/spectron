@@ -1,5 +1,9 @@
 import { useEffect, useState } from "react";
 import { Button } from "../../ui/button";
+import { Icon } from "../../ui/icon";
+import { Pill } from "../../ui/pill";
+import { cn } from "../../ui/cn";
+import { formatDateTime } from "../../../lib/date-format";
 
 export type IntegrationSummary = {
   id?: string;
@@ -12,13 +16,27 @@ export type IntegrationSummary = {
   connectedAt?: string;
   lastSyncAt: string | null;
 };
-const providers = [
-  { id: "jira", name: "Jira Cloud", description: "Connect your Jira project and sync issues.", available: true, mark: "J" },
-  { id: "yandex", name: "Yandex Tracker", description: "Connect a queue and sync your team's work.", available: true, mark: "Y" },
-  { id: "gitlab", name: "GitLab", description: "Connect repositories from your self-hosted instance.", available: true, mark: "GL" },
-  { id: "github", name: "GitHub", description: "Choose repositories for your project’s agents.", available: true, mark: "GH" },
-];
-const date = (value?: string | null) => value ? new Date(value).toLocaleString() : "—";
+export const integrationProviders = [
+  { id: "jira", name: "Jira Cloud", description: "Import a Jira project, map its people and fields, export changes back." },
+  { id: "yandex", name: "Yandex Tracker", description: "Connect a queue and sync your team’s work." },
+  { id: "gitlab", name: "GitLab", description: "Repositories from your own GitLab instance, for agents." },
+  { id: "github", name: "GitHub", description: "Repositories your project’s agents can work in." },
+] as const;
+export const integrationName = (provider: string) =>
+  integrationProviders.find((p) => p.id === provider)?.name ?? provider;
+
+function host(url: string) {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
+  }
+}
+function lastSync(connection: IntegrationSummary) {
+  if (connection.provider === "github" || connection.provider === "gitlab") return null;
+  if (connection.provider === "yandex") return null;
+  return connection.lastSyncAt ? `Last sync ${formatDateTime(connection.lastSyncAt)}` : "Never synced";
+}
 
 export function IntegrationOverview({ owner, load, onSelect }: {
   owner: boolean;
@@ -39,33 +57,107 @@ export function IntegrationOverview({ owner, load, onSelect }: {
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [load, owner, revision]);
-  if (!owner) return <p className="muted">Only the project owner can manage integrations.</p>;
-  return <div className="integration-overview">
-    <div><h2>Integrations</h2><p className="muted">Manage connected services and discover integrations for this project.</p></div>
-    <section aria-labelledby="connected-heading">
-      <h3 id="connected-heading">Connected {!loading && !error && <span className="integration-count">{connections.length}</span>}</h3>
-      {loading ? <p role="status" className="integration-empty">Loading integrations…</p> : error ? <div role="alert" className="project-error">{error} <Button variant="ghost" onClick={() => setRevision(v => v + 1)}>Retry</Button></div> : connections.length ? <div className="integration-connections">{connections.map((connection) => <article className="integration-connection-card" key={connection.id ?? connection.provider} onClick={() => onSelect(connection.provider)}>
-        <div className="integration-connection-brand"><IntegrationLogo provider={connection.provider} /><div><button className="integration-name" onClick={() => onSelect(connection.provider)}>{connection.name}</button><span className="integration-status">{connection.status ?? "Connected"}</span></div></div>
-        <div className="integration-connection-cell"><span className="muted">Key</span><span>{connection.key}</span></div>
-        <div className="integration-connection-cell"><span className="muted">Site</span><a href={connection.url} target="_blank" rel="noreferrer" onClick={event => event.stopPropagation()}>{new URL(connection.url).host}</a></div>
-        <div className="integration-connection-cell"><span className="muted">{connection.provider === "yandex" ? "Organization" : "Account"}</span><span>{connection.account}</span></div>
-        <div className="integration-connection-cell"><span className="muted">Connected at</span><span>{date(connection.connectedAt)}</span></div>
-        <div className="integration-connection-cell"><span className="muted">Last sync at</span><span title={connection.provider === "github" || connection.provider === "gitlab" ? "Git activity synchronization is not enabled" : connection.provider === "yandex" ? "Sync time is not recorded yet" : "Latest successfully imported issue"}>{connection.provider === "github" || connection.provider === "gitlab" ? "Not enabled" : connection.provider === "yandex" ? "Not recorded" : connection.lastSyncAt ? date(connection.lastSyncAt) : "Never"}</span></div>
-        <Button variant="ghost" onClick={() => onSelect(connection.provider)} aria-label={`Edit ${connection.name}`}>Edit →</Button>
-      </article>)}</div> : <p className="integration-empty muted">No integrations connected yet. Choose a service below to get started.</p>}
-    </section>
-    <section aria-labelledby="available-heading"><h3 id="available-heading">Available</h3><div className="integration-catalog">
-      {providers.filter(provider => !connections.some(c => c.provider === provider.id)).map(provider => <button key={provider.id} className="integration-card" disabled={!provider.available || loading || !!error} onClick={() => onSelect(provider.id)}>
-        <IntegrationLogo provider={provider.id} />
-        <strong>{provider.name}</strong><span className="muted">{provider.description}</span><span className="integration-card-action">{provider.available ? "Connect →" : "Coming soon"}</span>
-      </button>)}
-    </div></section>
-  </div>;
+  if (!owner) return <p className="text-sm text-ink-2">Only the project owner can manage integrations.</p>;
+  const available = integrationProviders.filter((provider) => !connections.some((c) => c.provider === provider.id));
+  return (
+    <div className="flex flex-col gap-8">
+      <section aria-labelledby="connected-heading" className="flex flex-col gap-2">
+        <h3 id="connected-heading" className="label-caps">Connected</h3>
+        {loading ? (
+          <p role="status" className="py-3 text-sm text-ink-3">Loading integrations…</p>
+        ) : error ? (
+          <p role="alert" className="flex items-center gap-2 text-sm text-bad">
+            {error}
+            <Button variant="ghost" size="sm" onClick={() => setRevision((v) => v + 1)}>Retry</Button>
+          </p>
+        ) : connections.length ? (
+          <ul className="overflow-hidden rounded-xl hairline">
+            {connections.map((connection) => {
+              const meta = [host(connection.url), connection.account, lastSync(connection)].filter(Boolean).join(" · ");
+              return (
+                <li key={connection.id ?? connection.provider} className="[&+&]:hairline-t">
+                  <button
+                    type="button"
+                    onClick={() => onSelect(connection.provider)}
+                    className="flex w-full items-center gap-3 px-3 py-3 text-left transition-colors hover:bg-surface-2"
+                  >
+                    <IntegrationLogo provider={connection.provider} />
+                    <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                      <span className="flex items-center gap-2">
+                        <span className="truncate text-base font-medium text-ink">{connection.name}</span>
+                        <Pill tone="ok">{connection.status ?? "Connected"}</Pill>
+                      </span>
+                      <span className="truncate text-sm text-ink-2">{meta}</span>
+                    </span>
+                    <span className="flex shrink-0 items-center gap-1 text-sm text-ink-3">
+                      Manage <Icon name="chevron-right" size={14} />
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        ) : (
+          <p className="rounded-xl border border-dashed border-line px-4 py-5 text-sm text-ink-2">
+            Nothing connected yet. Pick a service below.
+          </p>
+        )}
+      </section>
+      {!!available.length && (
+        <section aria-labelledby="available-heading" className="flex flex-col gap-2">
+          <h3 id="available-heading" className="label-caps">Available</h3>
+          <ul className="flex flex-col">
+            {available.map((provider) => (
+              <li key={provider.id} className="[&+&]:hairline-t">
+                <button
+                  type="button"
+                  disabled={loading || !!error}
+                  onClick={() => onSelect(provider.id)}
+                  className="group flex w-full items-center gap-3 rounded-lg px-2 py-2.5 text-left transition-colors enabled:hover:bg-surface-2 disabled:opacity-60"
+                >
+                  <IntegrationLogo provider={provider.id} size="sm" />
+                  <span className="flex min-w-0 flex-1 flex-col">
+                    <span className="text-sm font-medium text-ink">{provider.name}</span>
+                    <span className="truncate text-sm text-ink-2">{provider.description}</span>
+                  </span>
+                  <span className="flex shrink-0 items-center gap-1 text-sm text-ink-3 group-enabled:group-hover:text-ink">
+                    Connect <Icon name="chevron-right" size={14} />
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+    </div>
+  );
 }
 
-export function IntegrationLogo({ provider }: { provider: string }) {
-  if (provider === "github") return <span className="integration-logo" aria-hidden="true"><img className="integration-logo-light" src="/assets/integrations/github-black.svg" alt="" /><img className="integration-logo-dark" src="/assets/integrations/github-white.svg" alt="" /></span>;
-  if (provider === "gitlab") return <span className="integration-logo integration-logo-gitlab" aria-hidden="true"><img src="/assets/integrations/gitlab.svg" alt="" /></span>;
-  if (provider === "jira" || provider === "yandex") return <img className="integration-logo" src={`/assets/integrations/${provider}.svg`} alt="" />;
-  return <span className="integration-mark" aria-hidden="true">Y</span>;
+export function IntegrationLogo({ provider, size = "md", className = "" }: { provider: string; size?: "sm" | "md"; className?: string }) {
+  const box = cn("relative inline-block shrink-0 overflow-hidden", size === "sm" ? "size-7" : "size-9", className);
+  const img = "absolute inset-0 size-full object-contain";
+  if (provider === "github")
+    return (
+      <span className={box} aria-hidden="true">
+        <img className={cn(img, "dark:hidden")} src="/assets/integrations/github-black.svg" alt="" />
+        <img className={cn(img, "hidden dark:block")} src="/assets/integrations/github-white.svg" alt="" />
+      </span>
+    );
+  if (provider === "gitlab")
+    return (
+      <span className={box} aria-hidden="true">
+        <img className={cn(img, "scale-[2.4]")} src="/assets/integrations/gitlab.svg" alt="" />
+      </span>
+    );
+  if (provider === "jira" || provider === "yandex")
+    return (
+      <span className={box} aria-hidden="true">
+        <img className={img} src={`/assets/integrations/${provider}.svg`} alt="" />
+      </span>
+    );
+  return (
+    <span className={cn(box, "grid place-items-center rounded-lg bg-surface-3 text-xs font-semibold text-ink-2")} aria-hidden="true">
+      {provider.slice(0, 1).toUpperCase()}
+    </span>
+  );
 }

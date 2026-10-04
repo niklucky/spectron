@@ -30,6 +30,7 @@
     "./components/ui/command": "./src/components/ui/command/index.tsx",
     "./components/ui/menu": "./src/components/ui/menu/index.ts",
     "./components/ui/cn": "./src/components/ui/cn.ts",
+    "./components/ui/settings": "./src/components/ui/settings/index.tsx",
     "./components/feature/design-system": "./src/components/feature/design-system/index.ts"
   },
   "scripts": {

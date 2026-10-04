@@ -1,7 +1,5 @@
 import { ExportSettings, type ExportActions } from "./export-settings";
-import { IntegrationTabs, type IntegrationTab } from "./integration-tabs";
 import { IntegrationSyncLog } from "./integration-sync-log";
-import { IntegrationLogo } from "./integration-overview";
 import { useEffect, useRef, useState } from "react";
 import { builtInIssueFields } from "@spectron/shared";
 import type {
@@ -12,8 +10,12 @@ import type {
   IssueSettings,
   ProjectMemberSummary,
 } from "@spectron/shared";
-import { Input, Select } from "../../ui/input";
+import { Field, Input, Select } from "../../ui/input";
 import { Button } from "../../ui/button";
+import { Icon } from "../../ui/icon";
+import { Spinner } from "../../ui/status";
+import { Disclosure, Feedback, Note, SettingsSection } from "../../ui/settings";
+import { formatDateTime } from "../../../lib/date-format";
 export type JiraActions = {
   exports: ExportActions;
   test: (config: JiraConfigInput) => Promise<{ issueTypes: { id: string; name: string }[] }>;
@@ -48,6 +50,7 @@ export type JiraActions = {
     externalId: string,
   ) => Promise<void>;
 };
+type FeedbackScope = "connection" | "mapping" | "sync";
 const connectionConfig = (c: JiraConnection): JiraConfigInput => ({
   baseUrl: c.baseUrl,
   projectKey: c.projectKey,
@@ -95,7 +98,6 @@ export function JiraSettings({
   const [metadataLoading, setMetadataLoading] = useState(false);
   const [metadataError, setMetadataError] = useState("");
   const [testStatus, setTestStatus] = useState<"idle" | "testing" | "success" | "error">("idle");
-  const [tab, setTab] = useState<IntegrationTab>("connection");
   const [issueTypes, setIssueTypes] = useState<{ id: string; name: string }[]>([]);
   const [connection, setConnection] = useState<JiraConnection | null>(null),
     [config, setConfig] = useState<JiraConfigInput>({
@@ -116,6 +118,9 @@ export function JiraSettings({
     [loading, setLoading] = useState(true),
     [error, setError] = useState(""),
     [feedback, setFeedback] = useState(""),
+    // Which section the last operation belonged to, so its outcome shows
+    // beside the controls that triggered it instead of further down the page.
+    [scope, setScope] = useState<FeedbackScope>("connection"),
     [failures, setFailures] = useState<
       { id: string; key: string; error: string }[]
     >([]),
@@ -174,10 +179,11 @@ export function JiraSettings({
     }, 5000);
     return () => clearInterval(timer);
   }, [actions, owner]);
-  async function run(fn: () => Promise<void>) {
+  async function run(fn: () => Promise<void>, where: FeedbackScope = "sync") {
     if (busy) return;
     setBusy(true);
     onBusyChange(true);
+    setScope(where);
     setError("");
     setFeedback("");
     try {
@@ -232,22 +238,26 @@ export function JiraSettings({
     });
   if (!owner)
     return (
-      <p className="muted">
+      <p className="text-sm text-ink-2">
         Only the project owner can manage Jira credentials and synchronization.
       </p>
     );
-  if (loading) return <p role="status">Loading integration…</p>;
+  if (loading) return <p role="status" className="text-sm text-ink-3">Loading integration…</p>;
   return (
-    <div className="integration-settings">
-      <div className="integration-connection-brand"><IntegrationLogo provider="jira" /><h2>Jira Cloud</h2></div>
-      <p className="muted">
-        Connect a Jira project, map its users and fields, then import issues.
-        Configure automatic export in Sync, or send an issue or comment manually.
-      </p>
-      <IntegrationTabs value={tab} onChange={(value) => { setFeedback(""); setError(""); setTab(value); }} busy={busy || exportBusy} connected={!!connection} />
-      <div hidden={tab !== "connection"} className="integration-connection-form">
-      <div className="integration-toolbar"><h3>Credentials</h3>{connection && !editingConnection && <Button variant="ghost" disabled={busy} onClick={() => setEditingConnection(true)}>Edit</Button>}{connection && editingConnection && <Button variant="ghost" disabled={busy} onClick={() => { setConfig(connectionConfig(connection)); setEditingConnection(false); }}>Cancel</Button>}</div>
+    <div className="flex flex-col gap-10">
+      <SettingsSection
+        title="Connection"
+        description="The connected account performs imports and exports. Credentials are encrypted on the server."
+        actions={
+          connection && !editingConnection ? (
+            <Button variant="secondary" size="sm" disabled={busy} onClick={() => setEditingConnection(true)}>Edit</Button>
+          ) : connection && editingConnection ? (
+            <Button variant="ghost" size="sm" disabled={busy} onClick={() => { setConfig(connectionConfig(connection)); setEditingConnection(false); }}>Cancel</Button>
+          ) : undefined
+        }
+      >
       <form
+        className="flex max-w-[440px] flex-col gap-3"
         onSubmit={(e) => {
           e.preventDefault();
           void run(async () => {
@@ -257,12 +267,11 @@ export function JiraSettings({
             setConfig(connectionConfig(c));
             setEditingConnection(false);
             setFeedback("Connection saved.");
-          });
+          }, "connection");
         }}
       >
-        <fieldset disabled={busy || !editingConnection}>
-          <label>
-            Jira site
+        <fieldset disabled={busy || !editingConnection} className="m-0 flex min-w-0 flex-col gap-3 border-0 p-0">
+          <Field label="Jira site">
             <Input
               type="url"
               required
@@ -271,9 +280,8 @@ export function JiraSettings({
               disabled={!!connection}
               onChange={(e) => set("baseUrl", e.target.value)}
             />
-          </label>
-          <label>
-            Jira project key
+          </Field>
+          <Field label="Project key">
             <Input
               required
               placeholder="TEAM"
@@ -281,39 +289,37 @@ export function JiraSettings({
               disabled={!!connection}
               onChange={(e) => set("projectKey", e.target.value.toUpperCase())}
             />
-          </label>
-          <label>
-            Account email
+          </Field>
+          <Field label="Account email">
             <Input
               type="email"
               required
               autoComplete="username"
+              placeholder="you@company.com"
               value={config.email}
               onChange={(e) => set("email", e.target.value)}
             />
-          </label>
-          <label>
-            API token
+          </Field>
+          <Field label="API token" hint="An unscoped Jira API token with access to this project.">
             <Input
               type="password"
               required={!connection}
               autoComplete="new-password"
               placeholder={
                 connection
-                  ? "Leave blank to keep saved token"
-                  : "Jira API token"
+                  ? "Leave blank to keep the saved token"
+                  : "Paste the token"
               }
               value={config.apiToken ?? ""}
               onChange={(e) => set("apiToken", e.target.value)}
             />
-          </label>
-          <p className="muted">
-            Use an unscoped Jira API token with access to this project.
-            Credentials are encrypted on the server.
-          </p>
-          <div className="integration-connection-actions">
+          </Field>
+          <div className="mt-1 flex flex-wrap items-center gap-2">
+          <Button type="submit" variant="primary">
+            {connection ? "Save credentials" : "Connect Jira"}
+          </Button>
           <Button
-            variant="ghost"
+            variant="secondary"
             onClick={() => void run(async () => {
               setTestStatus("testing");
               try {
@@ -325,46 +331,104 @@ export function JiraSettings({
                 setTestStatus("error");
                 throw error;
               }
-            })}
+            }, "connection")}
           >
-            <svg className={`connection-check connection-check-${testStatus}`} width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="m8 12 3 3 5-6" /></svg>
-            {testStatus === "testing" ? "Testing…" : "Test connection"}
-            <span className="connection-test-status">{testStatus === "success" ? "Passed" : testStatus === "error" ? "Failed" : ""}</span>
-          </Button>
-          <Button type="submit">
-            {connection ? "Save credentials" : "Connect Jira"}
+            {testStatus === "testing" ? <Spinner size={13} /> : <Icon name="check-circle" size={14} className={testStatus === "success" ? "text-ok" : testStatus === "error" ? "text-bad" : "text-ink-3"} />}
+            {testStatus === "testing" ? "Testing…" : testStatus === "success" ? "Connection passed" : testStatus === "error" ? "Connection failed" : "Test connection"}
           </Button>
           </div>
         </fieldset>
       </form>
-      </div>
+      {scope === "connection" && <Feedback error={error} feedback={feedback} />}
+      </SettingsSection>
       {connection && (
         <>
-          <div hidden={tab !== "sync"} className="integration-panel">
-          <div className="integration-toolbar"><h3>Automatic import</h3>{!editingSchedule ? <Button variant="ghost" disabled={busy} onClick={() => { setScheduleDraft(connection.scheduleMinutes as 15 | 60 | 1440 | null); setEditingSchedule(true); }}>Edit</Button> : <><Button variant="ghost" disabled={busy} onClick={() => setEditingSchedule(false)}>Cancel</Button><Button disabled={busy} onClick={() => void run(async () => { setConnection(await actions.schedule(scheduleDraft)); setEditingSchedule(false); setFeedback("Import schedule saved."); })}>Save</Button></>}</div>
-          <label>Schedule<Select disabled={busy || !editingSchedule} value={(editingSchedule ? scheduleDraft : connection.scheduleMinutes) ?? ""} onChange={e => setScheduleDraft(e.target.value ? Number(e.target.value) as 15 | 60 | 1440 : null)}><option value="">Off</option><option value="15">Every 15 minutes</option><option value="60">Every hour</option><option value="1440">Every day</option></Select></label>
-          <p className="integration-help">
-            The first scheduled run imports all issues; later runs fetch issues
-            updated since the last successful run, with a five-minute overlap.
-            Full import below always scans all issues using saved mappings and
-            the same conflict checks. Disabling the schedule prevents future
-            runs; use Stop import to cancel the current run.
-          </p>
-          {connection.nextImportAt && (
-            <p>
-              Next scheduled import:{" "}
-              {new Date(connection.nextImportAt).toLocaleString()}
-            </p>
-          )}
-          {connection.lastScheduledAt && (
-            <p>
-              Last scheduled import:{" "}
-              {new Date(connection.lastScheduledAt).toLocaleString()} —{" "}
-              {connection.lastScheduleResult}
-            </p>
-          )}
-          <div className="integration-toolbar">
+          <SettingsSection
+            title="Field mapping"
+            description="How Jira statuses, priorities, types, fields and people correspond to this project."
+            actions={<>
+            <Button variant="ghost" size="sm" disabled={busy || metadataLoading || editingMappings} onClick={() => void run(loadMetadata, "mapping")}>Refresh Jira options</Button>
+            {!editingMappings ? <Button variant="secondary" size="sm" disabled={busy} onClick={() => setEditingMappings(true)}>Edit</Button> : <>
+              <Button variant="ghost" size="sm" disabled={busy} onClick={() => { setMappings(connection.mappings); setConfig(connectionConfig(connection)); setEditingMappings(false); }}>Cancel</Button>
+              <Button variant="primary" size="sm" disabled={busy} onClick={() => void run(async () => {
+                if (config.issueTypeId !== connection.issueTypeId) {
+                  const saved = await actions.save({ ...connectionConfig(connection), issueTypeId: config.issueTypeId });
+                  setConnection(saved);
+                }
+                await actions.mappings(mappings);
+                setConnection(c => c ? { ...c, mappings } : c);
+                setSettings(await actions.settings());
+                setEditingMappings(false);
+                setFeedback("Mappings saved.");
+              }, "mapping")}>Save</Button>
+            </>}
+            </>}
+          >
+          {metadataLoading && <p role="status" className="text-sm text-ink-3">Refreshing Jira options… Saved mappings are shown below.</p>}
+          {metadataError && <p role="status" className="text-sm text-warn">Could not refresh Jira options: {metadataError}. Saved mappings remain available.</p>}
+          <div className="flex flex-col gap-2">
+          {(["statuses", "priorities", "issueTypes", "fields", "users"] as const).map(kind => {
+            const remote = kind === "users"
+              ? [...(settings.externalIdentities ?? []).map(i => ({ id: i.externalId, name: i.displayName })), ...(metadata?.users ?? []).map(u => ({ id: u.accountId, name: u.displayName }))]
+              : kind === "issueTypes" ? (metadata?.issueTypes ?? issueTypes) : (metadata?.[kind] ?? []).filter(r => kind !== "fields" || !reserved.has(r.id));
+            const rows = [...new Map([
+              ...Object.keys(mappings[kind] ?? {}).filter(id => kind !== "fields" || !reserved.has(id)).map(id => ({ id, name: id })),
+              ...remote,
+              ...(kind === "fields" ? [{ id: "labels", name: "Labels (tags)" }] : []),
+            ].map(row => [row.id, row])).values()];
+            const options = kind === "statuses" ? settings.states.filter(s => !s.deletedAt)
+              : kind === "priorities" ? settings.priorities.filter(s => !s.deletedAt)
+              : kind === "issueTypes" ? (settings.issueTypes ?? []).filter(s => !s.deletedAt)
+              : kind === "fields" ? [...builtInIssueFields, ...(settings.fields ?? [])] : members;
+            const mapped = rows.filter(row => !!mappings[kind]?.[row.id]).length;
+            return <Disclosure key={kind} summary={kind === "issueTypes" ? "Issue types" : kind[0]!.toUpperCase() + kind.slice(1)} count={`${mapped} / ${metadata ? rows.length : `${rows.length} known`}`}>
+              <fieldset disabled={busy || !editingMappings} className="m-0 flex min-w-0 flex-col gap-3 border-0 p-0">
+                {kind === "users" && <Note>Map Jira users, including imported historical users, to project members. Unlinked users keep their imported attribution and have no login or project access.</Note>}
+                {kind === "fields" && <Note>Unmapped fields are ignored. Mapping labels to Tags replaces issue tags on import and creates missing tags by name.</Note>}
+                <div className="flex max-h-[340px] flex-col gap-2 overflow-auto">{rows.map(row => {
+                  const rowOptions = row.id === "labels" && kind === "fields" ? [{ id: "issue:tags", name: "Tags" }] : options;
+                  const value = mappings[kind]?.[row.id] ?? "";
+                  return <label key={row.id} className="grid grid-cols-[minmax(0,1fr)_minmax(160px,1fr)] items-center gap-3 text-sm text-ink"><span className="truncate" title={row.name}>{row.name}</span><Select aria-label={`Map ${kind} ${row.name}`} value={value} onChange={e => map(kind, row.id, e.target.value)}>
+                    <option value="">{kind === "users" ? "Keep as imported user" : kind === "statuses" || kind === "priorities" ? "Create on import" : "Do not map"}</option>
+                    {value && !rowOptions.some(o => o.id === value) && <option value={value}>{value} (unavailable)</option>}
+                    {rowOptions.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
+                  </Select></label>;
+                })}</div>
+                {!rows.length && <p className="text-sm text-ink-3">No saved mappings{metadata ? " or available Jira options" : "; Jira options have not loaded yet"}.</p>}
+                {kind === "issueTypes" && <Field label="Fallback Jira type" hint="Jira requires a type when creating an issue. Used when the issue has no mapped local type." className="max-w-[320px]"><Select value={config.issueTypeId} onChange={e => set("issueTypeId", e.target.value)}>
+                  {!issueTypes.some(t => t.id === config.issueTypeId) && <option value={config.issueTypeId}>{config.issueTypeId}</option>}
+                  {issueTypes.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                </Select></Field>}
+                {kind === "users" && <div className="flex max-w-[440px] items-center gap-2"><Input aria-label="Historical Jira user account ID" value={accountId} onChange={e => setAccountId(e.target.value)} placeholder="Historical Jira account ID" /><Button variant="secondary" disabled={!accountId.trim()} onClick={() => { setMetadata(m => ({ ...(m ?? { statuses: [], priorities: [], fields: [], issueTypes: [], users: [] }), users: [...(m?.users ?? []), { accountId: accountId.trim(), displayName: accountId.trim() }] })); setAccountId(""); }}>Add user</Button></div>}
+              </fieldset>
+            </Disclosure>;
+          })}
+          </div>
+          {scope === "mapping" && <Feedback error={error} feedback={feedback} />}
+          </SettingsSection>
+          <SettingsSection
+            title="Sync"
+            description="Automatic import brings in issues updated since the last run. A full import scans everything with the saved mappings."
+            actions={!editingSchedule ? (
+              <Button variant="secondary" size="sm" disabled={busy} onClick={() => { setScheduleDraft(connection.scheduleMinutes as 15 | 60 | 1440 | null); setEditingSchedule(true); }}>Edit schedule</Button>
+            ) : (
+              <>
+                <Button variant="ghost" size="sm" disabled={busy} onClick={() => setEditingSchedule(false)}>Cancel</Button>
+                <Button variant="primary" size="sm" disabled={busy} onClick={() => void run(async () => { setConnection(await actions.schedule(scheduleDraft)); setEditingSchedule(false); setFeedback("Import schedule saved."); })}>Save</Button>
+              </>
+            )}
+          >
+          <Field label="Automatic import" className="max-w-[280px]">
+            <Select disabled={busy || !editingSchedule} value={(editingSchedule ? scheduleDraft : connection.scheduleMinutes) ?? ""} onChange={e => setScheduleDraft(e.target.value ? Number(e.target.value) as 15 | 60 | 1440 : null)}><option value="">Off</option><option value="15">Every 15 minutes</option><option value="60">Every hour</option><option value="1440">Every day</option></Select>
+          </Field>
+          <Note>
+            The first scheduled run imports all issues; later runs fetch issues updated since the last successful run, with a five-minute overlap. Turning the schedule off prevents future runs; Stop import cancels the current one.
+            {connection.nextImportAt && <> Next run {formatDateTime(connection.nextImportAt)}.</>}
+            {connection.lastScheduledAt && <> Last run {formatDateTime(connection.lastScheduledAt)}: {connection.lastScheduleResult}.</>}
+          </Note>
+          <div className="flex flex-wrap items-center gap-2">
             <Button
+              variant="secondary"
               disabled={busy}
               onClick={() =>
                 void run(async () => {
@@ -484,87 +548,19 @@ export function JiraSettings({
               </Button>
             )}
           </div>
-          {mappingDirty && (
-            <p className="muted">
-              Import uses saved mappings. Your unsaved mapping edits will not be used.
-            </p>
-          )}
-          {connection.lastImportedAt && (
-            <p className="muted">
-              Last issue imported{" "}
-              {new Date(connection.lastImportedAt).toLocaleString()}
-            </p>
-          )}
-          </div>
-          <div hidden={tab !== "mapping"} className="integration-panel">
-          <div className="integration-toolbar">
-            <h3>Mapping</h3>
-            <Button variant="ghost" disabled={busy || metadataLoading || editingMappings} onClick={() => void run(loadMetadata)}>Refresh Jira options</Button>
-            {!editingMappings ? <Button variant="ghost" disabled={busy} onClick={() => setEditingMappings(true)}>Edit</Button> : <>
-              <Button variant="ghost" disabled={busy} onClick={() => { setMappings(connection.mappings); setConfig(connectionConfig(connection)); setEditingMappings(false); }}>Cancel</Button>
-              <Button disabled={busy} onClick={() => void run(async () => {
-                if (config.issueTypeId !== connection.issueTypeId) {
-                  const saved = await actions.save({ ...connectionConfig(connection), issueTypeId: config.issueTypeId });
-                  setConnection(saved);
-                }
-                await actions.mappings(mappings);
-                setConnection(c => c ? { ...c, mappings } : c);
-                setSettings(await actions.settings());
-                setEditingMappings(false);
-                setFeedback("Mappings saved.");
-              })}>Save</Button>
-            </>}
-          </div>
-          {metadataLoading && <p role="status" className="muted">Refreshing Jira options… Saved mappings are shown below.</p>}
-          {metadataError && <p role="status" className="muted">Could not refresh Jira options: {metadataError}. Saved mappings remain available.</p>}
-          {(["statuses", "priorities", "issueTypes", "fields", "users"] as const).map(kind => {
-            const remote = kind === "users"
-              ? [...(settings.externalIdentities ?? []).map(i => ({ id: i.externalId, name: i.displayName })), ...(metadata?.users ?? []).map(u => ({ id: u.accountId, name: u.displayName }))]
-              : kind === "issueTypes" ? (metadata?.issueTypes ?? issueTypes) : (metadata?.[kind] ?? []).filter(r => kind !== "fields" || !reserved.has(r.id));
-            const rows = [...new Map([
-              ...Object.keys(mappings[kind] ?? {}).filter(id => kind !== "fields" || !reserved.has(id)).map(id => ({ id, name: id })),
-              ...remote,
-              ...(kind === "fields" ? [{ id: "labels", name: "Labels (tags)" }] : []),
-            ].map(row => [row.id, row])).values()];
-            const options = kind === "statuses" ? settings.states.filter(s => !s.deletedAt)
-              : kind === "priorities" ? settings.priorities.filter(s => !s.deletedAt)
-              : kind === "issueTypes" ? (settings.issueTypes ?? []).filter(s => !s.deletedAt)
-              : kind === "fields" ? [...builtInIssueFields, ...(settings.fields ?? [])] : members;
-            const mapped = rows.filter(row => !!mappings[kind]?.[row.id]).length;
-            return <details className="integration-mapping-section" key={kind}>
-              <summary><span>{kind === "issueTypes" ? "Issue types" : kind[0]!.toUpperCase() + kind.slice(1)}</span><span className="integration-mapping-count">{mapped} / {metadata ? rows.length : `${rows.length} known`}</span></summary>
-              <fieldset disabled={busy || !editingMappings}>
-                {kind === "users" && <p className="muted">Map Jira users, including imported historical users, to project members. Unlinked users keep their imported attribution and have no login or project access.</p>}
-                {kind === "fields" && <p className="muted">Unmapped fields are ignored. Mapping labels to Tags replaces issue tags on import and creates missing tags by name.</p>}
-                <div className="integration-mapping">{rows.map(row => {
-                  const rowOptions = row.id === "labels" && kind === "fields" ? [{ id: "issue:tags", name: "Tags" }] : options;
-                  const value = mappings[kind]?.[row.id] ?? "";
-                  return <label key={row.id}><span>{row.name}</span><Select aria-label={`Map ${kind} ${row.name}`} value={value} onChange={e => map(kind, row.id, e.target.value)}>
-                    <option value="">{kind === "users" ? "Keep as imported user" : kind === "statuses" || kind === "priorities" ? "Create on import" : "Do not map"}</option>
-                    {value && !rowOptions.some(o => o.id === value) && <option value={value}>{value} (unavailable)</option>}
-                    {rowOptions.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
-                  </Select></label>;
-                })}</div>
-                {!rows.length && <p className="muted">No saved mappings{metadata ? " or available Jira options" : "; Jira options have not loaded yet"}.</p>}
-                {kind === "issueTypes" && <label>Fallback Jira type<Select value={config.issueTypeId} onChange={e => set("issueTypeId", e.target.value)}>
-                  {!issueTypes.some(t => t.id === config.issueTypeId) && <option value={config.issueTypeId}>{config.issueTypeId}</option>}
-                  {issueTypes.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-                </Select><span className="muted">Jira requires a type when creating an issue. This fallback is used when the issue has no mapped local type.</span></label>}
-                {kind === "users" && <div className="integration-toolbar"><Input aria-label="Historical Jira user account ID" value={accountId} onChange={e => setAccountId(e.target.value)} placeholder="Historical Jira account ID" /><Button variant="ghost" disabled={!accountId.trim()} onClick={() => { setMetadata(m => ({ ...(m ?? { statuses: [], priorities: [], fields: [], issueTypes: [], users: [] }), users: [...(m?.users ?? []), { accountId: accountId.trim(), displayName: accountId.trim() }] })); setAccountId(""); }}>Add user</Button></div>}
-              </fieldset>
-            </details>;
-          })}
-          </div>
-          <div hidden={tab !== "sync"} className="integration-panel">
+          {mappingDirty && <Note>Import uses saved mappings. Unsaved mapping edits are not used.</Note>}
+          {connection.lastImportedAt && <Note>Last issue imported {formatDateTime(connection.lastImportedAt)}.</Note>}
+          {scope === "sync" && <Feedback error={error} feedback={feedback} />}
+          </SettingsSection>
           {!!pending.length && (
-            <>
-              <div className="integration-toolbar"><h3>Creates needing reconciliation</h3><Button variant="ghost" disabled={busy} onClick={() => setEditingReconciliation(value => !value)}>{editingReconciliation ? "Cancel" : "Edit"}</Button></div>
-              <p className="muted">
-                A request may have succeeded in Jira before its response was
-                lost. Find the created entity and link its ID before retrying.
-              </p>
+            <SettingsSection
+              title="Needs reconciliation"
+              description="A request may have succeeded in Jira before its response was lost. Find the created entity and link its ID before retrying."
+              actions={<Button variant={editingReconciliation ? "ghost" : "secondary"} size="sm" disabled={busy} onClick={() => setEditingReconciliation(value => !value)}>{editingReconciliation ? "Cancel" : "Edit"}</Button>}
+            >
               {pending.map((p) => (
                 <form
+                  className="flex max-w-[520px] flex-wrap items-end gap-2"
                   key={p.id}
                   onSubmit={(e) => {
                     e.preventDefault();
@@ -581,49 +577,37 @@ export function JiraSettings({
                     });
                   }}
                 >
-                  <label>
-                    {p.kind} · {p.id}
+                  <Field label={`${p.kind} · ${p.id}`} className="min-w-0 flex-1">
                     <Input
                       disabled={busy || !editingReconciliation}
                       name="externalId"
                       required
                       placeholder="Jira issue ID/key or comment ID"
                     />
-                  </label>
-                  <Button disabled={busy || !editingReconciliation} type="submit">
-                    Link existing Jira entity
+                  </Field>
+                  <Button variant="primary" disabled={busy || !editingReconciliation} type="submit">
+                    Link
                   </Button>
                 </form>
               ))}
-            </>
+            </SettingsSection>
           )}
-          </div>
         </>
       )}
-      {feedback && (
-        <p role="status" className="project-feedback">
-          {feedback}
-        </p>
-      )}
-      {error && (
-        <p role="alert" className="project-error">
-          {error}
-        </p>
-      )}
-      {tab === "sync" && !!failures.length && (
-        <section>
-          <h3>Import errors</h3>
-          <p className="muted">
-            An issue may be partially imported. Fix the mapping or error and
-            retry.
-          </p>
-          <ul>
+      {connection && !!failures.length && (
+        <SettingsSection
+          title="Import errors"
+          description="An issue may be partially imported. Fix the mapping or the error and retry."
+        >
+          <ul className="flex flex-col text-sm">
             {failures.map((f) => (
-              <li key={f.id}>
-                <strong>{f.key}</strong>: {f.error}{" "}
+              <li key={f.id} className="flex flex-wrap items-center gap-2 py-2 [&+&]:hairline-t">
+                <span className="mono font-medium text-ink">{f.key}</span>
+                <span className="min-w-0 flex-1 text-ink-2">{f.error}</span>
                 <Button
                   disabled={busy}
-                  variant="ghost"
+                  variant="secondary"
+                  size="sm"
                   onClick={() =>
                     void run(async () => {
                       await importSingle(f.id);
@@ -639,6 +623,7 @@ export function JiraSettings({
                   <Button
                     disabled={busy}
                     variant="ghost"
+                    size="sm"
                     onClick={() =>
                       void run(async () => {
                         await importSingle(f.id, true);
@@ -658,10 +643,10 @@ export function JiraSettings({
               </li>
             ))}
           </ul>
-        </section>
+        </SettingsSection>
       )}
-      {connection && tab === "sync" && <ExportSettings actions={actions.exports} disabled={busy} onBusyChange={value => { setExportBusy(value); onBusyChange(value); }} />}
-      <div hidden={tab !== "sync"}><IntegrationSyncLog active={tab === "sync"} feedback={feedback} error={error} lastScheduledAt={connection?.lastScheduledAt} lastScheduleResult={connection?.lastScheduleResult} /></div>
+      {connection && <ExportSettings actions={actions.exports} disabled={busy} onBusyChange={value => { setExportBusy(value); onBusyChange(value); }} />}
+      {connection && <IntegrationSyncLog active feedback={feedback} error={error} lastScheduledAt={connection.lastScheduledAt} lastScheduleResult={connection.lastScheduleResult} />}
     </div>
   );
 }
