@@ -233,6 +233,9 @@ function ProjectMembers({
   const [members, setMembers] = useState<ProjectMemberSummary[]>([]);
   const [invitations, setInvitations] = useState<InvitationSummary[]>([]);
   const [loading, setLoading] = useState(true);
+  // Reads run for every member; the error and its Refresh must not hide
+  // behind the owner-only Invite section.
+  const [loadError, setLoadError] = useState("");
   const [error, setError] = useState("");
   const [feedback, setFeedback] = useState("");
   const [email, setEmail] = useState("");
@@ -241,7 +244,7 @@ function ProjectMembers({
   useEffect(() => {
     let active = true;
     setLoading(true);
-    setError("");
+    setLoadError("");
     Promise.all([actions.members(), owner ? actions.invitations() : Promise.resolve([])])
       .then(([people, invites]) => {
         if (active) {
@@ -250,7 +253,7 @@ function ProjectMembers({
         }
       })
       .catch(() => {
-        if (active) setError("Couldn’t load members. Please try again.");
+        if (active) setLoadError("Couldn’t load members. Please try again.");
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -313,16 +316,16 @@ function ProjectMembers({
             </Button>
           </form>
           <Feedback error={error} feedback={feedback} />
-          {error && (
-            <div>
-              <Button variant="ghost" size="sm" onClick={() => setReload((value) => value + 1)} disabled={busy}>Refresh</Button>
-            </div>
-          )}
         </SettingsSection>
       )}
-      <SettingsSection title="People" description={loading ? undefined : `${members.length} ${members.length === 1 ? "member" : "members"}`}>
+      <SettingsSection title="People" description={loading || loadError ? undefined : `${members.length} ${members.length === 1 ? "member" : "members"}`}>
         {loading ? (
           <p className="text-sm text-ink-3" role="status">Loading members…</p>
+        ) : loadError ? (
+          <div className="flex flex-col items-start gap-2">
+            <Feedback error={loadError} />
+            <Button variant="secondary" size="sm" onClick={() => setReload((value) => value + 1)} disabled={busy}>Try again</Button>
+          </div>
         ) : (
           <ul className="overflow-hidden rounded-xl hairline">
             {members.map((member) => (
@@ -338,7 +341,7 @@ function ProjectMembers({
           </ul>
         )}
       </SettingsSection>
-      {owner && !loading && (
+      {owner && !loading && !loadError && (
         <SettingsSection title="Invitations">
           {!invitations.length ? (
             <p className="text-sm text-ink-3">No invitations yet.</p>

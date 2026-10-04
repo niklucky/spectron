@@ -26,25 +26,42 @@ export function ProjectFields({
     [name, setName] = useState(""),
     [type, setType] = useState<ProjectField["type"]>("text"),
     [error, setError] = useState(""),
+    // The list loads for every member; its failure is shown with the list,
+    // not inside the owner-only form.
+    [loadError, setLoadError] = useState(""),
+    [loading, setLoading] = useState(true),
+    [reload, setReload] = useState(0),
     [busy, setBusy] = useState(false);
   useEffect(() => {
     let active = true;
+    setLoading(true);
+    setLoadError("");
     actions
       .load()
       .then((s) => {
         if (active) setFields(s.fields ?? []);
       })
       .catch((e) => {
-        if (active) setError(e.message);
+        if (active) setLoadError(e instanceof Error ? e.message : "Couldn’t load fields.");
+      })
+      .finally(() => {
+        if (active) setLoading(false);
       });
     return () => {
       active = false;
     };
-  }, [actions]);
+  }, [actions, reload]);
   return (
     <>
       <SettingsSection title="Issue fields" description="Values are edited in the issue’s details.">
-        {fields.length ? (
+        {loading ? (
+          <p className="text-sm text-ink-3" role="status">Loading fields…</p>
+        ) : loadError ? (
+          <div className="flex flex-col items-start gap-2">
+            <Feedback error={loadError} />
+            <Button variant="secondary" size="sm" disabled={busy} onClick={() => setReload((value) => value + 1)}>Try again</Button>
+          </div>
+        ) : fields.length ? (
           <ul className="overflow-hidden rounded-xl hairline">
             {fields.map((f) => (
               <li key={f.id} className="flex items-center gap-3 px-3 py-2.5 text-sm [&+&]:hairline-t">

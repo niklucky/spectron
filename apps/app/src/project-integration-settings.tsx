@@ -7,7 +7,7 @@ import {
   matchTrackerMappings,
   trackerFieldType,
 } from "@spectron/shared";
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { trpc } from "./lib/trpc";
 type Config = NonNullable<Awaited<ReturnType<typeof trpc.tracker.get.query>>>;
 type Metadata = Awaited<ReturnType<typeof trpc.tracker.metadata.mutate>>;
@@ -57,6 +57,11 @@ export function ProjectIntegrationSettings({
   const [feedback, setFeedback] = useState("");
   const [overwriteConflicts, setOverwriteConflicts] = useState(false);
   const [dirty, setDirty] = useState(false);
+  // Every section is on one page now, so any action must wait for the
+  // others, including export, instead of relying on hidden tabs.
+  const locked = busy || exportBusy;
+  const lockRef = useRef(false);
+  lockRef.current = locked;
   useEffect(() => {
     let active = true;
     Promise.all([
@@ -87,6 +92,8 @@ export function ProjectIntegrationSettings({
     };
   }, [projectId]);
   async function run(action: () => Promise<void>) {
+    if (lockRef.current) return;
+    lockRef.current = true;
     setBusy(true);
     onBusyChange(true);
     setError("");
@@ -135,7 +142,7 @@ export function ProjectIntegrationSettings({
           });
         }}
       >
-        <fieldset disabled={busy}>
+        <fieldset disabled={locked}>
           <label>
             Organization type
             <select
@@ -220,6 +227,7 @@ export function ProjectIntegrationSettings({
       <SettingsSection title="Field mapping" description="How Tracker fields, statuses, priorities and people correspond to this project.">
           <button
             type="button"
+            disabled={locked}
             onClick={() =>
               void run(async () => {
                 if (dirty) throw new Error("Save connection and mapping changes before loading mappings.");
@@ -281,7 +289,7 @@ export function ProjectIntegrationSettings({
           </button>
       {!metadata && <p className="muted">Load fields, statuses, priorities and users from the saved connection.</p>}
       {metadata && (
-        <fieldset disabled={busy}>
+        <fieldset disabled={locked}>
           {(["statuses", "priorities", "users", "fields"] as const).map(
             (kind) => (
               <section key={kind}>
@@ -545,7 +553,7 @@ export function ProjectIntegrationSettings({
           <input
             type="checkbox"
             checked={overwriteConflicts}
-            disabled={busy}
+            disabled={locked}
             onChange={(e) => setOverwriteConflicts(e.target.checked)}
           />
           Resolve conflicts by replacing destination changes with the selected
@@ -555,7 +563,7 @@ export function ProjectIntegrationSettings({
           <button
             key={direction}
             type="button"
-            disabled={busy || !config.hasToken || dirty}
+            disabled={locked || !config.hasToken || dirty}
             onClick={() =>
               void run(async () => {
                 setFeedback(direction === "import" ? "Full import started…" : "Push started…");

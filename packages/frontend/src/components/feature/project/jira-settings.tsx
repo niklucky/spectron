@@ -50,6 +50,7 @@ export type JiraActions = {
     externalId: string,
   ) => Promise<void>;
 };
+type FeedbackScope = "connection" | "mapping" | "sync";
 const connectionConfig = (c: JiraConnection): JiraConfigInput => ({
   baseUrl: c.baseUrl,
   projectKey: c.projectKey,
@@ -117,6 +118,9 @@ export function JiraSettings({
     [loading, setLoading] = useState(true),
     [error, setError] = useState(""),
     [feedback, setFeedback] = useState(""),
+    // Which section the last operation belonged to, so its outcome shows
+    // beside the controls that triggered it instead of further down the page.
+    [scope, setScope] = useState<FeedbackScope>("connection"),
     [failures, setFailures] = useState<
       { id: string; key: string; error: string }[]
     >([]),
@@ -175,10 +179,11 @@ export function JiraSettings({
     }, 5000);
     return () => clearInterval(timer);
   }, [actions, owner]);
-  async function run(fn: () => Promise<void>) {
+  async function run(fn: () => Promise<void>, where: FeedbackScope = "sync") {
     if (busy) return;
     setBusy(true);
     onBusyChange(true);
+    setScope(where);
     setError("");
     setFeedback("");
     try {
@@ -262,7 +267,7 @@ export function JiraSettings({
             setConfig(connectionConfig(c));
             setEditingConnection(false);
             setFeedback("Connection saved.");
-          });
+          }, "connection");
         }}
       >
         <fieldset disabled={busy || !editingConnection} className="m-0 flex min-w-0 flex-col gap-3 border-0 p-0">
@@ -326,7 +331,7 @@ export function JiraSettings({
                 setTestStatus("error");
                 throw error;
               }
-            })}
+            }, "connection")}
           >
             {testStatus === "testing" ? <Spinner size={13} /> : <Icon name="check-circle" size={14} className={testStatus === "success" ? "text-ok" : testStatus === "error" ? "text-bad" : "text-ink-3"} />}
             {testStatus === "testing" ? "Testing…" : testStatus === "success" ? "Connection passed" : testStatus === "error" ? "Connection failed" : "Test connection"}
@@ -334,7 +339,7 @@ export function JiraSettings({
           </div>
         </fieldset>
       </form>
-      {!connection && <Feedback error={error} feedback={feedback} />}
+      {scope === "connection" && <Feedback error={error} feedback={feedback} />}
       </SettingsSection>
       {connection && (
         <>
@@ -342,7 +347,7 @@ export function JiraSettings({
             title="Field mapping"
             description="How Jira statuses, priorities, types, fields and people correspond to this project."
             actions={<>
-            <Button variant="ghost" size="sm" disabled={busy || metadataLoading || editingMappings} onClick={() => void run(loadMetadata)}>Refresh Jira options</Button>
+            <Button variant="ghost" size="sm" disabled={busy || metadataLoading || editingMappings} onClick={() => void run(loadMetadata, "mapping")}>Refresh Jira options</Button>
             {!editingMappings ? <Button variant="secondary" size="sm" disabled={busy} onClick={() => setEditingMappings(true)}>Edit</Button> : <>
               <Button variant="ghost" size="sm" disabled={busy} onClick={() => { setMappings(connection.mappings); setConfig(connectionConfig(connection)); setEditingMappings(false); }}>Cancel</Button>
               <Button variant="primary" size="sm" disabled={busy} onClick={() => void run(async () => {
@@ -355,7 +360,7 @@ export function JiraSettings({
                 setSettings(await actions.settings());
                 setEditingMappings(false);
                 setFeedback("Mappings saved.");
-              })}>Save</Button>
+              }, "mapping")}>Save</Button>
             </>}
             </>}
           >
@@ -399,6 +404,7 @@ export function JiraSettings({
             </Disclosure>;
           })}
           </div>
+          {scope === "mapping" && <Feedback error={error} feedback={feedback} />}
           </SettingsSection>
           <SettingsSection
             title="Sync"
@@ -544,7 +550,7 @@ export function JiraSettings({
           </div>
           {mappingDirty && <Note>Import uses saved mappings. Unsaved mapping edits are not used.</Note>}
           {connection.lastImportedAt && <Note>Last issue imported {formatDateTime(connection.lastImportedAt)}.</Note>}
-          <Feedback error={error} feedback={feedback} />
+          {scope === "sync" && <Feedback error={error} feedback={feedback} />}
           </SettingsSection>
           {!!pending.length && (
             <SettingsSection
