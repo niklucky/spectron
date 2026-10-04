@@ -32,6 +32,8 @@ deployment/
   provision-server.sh    the remote half; not run by hand
   github-env.sh          pushes .env.<environment> to a GitHub environment
   env-file.sh            the shared KEY=value reader
+  backup.sh              the nightly pg_dump; installed on the box by provisioning
+  db-snapshot.sh         copy the production database into the local stack
   nginx/                 templates rendered onto the box
   .env.example           copy to .env.production and fill it in
 ```
@@ -134,8 +136,38 @@ Modes:
 | `--skip-certs`   | a full run with no issuance; TLS sites are left off        |
 | `--certs-only`   | render nginx and issue or renew, nothing else              |
 | `--nginx-only`   | re-render and reload nginx; needs existing certificates    |
+| `--backups-only` | install or update the nightly database dump, nothing else  |
 
-Re-run `--nginx-only` after editing anything under `nginx/`.
+Re-run `--nginx-only` after editing anything under `nginx/`, and
+`--backups-only` after editing `backup.sh` or the backup settings.
+
+## Backups
+
+Provisioning installs `backup.sh` as `/usr/local/bin/spectron-backup` and a
+`/etc/cron.d/spectron-backup` entry that runs it nightly at 03:17 UTC. Each run
+is one compressed `pg_dump` of the database into `BACKUP_DIR`
+(`/data/spectron/backups`, root-only), and dumps older than `BACKUP_KEEP_DAYS`
+(14) are removed. The log is `/var/log/spectron-backup.log`. Both settings
+live in `.env.production` next to `DB_DATA`.
+
+The dump covers Postgres only. Attachments are files under `FILES_DATA` and
+need their own copy.
+
+## A copy of production, locally
+
+```bash
+pnpm db:snapshot                      # dump production, restore into the local stack
+pnpm db:snapshot -- --dump-only       # just fetch deployment/snapshots/spectron-<stamp>.dump
+pnpm db:snapshot -- --restore=FILE    # restore a dump fetched earlier
+```
+
+`db-snapshot.sh` runs `pg_dump` inside the `spectron-db` container over SSH,
+saves the dump under `deployment/snapshots/` (git-ignored), then drops and
+recreates the local `spectron` database and restores into it. It uses the same
+`SSH_TARGET` as provisioning. The local API never connects to the production
+database: when something needs real data, copy it down and break the copy.
+The local database afterwards carries production's migration history, so run
+`pnpm db:migrate` if this checkout has newer migrations.
 
 ## On the box
 

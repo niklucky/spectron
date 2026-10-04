@@ -7,6 +7,7 @@
 #   ./deployment/provision-app.sh --skip-certs    # before DNS points here
 #   ./deployment/provision-app.sh --certs-only    # once it does
 #   ./deployment/provision-app.sh --nginx-only    # after editing nginx/
+#   ./deployment/provision-app.sh --backups-only  # install or update the nightly dump
 #
 # Run it from your workstation; it ssh's to the box itself. It is idempotent:
 # packages already installed are left alone, the deploy key is appended only
@@ -36,6 +37,7 @@ Usage: deployment/provision-app.sh [options]
   --env=NAME       Read deployment/.env.NAME (default: production)
   --host=HOST      Override SSH_TARGET (an SSH alias, or user@host)
   --nginx-only     Re-render and reload nginx only; requires existing certificates
+  --backups-only   Install or update the nightly database dump only
   --certs-only     Render nginx and issue or renew certificates only
   --skip-certs     Full run without issuance; the TLS sites are left unconfigured
                    and HTTP answers 503, with the ACME path still live
@@ -48,7 +50,7 @@ SKIP_CERTS=0
 ENV_NAME=production
 for arg in "$@"; do
   case "$arg" in
-    --nginx-only|--certs-only)
+    --nginx-only|--certs-only|--backups-only)
       [ "$MODE" = full ] || die 'Select only one mode'
       MODE=${arg#--}; MODE=${MODE%-only} ;;
     --skip-certs) SKIP_CERTS=1 ;;
@@ -98,6 +100,8 @@ setting DB_DATA /data/spectron/db
 setting FILES_DATA /data/spectron/files
 setting APP_PORT 4500
 setting WEB_PORT 4501
+setting BACKUP_DIR /data/spectron/backups
+setting BACKUP_KEEP_DAYS 14
 
 # Everything below is rendered into a remote shell or an nginx file, so the
 # shapes are checked here rather than trusted.
@@ -115,7 +119,9 @@ for name in APP_PORT WEB_PORT; do
   [ "${!name}" -gt 0 ] && [ "${!name}" -le 65535 ] || die "Invalid $name"
 done
 [ "$APP_PORT" != "$WEB_PORT" ] || die 'APP_PORT and WEB_PORT must differ'
-for name in DEPLOY_PATH DB_DATA FILES_DATA; do
+case "$BACKUP_KEEP_DAYS" in *[!0-9]*|'') die 'Invalid BACKUP_KEEP_DAYS' ;; esac
+[ "$BACKUP_KEEP_DAYS" -ge 1 ] || die 'BACKUP_KEEP_DAYS must be at least 1'
+for name in DEPLOY_PATH DB_DATA FILES_DATA BACKUP_DIR; do
   case "${!name}" in
     /*) ;;
     *) die "$name must be an absolute path" ;;
@@ -196,13 +202,14 @@ HELP
 fi
 
 cp "$HERE/provision-server.sh" "$bundle/"
+cp "$HERE/backup.sh" "$bundle/"
 cp -R "$HERE/nginx" "$bundle/"
 
 # Written with printf %q from values this script has already validated, and
 # sourced rather than parsed on the far side.
 : > "$bundle/settings.sh"
 for name in MODE SKIP_CERTS DEPLOY_USER DEPLOY_PATH DB_DATA FILES_DATA \
-            APP_PORT WEB_PORT CERT_EMAIL INCLUDE_WWW; do
+            APP_PORT WEB_PORT CERT_EMAIL INCLUDE_WWW BACKUP_DIR BACKUP_KEEP_DAYS; do
   printf '%s=%q\n' "$name" "${!name}" >> "$bundle/settings.sh"
 done
 
@@ -237,6 +244,7 @@ cat <<SUMMARY
    Deploy user    $DEPLOY_USER@${server_ip:-$SSH_TARGET}
    Deploy path    $DEPLOY_PATH
    Database       $DB_DATA
+   Backups        $BACKUP_DIR, nightly, $BACKUP_KEEP_DAYS days kept
    Files          $FILES_DATA
    Loopback       app :$APP_PORT   web :$WEB_PORT
 

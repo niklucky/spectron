@@ -156,6 +156,36 @@ prepare_host() {
   note "$DEPLOY_PATH, $DB_DATA, $FILES_DATA ready"
 }
 
+# ── nightly database dump ────────────────────────────────────────────────────
+
+configure_backups() {
+  # Root-only: a dump is the whole database, credentials hashes included.
+  install -d -m 0700 "$BACKUP_DIR"
+  install -m 0755 "$STAGE/backup.sh" /usr/local/bin/spectron-backup
+  # cron.d rather than root's crontab, so it is one file this script owns and
+  # can rewrite, and nothing testron may have put in the crontab is touched.
+  cat > /etc/cron.d/spectron-backup <<CRON
+# Installed by spectron's deployment/provision-server.sh. Nightly pg_dump of
+# the spectron database; see /usr/local/bin/spectron-backup.
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+17 3 * * * root BACKUP_DIR=$BACKUP_DIR KEEP_DAYS=$BACKUP_KEEP_DAYS /usr/local/bin/spectron-backup >> /var/log/spectron-backup.log 2>&1
+CRON
+  chmod 0644 /etc/cron.d/spectron-backup
+  # A first dump right away, so the schedule is proven and a backup exists
+  # tonight regardless. Skipped quietly when the stack is not running yet.
+  if docker ps --format '{{.Names}}' | grep -qx spectron-db; then
+    if BACKUP_DIR="$BACKUP_DIR" KEEP_DAYS="$BACKUP_KEEP_DAYS" /usr/local/bin/spectron-backup >> /var/log/spectron-backup.log 2>&1; then
+      note "nightly dump installed; first dump written to $BACKUP_DIR"
+    else
+      warn "nightly dump installed, but the first dump failed; see /var/log/spectron-backup.log"
+    fi
+  else
+    note "nightly dump installed; spectron-db is not running, so no dump was taken yet"
+  fi
+  note "schedule 03:17 UTC daily, keeping $BACKUP_KEEP_DAYS days"
+}
+
 check_ports() {
   local port owner
   # Nothing of ours is running yet, so anything answering on these ports is
@@ -330,4 +360,7 @@ if [ "$MODE" = full ]; then
   check_ports
   check_ssh_policy
 fi
-configure_nginx
+if [ "$MODE" = full ] || [ "$MODE" = backups ]; then
+  configure_backups
+fi
+[ "$MODE" = backups ] || configure_nginx
