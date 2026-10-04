@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { normalizeProjectURL, type CreateProjectInput } from "@spectron/shared";
 import { ProjectLogoField } from "./project-logo-field";
 import { Input } from "../../ui/input";
@@ -33,20 +33,48 @@ export function ProjectForm({
   useEffect(() => {
     onBusyChange(busy);
   }, [busy, onBusyChange]);
+  // The icon lookup starts when the URL field blurs, which is exactly what
+  // happens when the user clicks the submit button straight from that field.
+  // Disabling the button for it would eat that click, so the submit waits for
+  // the lookup instead (briefly), and reads the logo through a ref so it sees
+  // the result rather than the value captured when the click happened.
+  const logoRef = useRef(logo);
+  const logoBusyRef = useRef(false);
+  const logoWaiters = useRef<(() => void)[]>([]);
+  const changeLogo = (value: string | null) => {
+    logoRef.current = value;
+    setLogo(value);
+  };
+  const changeLogoBusy = (value: boolean) => {
+    logoBusyRef.current = value;
+    setLogoBusy(value);
+    if (!value) {
+      logoWaiters.current.forEach((resolve) => resolve());
+      logoWaiters.current = [];
+    }
+  };
+  const awaitLogo = () =>
+    logoBusyRef.current
+      ? new Promise<void>((resolve) => {
+          logoWaiters.current.push(resolve);
+          window.setTimeout(resolve, 4000);
+        })
+      : Promise.resolve();
   return (
     <form
       className="project-form"
       onSubmit={async (event) => {
         event.preventDefault();
-        if (readOnly || busy || logoBusy || !name.trim()) return;
+        if (readOnly || busy || !name.trim()) return;
         setBusy(true);
         setError("");
         try {
+          await awaitLogo();
           await onSubmit({
             name: name.trim(),
             key: key.trim().toUpperCase(),
             url: normalizeProjectURL(url),
-            logo,
+            logo: logoRef.current,
           });
         } catch (cause) {
           setError(
@@ -124,8 +152,8 @@ export function ProjectForm({
           initial={name.trim().charAt(0).toUpperCase() || "?"}
           url={url}
           logo={logo}
-          onChange={setLogo}
-          onBusyChange={setLogoBusy}
+          onChange={changeLogo}
+          onBusyChange={changeLogoBusy}
           onDiscover={onDiscoverLogo}
         />
         {error && (
@@ -137,11 +165,8 @@ export function ProjectForm({
           <Button variant="ghost" onClick={onCancel} disabled={busy}>
             {cancelLabel}
           </Button>
-          <Button
-            type="submit"
-            disabled={busy || logoBusy || !name.trim() || readOnly}
-          >
-            {busy ? "Saving…" : submitLabel}
+          <Button type="submit" disabled={busy || !name.trim() || readOnly}>
+            {busy ? (logoBusy ? "Finishing icon lookup…" : "Saving…") : submitLabel}
           </Button>
         </div>
       </fieldset>

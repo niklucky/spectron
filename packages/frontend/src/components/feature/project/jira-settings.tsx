@@ -138,6 +138,8 @@ export function JiraSettings({
       .then(([c, s, m]) => {
         if (!active) return;
         setConnection(c);
+        // Nothing to edit yet: the form is the create form, so it is open.
+        if (!c) setEditingConnection(true);
         if (c) {
           setConfig(connectionConfig(c));
           setMappings(c.mappings);
@@ -244,7 +246,7 @@ export function JiraSettings({
       </p>
       <IntegrationTabs value={tab} onChange={(value) => { setFeedback(""); setError(""); setTab(value); }} busy={busy || exportBusy} connected={!!connection} />
       <div hidden={tab !== "connection"} className="integration-connection-form">
-      <div className="integration-toolbar"><h3>Credentials</h3>{!editingConnection && <Button variant="ghost" disabled={busy} onClick={() => setEditingConnection(true)}>Edit</Button>}{editingConnection && <Button variant="ghost" disabled={busy} onClick={() => { if (connection) setConfig(connectionConfig(connection)); setEditingConnection(false); }}>Cancel</Button>}</div>
+      <div className="integration-toolbar"><h3>Credentials</h3>{connection && !editingConnection && <Button variant="ghost" disabled={busy} onClick={() => setEditingConnection(true)}>Edit</Button>}{connection && editingConnection && <Button variant="ghost" disabled={busy} onClick={() => { setConfig(connectionConfig(connection)); setEditingConnection(false); }}>Cancel</Button>}</div>
       <form
         onSubmit={(e) => {
           e.preventDefault();

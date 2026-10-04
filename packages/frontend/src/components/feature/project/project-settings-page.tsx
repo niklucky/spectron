@@ -31,12 +31,15 @@ export function ProjectSettingsPage({
   project,
   actions,
   onClose,
+  onArchive,
   yandexSettings,
   gitSettings,
   externalBusy = false,
   loadIntegrations,
 }: {
   loadIntegrations: () => Promise<IntegrationSummary[]>;
+  /** Owner-only. Archives the project; the caller navigates away afterwards. */
+  onArchive?: (() => Promise<void>) | undefined;
   yandexSettings?: ReactNode;
   gitSettings?: (provider: "github" | "gitlab") => ReactNode;
   externalBusy?: boolean;
@@ -112,6 +115,14 @@ export function ProjectSettingsPage({
                   Changes saved.
                 </p>
               )}
+              {project.role === "owner" && onArchive && (
+                <ArchiveProject
+                  name={project.name}
+                  disabled={busy || externalBusy}
+                  onArchive={onArchive}
+                  onBusyChange={setBusy}
+                />
+              )}
             </>
           ) : tab === "fields" ? (
             <ProjectFields
@@ -146,6 +157,87 @@ export function ProjectSettingsPage({
         </section>
       </div>
     </main>
+  );
+}
+
+function ArchiveProject({
+  name,
+  disabled,
+  onArchive,
+  onBusyChange,
+}: {
+  name: string;
+  disabled: boolean;
+  onArchive: () => Promise<void>;
+  onBusyChange: (busy: boolean) => void;
+}) {
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  return (
+    <section
+      className="mt-10 flex flex-col gap-3 rounded-xl p-4 hairline"
+      aria-labelledby="archive-project-title"
+    >
+      <div>
+        <h3 id="archive-project-title" className="text-base font-semibold">
+          Archive project
+        </h3>
+        <p className="mt-1 text-sm text-ink-2">
+          {name} disappears from everyone’s sidebar and stops accepting changes.
+          Issues and history are kept, but there is no way to restore it from
+          the app yet.
+        </p>
+      </div>
+      {error && (
+        <p className="project-error" role="alert">
+          {error}
+        </p>
+      )}
+      {confirming ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            variant="danger"
+            disabled={busy || disabled}
+            onClick={() => {
+              setBusy(true);
+              onBusyChange(true);
+              setError("");
+              onArchive()
+                .catch((cause) => {
+                  setError(
+                    cause instanceof Error
+                      ? cause.message
+                      : "Couldn’t archive the project.",
+                  );
+                  setBusy(false);
+                  onBusyChange(false);
+                  setConfirming(false);
+                });
+            }}
+          >
+            {busy ? "Archiving…" : `Yes, archive ${name}`}
+          </Button>
+          <Button
+            variant="ghost"
+            disabled={busy}
+            onClick={() => setConfirming(false)}
+          >
+            Keep it
+          </Button>
+        </div>
+      ) : (
+        <div>
+          <Button
+            variant="secondary"
+            disabled={disabled}
+            onClick={() => setConfirming(true)}
+          >
+            Archive project…
+          </Button>
+        </div>
+      )}
+    </section>
   );
 }
 
