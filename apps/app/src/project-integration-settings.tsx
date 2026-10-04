@@ -1,6 +1,6 @@
 import { exportActionsFor } from "./lib/export-actions";
 import { ExportSettings } from "@spectron/frontend";
-import { IntegrationTabs, IntegrationSyncLog, type IntegrationTab } from "@spectron/frontend";
+import { IntegrationSyncLog, SettingsSection } from "@spectron/frontend";
 import {
   issueTriggers,
   type IssueTrigger,
@@ -28,7 +28,6 @@ export function ProjectIntegrationSettings({
 }) {
   const [exportBusy, setExportBusy] = useState(false);
   const exports = useMemo(() => exportActionsFor(projectId, "tracker"), [projectId]);
-  const [tab, setTab] = useState<IntegrationTab>("connection");
   const [config, setConfig] = useState<Config>({
     organizationId: "",
     organizationType: "cloud",
@@ -125,14 +124,8 @@ export function ProjectIntegrationSettings({
   }
   if (loading) return <p role="status">Loading integration…</p>;
   return (
-    <div className="tracker-settings">
-      <h3>Yandex Tracker</h3>
-      <p className="muted">
-        Connect a queue, map its values, then import issues or push local
-        changes. Only project owners can run sync.
-      </p>
-      <IntegrationTabs value={tab} onChange={(value) => { setFeedback(""); setError(""); setTab(value); }} busy={busy || exportBusy} connected={config.hasToken} />
-      <div hidden={tab !== "connection"} className="integration-connection-form">
+    <div className="tracker-settings flex flex-col gap-10">
+      <SettingsSection title="Connection" description="Only project owners can change credentials or run sync." className="max-w-[560px]">
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -223,8 +216,8 @@ export function ProjectIntegrationSettings({
           })}>Test connection</button>
         </fieldset>
       </form>
-      </div>
-      <div hidden={tab !== "mapping"} className="integration-panel">
+      </SettingsSection>
+      <SettingsSection title="Field mapping" description="How Tracker fields, statuses, priorities and people correspond to this project.">
           <button
             type="button"
             onClick={() =>
@@ -541,9 +534,8 @@ export function ProjectIntegrationSettings({
           </button>
         </fieldset>
       )}
-      </div>
-      <section hidden={tab !== "sync"} className="integration-panel">
-        <h3>Full import</h3>
+      </SettingsSection>
+      <SettingsSection title="Sync">
         <p className="muted">
           Import updates from Tracker. Push creates and updates issues and
           comments in Tracker. Deleted items are skipped. If both sides changed,
@@ -585,7 +577,7 @@ export function ProjectIntegrationSettings({
           </button>
         ))}
         {dirty && <p className="muted">Save your changes before syncing.</p>}
-      </section>
+      </SettingsSection>
       {busy && (
         <p role="status">
           Working… Keep this page open until the operation finishes.
@@ -601,8 +593,8 @@ export function ProjectIntegrationSettings({
           {error}
         </p>
       )}
-      {config.hasToken && tab === "sync" && <ExportSettings actions={exports} disabled={busy} onBusyChange={value => { setExportBusy(value); onBusyChange(value); }} />}
-      <div hidden={tab !== "sync"}><IntegrationSyncLog active={tab === "sync"} feedback={feedback} error={error} /></div>
+      {config.hasToken && <ExportSettings actions={exports} disabled={busy} onBusyChange={value => { setExportBusy(value); onBusyChange(value); }} />}
+      <IntegrationSyncLog active feedback={feedback} error={error} />
     </div>
   );
 }

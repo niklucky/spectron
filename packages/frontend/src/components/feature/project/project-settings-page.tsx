@@ -5,17 +5,22 @@ import type {
   ProjectMemberSummary,
   InvitationSummary,
 } from "@spectron/shared";
-import { IntegrationOverview, type IntegrationSummary } from "./integration-overview";
+import { IntegrationLogo, IntegrationOverview, integrationName, type IntegrationSummary } from "./integration-overview";
 import { Button } from "../../ui/button";
+import { Avatar } from "../../ui/avatar";
 import { Input } from "../../ui/input";
+import { Pill } from "../../ui/pill";
+import { Breadcrumbs } from "../../ui/page-shell";
+import { Feedback, SettingsLayout, SettingsNav, SettingsSection, SettingsTitle } from "../../ui/settings";
 import {
   ProjectIssueSettings,
   type IssueSettingsActions,
 } from "./issue-settings";
 import { ProjectForm } from "./project-form";
-
 import { JiraSettings, type JiraActions } from "./jira-settings";
 import { ProjectFields, type FieldActions } from "./project-fields";
+import { formatDateTime } from "../../../lib/date-format";
+
 export type ProjectSettingsActions = {
   jira: JiraActions;
   fields: FieldActions;
@@ -27,6 +32,26 @@ export type ProjectSettingsActions = {
   cancel: (id: string) => Promise<InvitationSummary>;
   discoverLogo: (url: string) => Promise<{ logo: string | null }>;
 };
+
+const tabs = ["general", "members", "states", "priorities", "types", "tags", "fields", "integrations"] as const;
+type Tab = (typeof tabs)[number];
+const titles: Record<Tab, { label: string; description: string }> = {
+  general: { label: "General", description: "Name, issue prefix, website and logo." },
+  members: { label: "Members", description: "Who works in this project, and who has been invited." },
+  states: { label: "States", description: "The workflow an issue moves through." },
+  priorities: { label: "Priorities", description: "How urgent an issue is." },
+  types: { label: "Types", description: "Kinds of work: bugs, features, chores." },
+  tags: { label: "Tags", description: "Free labels for grouping issues." },
+  fields: { label: "Fields", description: "Custom fields on this project’s issues." },
+  integrations: { label: "Integrations", description: "Services connected to this project, and what else is available." },
+};
+const providerDescriptions: Record<string, string> = {
+  jira: "Connect a Jira project, map its people and fields, then import issues or export changes back.",
+  yandex: "Connect a queue, map its values, then import issues or push local changes.",
+  github: "Connect an account and choose the repositories this project’s agents may work in.",
+  gitlab: "Connect your GitLab instance and choose the repositories this project’s agents may work in.",
+};
+
 export function ProjectSettingsPage({
   project,
   actions,
@@ -48,7 +73,7 @@ export function ProjectSettingsPage({
   onClose?: (() => void) | undefined;
 }) {
   const [provider, setProvider] = useState<string | null>(null);
-  const [tab, setTab] = useState("general");
+  const [tab, setTab] = useState<Tab>("general");
   const [busy, setBusy] = useState(false);
   // Archiving is tracked apart from a save, so neither can end the other's
   // lock: the form stays disabled while archiving, and navigation stays
@@ -56,112 +81,93 @@ export function ProjectSettingsPage({
   const [archiving, setArchiving] = useState(false);
   const [saved, setSaved] = useState(false);
   const locked = busy || archiving || externalBusy;
+  const owner = project.role === "owner";
   return (
-    <main className="project-settings-page">
-      {onClose && (
-        <header className="project-settings-header">
-          <Button variant="ghost" className="navigation-button" disabled={locked} onClick={onClose}>← Back to project</Button>
-          <h1>{project.name} settings</h1>
-        </header>
+    <SettingsLayout
+      nav={
+        <SettingsNav
+          label="Project settings sections"
+          items={tabs.map((value) => ({ value, label: titles[value].label }))}
+          value={tab}
+          disabled={locked}
+          onChange={(value) => { setTab(value); setProvider(null); }}
+        />
+      }
+    >
+      {tab === "integrations" && provider ? (
+        <SettingsTitle
+          title={
+            <Breadcrumbs
+              items={[
+                { label: "Integrations", onClick: locked ? undefined : () => setProvider(null) },
+                { label: integrationName(provider), mark: <IntegrationLogo provider={provider} size="sm" className="size-5" /> },
+              ]}
+            />
+          }
+          description={providerDescriptions[provider]}
+        />
+      ) : (
+        <SettingsTitle
+          leading={onClose && (
+            <Button variant="ghost" size="sm" icon="back" className="-ml-2 w-fit" disabled={locked} onClick={onClose}>Back to project</Button>
+          )}
+          title={titles[tab].label}
+          description={titles[tab].description}
+        />
       )}
-      <div className="project-settings-layout">
-        <nav
-          className="project-settings-nav"
-          aria-label="Project settings sections"
-        >
-          {(
-            [
-              "general",
-              "members",
-              "states",
-              "priorities",
-              "types",
-              "tags",
-              "fields",
-              "integrations",
-            ] as const
-          ).map((item) => (
-            <button
-              key={item}
-              aria-current={tab === item ? "page" : undefined}
-              disabled={locked}
-              onClick={() => { setTab(item); setProvider(null); }}
-            >
-              {item.charAt(0).toUpperCase() + item.slice(1)}
-            </button>
-          ))}
-        </nav>
-        <section
-          className="project-settings-content"
-          aria-label={`${tab} settings`}
-        >
-          {tab === "general" ? (
-            <>
-              {project.role !== "owner" && (
-                <p className="muted">
-                  Only the project owner can edit these settings.
-                </p>
-              )}
-              <ProjectForm
-                initialValues={project}
-                submitLabel="Save changes"
-                readOnly={project.role !== "owner" || archiving}
-                onBusyChange={setBusy}
-                onCancel={onClose ?? (() => setTab("general"))}
-                onDiscoverLogo={actions.discoverLogo}
-                onSubmit={async (input) => {
-                  setSaved(false);
-                  await actions.update(input);
-                  setSaved(true);
-                }}
-              />
-              {saved && (
-                <p className="project-feedback" role="status">
-                  Changes saved.
-                </p>
-              )}
-              {project.role === "owner" && onArchive && (
-                <ArchiveProject
-                  name={project.name}
-                  disabled={busy || externalBusy}
-                  onArchive={onArchive}
-                  onBusyChange={setArchiving}
-                />
-              )}
-            </>
-          ) : tab === "fields" ? (
-            <ProjectFields
-              actions={actions.fields}
-              owner={project.role === "owner"}
-              onBusyChange={setBusy}
-            />
-          ) : tab === "integrations" ? (
-            provider ? (
-              <>
-                <Button variant="ghost" className="navigation-button" disabled={locked} onClick={() => setProvider(null)}>← Integrations</Button>
-                
-                {provider === "jira" ? <JiraSettings actions={actions.jira} owner={project.role === "owner"} onBusyChange={setBusy} /> : provider === "github" || provider === "gitlab" ? gitSettings?.(provider) : yandexSettings}
-              </>
-            ) : <IntegrationOverview owner={project.role === "owner"} load={loadIntegrations} onSelect={setProvider} />
-          ) : ["states", "priorities", "types", "tags"].includes(tab) ? (
-            <ProjectIssueSettings
-              key={tab}
-              projectId={project.id}
-              owner={project.role === "owner"}
-              kind={tab === "states" ? "state" : tab === "types" ? "type" : tab === "tags" ? "tag" : "priority"}
-              actions={actions.issueSettings}
-              onBusyChange={setBusy}
-            />
-          ) : (
-            <ProjectMembers
-              owner={project.role === "owner"}
-              actions={actions}
-              onBusyChange={setBusy}
+      {tab === "general" ? (
+        <>
+          {!owner && <p className="text-sm text-ink-2">Only the project owner can edit these settings.</p>}
+          <ProjectForm
+            initialValues={project}
+            submitLabel="Save changes"
+            readOnly={!owner || archiving}
+            onBusyChange={setBusy}
+            onCancel={onClose ?? (() => setTab("general"))}
+            onDiscoverLogo={actions.discoverLogo}
+            onSubmit={async (input) => {
+              setSaved(false);
+              await actions.update(input);
+              setSaved(true);
+            }}
+          />
+          {saved && <Feedback feedback="Changes saved." />}
+          {owner && onArchive && (
+            <ArchiveProject
+              name={project.name}
+              disabled={busy || externalBusy}
+              onArchive={onArchive}
+              onBusyChange={setArchiving}
             />
           )}
-        </section>
-      </div>
-    </main>
+        </>
+      ) : tab === "fields" ? (
+        <ProjectFields actions={actions.fields} owner={owner} onBusyChange={setBusy} />
+      ) : tab === "integrations" ? (
+        provider ? (
+          provider === "jira" ? (
+            <JiraSettings actions={actions.jira} owner={owner} onBusyChange={setBusy} />
+          ) : provider === "github" || provider === "gitlab" ? (
+            gitSettings?.(provider)
+          ) : (
+            yandexSettings
+          )
+        ) : (
+          <IntegrationOverview owner={owner} load={loadIntegrations} onSelect={setProvider} />
+        )
+      ) : tab === "members" ? (
+        <ProjectMembers owner={owner} actions={actions} onBusyChange={setBusy} />
+      ) : (
+        <ProjectIssueSettings
+          key={tab}
+          projectId={project.id}
+          owner={owner}
+          kind={tab === "states" ? "state" : tab === "types" ? "type" : tab === "tags" ? "tag" : "priority"}
+          actions={actions.issueSettings}
+          onBusyChange={setBusy}
+        />
+      )}
+    </SettingsLayout>
   );
 }
 
@@ -180,25 +186,11 @@ function ArchiveProject({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   return (
-    <section
-      className="mt-10 flex flex-col gap-3 rounded-xl p-4 hairline"
-      aria-labelledby="archive-project-title"
+    <SettingsSection
+      title="Archive project"
+      description={`${name} disappears from everyone’s sidebar and stops accepting changes. Issues and history are kept, but there is no way to restore it from the app yet.`}
     >
-      <div>
-        <h3 id="archive-project-title" className="text-base font-semibold">
-          Archive project
-        </h3>
-        <p className="mt-1 text-sm text-ink-2">
-          {name} disappears from everyone’s sidebar and stops accepting changes.
-          Issues and history are kept, but there is no way to restore it from
-          the app yet.
-        </p>
-      </div>
-      {error && (
-        <p className="project-error" role="alert">
-          {error}
-        </p>
-      )}
+      <Feedback error={error} />
       {confirming ? (
         <div className="flex flex-wrap items-center gap-2">
           <Button
@@ -208,41 +200,24 @@ function ArchiveProject({
               setBusy(true);
               onBusyChange(true);
               setError("");
-              onArchive()
-                .catch((cause) => {
-                  setError(
-                    cause instanceof Error
-                      ? cause.message
-                      : "Couldn’t archive the project.",
-                  );
-                  setBusy(false);
-                  onBusyChange(false);
-                  setConfirming(false);
-                });
+              onArchive().catch((cause) => {
+                setError(cause instanceof Error ? cause.message : "Couldn’t archive the project.");
+                setBusy(false);
+                onBusyChange(false);
+                setConfirming(false);
+              });
             }}
           >
             {busy ? "Archiving…" : `Yes, archive ${name}`}
           </Button>
-          <Button
-            variant="ghost"
-            disabled={busy}
-            onClick={() => setConfirming(false)}
-          >
-            Keep it
-          </Button>
+          <Button variant="ghost" disabled={busy} onClick={() => setConfirming(false)}>Keep it</Button>
         </div>
       ) : (
         <div>
-          <Button
-            variant="secondary"
-            disabled={disabled}
-            onClick={() => setConfirming(true)}
-          >
-            Archive project…
-          </Button>
+          <Button variant="secondary" disabled={disabled} onClick={() => setConfirming(true)}>Archive project…</Button>
         </div>
       )}
-    </section>
+    </SettingsSection>
   );
 }
 
@@ -267,10 +242,7 @@ function ProjectMembers({
     let active = true;
     setLoading(true);
     setError("");
-    Promise.all([
-      actions.members(),
-      owner ? actions.invitations() : Promise.resolve([]),
-    ])
+    Promise.all([actions.members(), owner ? actions.invitations() : Promise.resolve([])])
       .then(([people, invites]) => {
         if (active) {
           setMembers(people);
@@ -305,11 +277,7 @@ function ProjectMembers({
     try {
       await action();
     } catch (cause) {
-      setError(
-        cause instanceof Error
-          ? cause.message
-          : "Couldn’t complete this action.",
-      );
+      setError(cause instanceof Error ? cause.message : "Couldn’t complete this action.");
     } finally {
       setBusy(false);
     }
@@ -317,22 +285,21 @@ function ProjectMembers({
   return (
     <>
       {owner && (
-        <form
-          className="project-invite-form"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void run(async () => {
-              const invitation = await actions.invite(email.trim());
-              setInvitations((previous) => [invitation, ...previous]);
-              setEmail("");
-              setFeedback("Invitation sent.");
-            });
-          }}
-        >
-          <label htmlFor="invite-email">Invite by email</label>
-          <div>
+        <SettingsSection title="Invite" description="They get an email with a link. Signing in with that address joins the project.">
+          <form
+            className="flex max-w-[520px] items-center gap-2"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void run(async () => {
+                const invitation = await actions.invite(email.trim());
+                setInvitations((previous) => [invitation, ...previous]);
+                setEmail("");
+                setFeedback("Invitation sent.");
+              });
+            }}
+          >
             <Input
-              id="invite-email"
+              aria-label="Invite by email"
               type="email"
               placeholder="name@company.com"
               required
@@ -341,99 +308,74 @@ function ProjectMembers({
               onChange={(event) => setEmail(event.target.value)}
               disabled={busy}
             />
-            <Button type="submit" disabled={busy || loading || !email.trim()}>
+            <Button type="submit" variant="primary" disabled={busy || loading || !email.trim()}>
               {busy ? "Please wait…" : "Send invitation"}
             </Button>
-          </div>
-        </form>
+          </form>
+          <Feedback error={error} feedback={feedback} />
+          {error && (
+            <div>
+              <Button variant="ghost" size="sm" onClick={() => setReload((value) => value + 1)} disabled={busy}>Refresh</Button>
+            </div>
+          )}
+        </SettingsSection>
       )}
-      {error && (
-        <p className="project-error" role="alert">
-          {error}{" "}
-          <Button
-            variant="ghost"
-            onClick={() => setReload((value) => value + 1)}
-            disabled={busy}
-          >
-            Refresh
-          </Button>
-        </p>
-      )}
-      {feedback && (
-        <p className="project-feedback" role="status">
-          {feedback}
-        </p>
-      )}
-      {loading ? (
-        <p className="muted" role="status">
-          Loading members…
-        </p>
-      ) : (
-        <>
-          <h3 className="project-section-title">Team members</h3>
-          <ul className="project-people-list">
+      <SettingsSection title="People" description={loading ? undefined : `${members.length} ${members.length === 1 ? "member" : "members"}`}>
+        {loading ? (
+          <p className="text-sm text-ink-3" role="status">Loading members…</p>
+        ) : (
+          <ul className="overflow-hidden rounded-xl hairline">
             {members.map((member) => (
-              <li key={member.id}>
-                <span className="project-person-initial" aria-hidden="true">
-                  {member.name.slice(0, 1).toUpperCase()}
-                </span>
-                <div>
-                  <strong>{member.name}</strong>
-                  <span>{member.email}</span>
+              <li key={member.id} className="flex items-center gap-3 px-3 py-2.5 [&+&]:hairline-t">
+                <Avatar name={member.name} size="md" />
+                <div className="flex min-w-0 flex-1 flex-col">
+                  <span className="truncate text-sm font-medium text-ink">{member.name}</span>
+                  <span className="truncate text-sm text-ink-2">{member.email}</span>
                 </div>
-                <span className="project-person-role">
-                  {member.role === "owner" ? "Owner" : "Member"}
-                </span>
+                <Pill tone={member.role === "owner" ? "accent" : "neutral"}>{member.role === "owner" ? "Owner" : "Member"}</Pill>
               </li>
             ))}
           </ul>
-          {owner && (
-            <>
-              <h3 className="project-section-title">Invitations</h3>
-              {!invitations.length ? (
-                <p className="muted">No invitations yet.</p>
-              ) : (
-                <ul className="project-people-list">
-                  {invitations.map((invitation) => (
-                    <li key={invitation.id}>
-                      <div>
-                        <strong>{invitation.email}</strong>
-                        <span>
-                          {invitation.status === "pending"
-                            ? `Pending · Expires ${new Date(invitation.expiresAt).toLocaleDateString()}`
-                            : invitation.status.charAt(0).toUpperCase() +
-                              invitation.status.slice(1)}
-                        </span>
-                      </div>
-                      {["pending", "sending"].includes(invitation.status) && (
-                        <Button
-                          variant="ghost"
-                          disabled={busy}
-                          aria-label={`Cancel invitation to ${invitation.email}`}
-                          onClick={() =>
-                            void run(async () => {
-                              const result = await actions.cancel(
-                                invitation.id,
-                              );
-                              setInvitations((previous) =>
-                                previous.map((item) =>
-                                  item.id === result.id ? result : item,
-                                ),
-                              );
-                              setFeedback("Invitation cancelled.");
-                            })
-                          }
-                        >
-                          Cancel
-                        </Button>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </>
+        )}
+      </SettingsSection>
+      {owner && !loading && (
+        <SettingsSection title="Invitations">
+          {!invitations.length ? (
+            <p className="text-sm text-ink-3">No invitations yet.</p>
+          ) : (
+            <ul className="overflow-hidden rounded-xl hairline">
+              {invitations.map((invitation) => (
+                <li key={invitation.id} className="flex items-center gap-3 px-3 py-2.5 [&+&]:hairline-t">
+                  <div className="flex min-w-0 flex-1 flex-col">
+                    <span className="truncate text-sm font-medium text-ink">{invitation.email}</span>
+                    <span className="truncate text-sm text-ink-2">
+                      {invitation.status === "pending"
+                        ? `Pending · expires ${formatDateTime(invitation.expiresAt)}`
+                        : invitation.status.charAt(0).toUpperCase() + invitation.status.slice(1)}
+                    </span>
+                  </div>
+                  {["pending", "sending"].includes(invitation.status) && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={busy}
+                      aria-label={`Cancel invitation to ${invitation.email}`}
+                      onClick={() =>
+                        void run(async () => {
+                          const result = await actions.cancel(invitation.id);
+                          setInvitations((previous) => previous.map((item) => (item.id === result.id ? result : item)));
+                          setFeedback("Invitation cancelled.");
+                        })
+                      }
+                    >
+                      Cancel
+                    </Button>
+                  )}
+                </li>
+              ))}
+            </ul>
           )}
-        </>
+        </SettingsSection>
       )}
     </>
   );
