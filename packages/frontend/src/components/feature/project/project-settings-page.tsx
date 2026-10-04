@@ -50,12 +50,17 @@ export function ProjectSettingsPage({
   const [provider, setProvider] = useState<string | null>(null);
   const [tab, setTab] = useState("general");
   const [busy, setBusy] = useState(false);
+  // Archiving is tracked apart from a save, so neither can end the other's
+  // lock: the form stays disabled while archiving, and navigation stays
+  // locked until both are done.
+  const [archiving, setArchiving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const locked = busy || archiving || externalBusy;
   return (
     <main className="project-settings-page">
       {onClose && (
         <header className="project-settings-header">
-          <Button variant="ghost" className="navigation-button" disabled={busy || externalBusy} onClick={onClose}>← Back to project</Button>
+          <Button variant="ghost" className="navigation-button" disabled={locked} onClick={onClose}>← Back to project</Button>
           <h1>{project.name} settings</h1>
         </header>
       )}
@@ -79,7 +84,7 @@ export function ProjectSettingsPage({
             <button
               key={item}
               aria-current={tab === item ? "page" : undefined}
-              disabled={busy || externalBusy}
+              disabled={locked}
               onClick={() => { setTab(item); setProvider(null); }}
             >
               {item.charAt(0).toUpperCase() + item.slice(1)}
@@ -100,7 +105,7 @@ export function ProjectSettingsPage({
               <ProjectForm
                 initialValues={project}
                 submitLabel="Save changes"
-                readOnly={project.role !== "owner"}
+                readOnly={project.role !== "owner" || archiving}
                 onBusyChange={setBusy}
                 onCancel={onClose ?? (() => setTab("general"))}
                 onDiscoverLogo={actions.discoverLogo}
@@ -120,7 +125,7 @@ export function ProjectSettingsPage({
                   name={project.name}
                   disabled={busy || externalBusy}
                   onArchive={onArchive}
-                  onBusyChange={setBusy}
+                  onBusyChange={setArchiving}
                 />
               )}
             </>
@@ -133,7 +138,7 @@ export function ProjectSettingsPage({
           ) : tab === "integrations" ? (
             provider ? (
               <>
-                <Button variant="ghost" className="navigation-button" disabled={busy || externalBusy} onClick={() => setProvider(null)}>← Integrations</Button>
+                <Button variant="ghost" className="navigation-button" disabled={locked} onClick={() => setProvider(null)}>← Integrations</Button>
                 
                 {provider === "jira" ? <JiraSettings actions={actions.jira} owner={project.role === "owner"} onBusyChange={setBusy} /> : provider === "github" || provider === "gitlab" ? gitSettings?.(provider) : yandexSettings}
               </>
