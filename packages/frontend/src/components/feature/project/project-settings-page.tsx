@@ -31,12 +31,15 @@ export function ProjectSettingsPage({
   project,
   actions,
   onClose,
+  onArchive,
   yandexSettings,
   gitSettings,
   externalBusy = false,
   loadIntegrations,
 }: {
   loadIntegrations: () => Promise<IntegrationSummary[]>;
+  /** Owner-only. Archives the project; the caller navigates away afterwards. */
+  onArchive?: (() => Promise<void>) | undefined;
   yandexSettings?: ReactNode;
   gitSettings?: (provider: "github" | "gitlab") => ReactNode;
   externalBusy?: boolean;
@@ -47,12 +50,17 @@ export function ProjectSettingsPage({
   const [provider, setProvider] = useState<string | null>(null);
   const [tab, setTab] = useState("general");
   const [busy, setBusy] = useState(false);
+  // Archiving is tracked apart from a save, so neither can end the other's
+  // lock: the form stays disabled while archiving, and navigation stays
+  // locked until both are done.
+  const [archiving, setArchiving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const locked = busy || archiving || externalBusy;
   return (
     <main className="project-settings-page">
       {onClose && (
         <header className="project-settings-header">
-          <Button variant="ghost" className="navigation-button" disabled={busy || externalBusy} onClick={onClose}>← Back to project</Button>
+          <Button variant="ghost" className="navigation-button" disabled={locked} onClick={onClose}>← Back to project</Button>
           <h1>{project.name} settings</h1>
         </header>
       )}
@@ -76,7 +84,7 @@ export function ProjectSettingsPage({
             <button
               key={item}
               aria-current={tab === item ? "page" : undefined}
-              disabled={busy || externalBusy}
+              disabled={locked}
               onClick={() => { setTab(item); setProvider(null); }}
             >
               {item.charAt(0).toUpperCase() + item.slice(1)}
@@ -97,7 +105,7 @@ export function ProjectSettingsPage({
               <ProjectForm
                 initialValues={project}
                 submitLabel="Save changes"
-                readOnly={project.role !== "owner"}
+                readOnly={project.role !== "owner" || archiving}
                 onBusyChange={setBusy}
                 onCancel={onClose ?? (() => setTab("general"))}
                 onDiscoverLogo={actions.discoverLogo}
@@ -112,6 +120,14 @@ export function ProjectSettingsPage({
                   Changes saved.
                 </p>
               )}
+              {project.role === "owner" && onArchive && (
+                <ArchiveProject
+                  name={project.name}
+                  disabled={busy || externalBusy}
+                  onArchive={onArchive}
+                  onBusyChange={setArchiving}
+                />
+              )}
             </>
           ) : tab === "fields" ? (
             <ProjectFields
@@ -122,7 +138,7 @@ export function ProjectSettingsPage({
           ) : tab === "integrations" ? (
             provider ? (
               <>
-                <Button variant="ghost" className="navigation-button" disabled={busy || externalBusy} onClick={() => setProvider(null)}>← Integrations</Button>
+                <Button variant="ghost" className="navigation-button" disabled={locked} onClick={() => setProvider(null)}>← Integrations</Button>
                 
                 {provider === "jira" ? <JiraSettings actions={actions.jira} owner={project.role === "owner"} onBusyChange={setBusy} /> : provider === "github" || provider === "gitlab" ? gitSettings?.(provider) : yandexSettings}
               </>
@@ -146,6 +162,87 @@ export function ProjectSettingsPage({
         </section>
       </div>
     </main>
+  );
+}
+
+function ArchiveProject({
+  name,
+  disabled,
+  onArchive,
+  onBusyChange,
+}: {
+  name: string;
+  disabled: boolean;
+  onArchive: () => Promise<void>;
+  onBusyChange: (busy: boolean) => void;
+}) {
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  return (
+    <section
+      className="mt-10 flex flex-col gap-3 rounded-xl p-4 hairline"
+      aria-labelledby="archive-project-title"
+    >
+      <div>
+        <h3 id="archive-project-title" className="text-base font-semibold">
+          Archive project
+        </h3>
+        <p className="mt-1 text-sm text-ink-2">
+          {name} disappears from everyone’s sidebar and stops accepting changes.
+          Issues and history are kept, but there is no way to restore it from
+          the app yet.
+        </p>
+      </div>
+      {error && (
+        <p className="project-error" role="alert">
+          {error}
+        </p>
+      )}
+      {confirming ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            variant="danger"
+            disabled={busy || disabled}
+            onClick={() => {
+              setBusy(true);
+              onBusyChange(true);
+              setError("");
+              onArchive()
+                .catch((cause) => {
+                  setError(
+                    cause instanceof Error
+                      ? cause.message
+                      : "Couldn’t archive the project.",
+                  );
+                  setBusy(false);
+                  onBusyChange(false);
+                  setConfirming(false);
+                });
+            }}
+          >
+            {busy ? "Archiving…" : `Yes, archive ${name}`}
+          </Button>
+          <Button
+            variant="ghost"
+            disabled={busy}
+            onClick={() => setConfirming(false)}
+          >
+            Keep it
+          </Button>
+        </div>
+      ) : (
+        <div>
+          <Button
+            variant="secondary"
+            disabled={disabled}
+            onClick={() => setConfirming(true)}
+          >
+            Archive project…
+          </Button>
+        </div>
+      )}
+    </section>
   );
 }
 

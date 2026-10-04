@@ -610,22 +610,6 @@ function Workspace({
         onSelectFlow={() => { if (!integrationBusy) { setAISettings(false); workspace.selectFlow(); } }}
         onOpenOverview={() => { if (!integrationBusy) { setAISettings(false); workspace.selectOverview(); } }}
         onCreateProject={projectState.openCreate}
-        onProjectSettings={(id) => { if (!integrationBusy) { setAISettings(false); workspace.selectProject(id, "settings"); } }}
-        onArchiveProject={(id) => {
-          void projectState
-            .archive(id)
-            .then(() => {
-              workspace.selectFlow();
-              workspace.showNotice("Project archived.");
-            })
-            .catch((cause) =>
-              workspace.showNotice(
-                cause instanceof Error
-                  ? cause.message
-                  : "Couldn’t archive project.",
-              ),
-            );
-        }}
         onOpenAgents={() => { if (!integrationBusy) setAISettings(true); }}
         accountMenu={
           <AccountMenu
@@ -715,6 +699,11 @@ function Workspace({
               actions={settingsActions}
               externalBusy={integrationBusy}
               loadIntegrations={loadIntegrations}
+              onArchive={async () => {
+                await projectState.archive(settingsProject.id);
+                workspace.selectFlow();
+                workspace.showNotice("Project archived.");
+              }}
               gitSettings={provider => settingsProject.role === "owner" ? <GitSettings key={`${settingsProject.id}:${provider}`} projectId={settingsProject.id} provider={provider} onBusyChange={setIntegrationBusy} /> : <p className="muted">Only the project owner can manage Git connections.</p>}
               yandexSettings={
                 settingsProject.role === "owner" ? (

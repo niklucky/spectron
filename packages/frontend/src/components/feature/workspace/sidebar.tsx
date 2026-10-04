@@ -1,7 +1,6 @@
 import type { ReactNode } from "react";
 import { Icon, type IconName } from "../../ui/icon";
 import { IconButton } from "../../ui/button";
-import { Menu } from "../../ui/menu";
 import { ProjectMark } from "../project";
 import { cn } from "../../ui/cn";
 import type { Project } from "../task/types";
@@ -18,8 +17,6 @@ type SidebarProps = {
   onSelectProject: (project: string) => void;
   onSelectFlow: () => void;
   onCreateProject: () => void;
-  onProjectSettings: (id: string) => void;
-  onArchiveProject: (id: string) => void;
   onOpenOverview: () => void;
   onOpenAgents?: (() => void) | undefined;
 };
@@ -75,8 +72,6 @@ export function Sidebar({
   onSelectProject,
   onSelectFlow,
   onCreateProject,
-  onProjectSettings,
-  onArchiveProject,
   onOpenOverview,
   onOpenAgents,
 }: SidebarProps) {
@@ -186,38 +181,14 @@ export function Sidebar({
         {projects.map((item) => {
           const active = !isFlow && !isOverview && project === item.id;
           return (
-            <div key={item.id} className="group/project relative flex items-center">
-              <NavItem
-                label={item.name}
-                collapsed={collapsed}
-                active={active}
-                onClick={() => onSelectProject(item.id)}
-                leading={<ProjectMark project={item} size="sm" />}
-              />
-              {!collapsed && (
-                <Menu
-                  className="absolute right-1 size-6 opacity-0 group-hover/project:opacity-100 focus-visible:opacity-100 aria-expanded:opacity-100"
-                  label={`${item.name} options`}
-                  items={[
-                    {
-                      label: "Settings",
-                      icon: "settings",
-                      onSelect: () => onProjectSettings(item.id),
-                    },
-                    ...(item.role === "owner"
-                      ? [
-                          {
-                            label: "Archive",
-                            icon: "trash" as const,
-                            danger: true,
-                            onSelect: () => onArchiveProject(item.id),
-                          },
-                        ]
-                      : []),
-                  ]}
-                />
-              )}
-            </div>
+            <NavItem
+              key={item.id}
+              label={item.name}
+              collapsed={collapsed}
+              active={active}
+              onClick={() => onSelectProject(item.id)}
+              leading={<ProjectMark project={item} size="sm" />}
+            />
           );
         })}
       </nav>
