@@ -1,0 +1,67 @@
+{
+  "style": "cyberpunk-human-hybrid",
+  "framing": "frontal head and shoulders",
+  "effect": "none",
+  "avatars": [
+    {
+      "id": "senior-engineer",
+      "role": "Senior engineer",
+      "src": "/assets/avatars/senior-engineer-cyberpunk.png",
+      "background": {
+        "name": "magenta",
+        "color": "#D20A8C"
+      },
+      "prompt": "/assets/avatars/senior-engineer-cyberpunk.prompt.json"
+    },
+    {
+      "id": "junior-engineer",
+      "role": "Junior engineer",
+      "src": "/assets/avatars/junior-engineer-cyberpunk.png",
+      "background": {
+        "name": "green",
+        "color": "#16B84E"
+      },
+      "prompt": "/assets/avatars/junior-engineer-cyberpunk.prompt.json"
+    },
+    {
+      "id": "qa-engineer",
+      "role": "QA engineer",
+      "src": "/assets/avatars/qa-engineer-cyberpunk.png",
+      "background": {
+        "name": "amber",
+        "color": "#E9A21B"
+      },
+      "prompt": "/assets/avatars/qa-engineer-cyberpunk.prompt.json"
+    },
+    {
+      "id": "manager",
+      "role": "Manager",
+      "src": "/assets/avatars/manager-cyberpunk.png",
+      "background": {
+        "name": "blue",
+        "color": "#175FE8"
+      },
+      "prompt": "/assets/avatars/manager-cyberpunk.prompt.json"
+    },
+    {
+      "id": "code-reviewer",
+      "role": "Code reviewer",
+      "src": "/assets/avatars/code-reviewer-cyberpunk.png",
+      "background": {
+        "name": "violet",
+        "color": "#713BE8"
+      },
+      "prompt": "/assets/avatars/code-reviewer-cyberpunk.prompt.json"
+    },
+    {
+      "id": "copywriter",
+      "role": "Copywriter",
+      "src": "/assets/avatars/copywriter-cyberpunk.png",
+      "background": {
+        "name": "coral",
+        "color": "#EB614F"
+      },
+      "prompt": "/assets/avatars/copywriter-cyberpunk.prompt.json"
+    }
+  ]
+}
