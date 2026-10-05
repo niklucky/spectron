@@ -69,7 +69,11 @@ export function ChatComposer({
     [repositories, setRepositories] = useState<GitRepository[]>([]);
   const [agentId, setAgentId] = useState(""),
     [command, setCommand] = useState<AgentCommand>("discuss"),
-    [repositoryIds, setRepositoryIds] = useState<string[]>([]);
+    [serverRepositoryIds, setServerRepositoryIds] = useState<string[]>([]),
+    [localRepositoryIds, setLocalRepositoryIds] = useState<string[]>([]);
+  const agent = agents.find((a) => a.id === agentId);
+  const repositoryIds = agent?.localApp ? localRepositoryIds : serverRepositoryIds;
+  const setRepositoryIds = agent?.localApp ? setLocalRepositoryIds : setServerRepositoryIds;
   const [reviewBranch, setReviewBranch] = useState("");
   const [reviewTargets, setReviewTargets] = useState<ReviewTarget[]>([]);
   const [reviewWorkspaceId, setReviewWorkspaceId] = useState("");
@@ -105,7 +109,7 @@ export function ChatComposer({
         if (alive) {
           setAgents(a);
           setRepositories(repos);
-          setRepositoryIds(repos.filter((r) => repos.length === 1 || r.isDefault).map((r) => r.id));
+          setServerRepositoryIds(repos.filter((r) => repos.length === 1 || r.isDefault).map((r) => r.id));
         }
       },
       (e) => {
@@ -159,7 +163,6 @@ export function ChatComposer({
   const slashCommands = slash
     ? agentCommands.filter((c) => c !== "discuss" && c.startsWith(slash[1]!.toLowerCase()))
     : [];
-  const agent = agents.find((a) => a.id === agentId);
 
   function setText(text: string, extra?: (m: typeof draft.mentions) => typeof draft.mentions) {
     setDraft((previous) => {
@@ -189,7 +192,7 @@ export function ChatComposer({
     if (a.localApp) {
       const workspace = readLocalWorkspace(currentUserId, context.scope.projectId);
       const repositoryId = preferredLocalRepositoryId(workspace, repositories);
-      setRepositoryIds(repositoryId ? [repositoryId] : []);
+      setLocalRepositoryIds(repositoryId ? [repositoryId] : []);
     }
     if (match) {
       const start = caret - match[1]!.length - 1;

@@ -116,6 +116,7 @@ export function createLocalHandoffService(
           throw new IssueInputError("Select a current project repository.");
         const comments = await tx
           .select({
+            id: schema.issueComment.id,
             body: schema.issueComment.body,
             name: schema.user.name,
             createdAt: schema.issueComment.createdAt,
@@ -136,6 +137,46 @@ export function createLocalHandoffService(
             desc(schema.issueComment.id),
           )
           .limit(50);
+        // Read the public request and file references, never another handoff's
+        // private summary, agent instructions or download token.
+        const previousHandoffs = await tx
+          .select({
+            id: h.id,
+            ownerName: h.ownerName,
+            agentName: h.agentName,
+            message: h.message,
+            attachments: h.attachments,
+            createdAt: h.createdAt,
+          })
+          .from(h)
+          .where(
+            and(eq(h.projectId, input.projectId), eq(h.issueId, input.issueId)),
+          )
+          .orderBy(desc(h.createdAt), desc(h.id))
+          .limit(50);
+        const recentConversation = [
+          ...comments.map((comment) => ({
+            id: comment.id,
+            name: comment.name ?? "External participant",
+            text: commentText(comment.body),
+            createdAt: comment.createdAt,
+            fileIds: [] as string[],
+          })),
+          ...previousHandoffs.map((handoff) => ({
+            id: handoff.id,
+            name: `${handoff.ownerName} → ${handoff.agentName} (local handoff)`,
+            text: handoff.message,
+            createdAt: handoff.createdAt,
+            fileIds: handoff.attachments.map((file) => file.id),
+          })),
+        ]
+          .sort(
+            (a, b) =>
+              b.createdAt.getTime() - a.createdAt.getTime() ||
+              b.id.localeCompare(a.id),
+          )
+          .slice(0, 50)
+          .reverse();
         const results = await tx
           .select({
             agent: schema.agentRun.agent,
@@ -173,6 +214,7 @@ export function createLocalHandoffService(
           ...new Set([
             ...attached.map((f) => f.id),
             ...commentFiles.map((f) => f.id),
+            ...recentConversation.flatMap((entry) => entry.fileIds),
             ...input.fileIds,
           ]),
         ];
@@ -199,11 +241,10 @@ export function createLocalHandoffService(
           : [];
         const issueKey = `${project!.key}-${current.issue.number}`;
         // Preserve the latest request. Excerpts explicitly link to the full history.
-        const conversation = comments
-          .reverse()
+        const conversation = recentConversation
           .map(
             (c) =>
-              `${c.name ?? "External participant"} (${c.createdAt.toISOString()}):\n${excerpt(commentText(c.body), 2000)}`,
+              `${c.name} (${c.createdAt.toISOString()}):\n${excerpt(c.text, 2000)}`,
           )
           .join("\n\n");
         const summary = [

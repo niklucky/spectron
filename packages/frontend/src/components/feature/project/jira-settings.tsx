@@ -130,6 +130,10 @@ export function JiraSettings({
   const activeRun = useRef<string | null>(null);
   const [importing, setImporting] = useState(false);
   const [stopping, setStopping] = useState(false);
+  const locked = busy || exportBusy;
+  useEffect(() => {
+    onBusyChange(locked);
+  }, [locked, onBusyChange]);
   const mappingDirty =
     !!connection &&
     JSON.stringify(mappings) !== JSON.stringify(connection.mappings);
@@ -180,9 +184,8 @@ export function JiraSettings({
     return () => clearInterval(timer);
   }, [actions, owner]);
   async function run(fn: () => Promise<void>, where: FeedbackScope = "sync") {
-    if (busy) return;
+    if (locked) return;
     setBusy(true);
-    onBusyChange(true);
     setScope(where);
     setError("");
     setFeedback("");
@@ -192,7 +195,6 @@ export function JiraSettings({
       setError(e instanceof Error ? e.message : "Jira operation failed.");
     } finally {
       setBusy(false);
-      onBusyChange(false);
     }
   }
   async function importSingle(id: string, overwriteLocal = false) {
@@ -250,9 +252,9 @@ export function JiraSettings({
         description="The connected account performs imports and exports. Credentials are encrypted on the server."
         actions={
           connection && !editingConnection ? (
-            <Button variant="secondary" size="sm" disabled={busy} onClick={() => setEditingConnection(true)}>Edit</Button>
+            <Button variant="secondary" size="sm" disabled={locked} onClick={() => setEditingConnection(true)}>Edit</Button>
           ) : connection && editingConnection ? (
-            <Button variant="ghost" size="sm" disabled={busy} onClick={() => { setConfig(connectionConfig(connection)); setEditingConnection(false); }}>Cancel</Button>
+            <Button variant="ghost" size="sm" disabled={locked} onClick={() => { setConfig(connectionConfig(connection)); setEditingConnection(false); }}>Cancel</Button>
           ) : undefined
         }
       >
@@ -270,7 +272,7 @@ export function JiraSettings({
           }, "connection");
         }}
       >
-        <fieldset disabled={busy || !editingConnection} className="m-0 flex min-w-0 flex-col gap-3 border-0 p-0">
+        <fieldset disabled={locked || !editingConnection} className="m-0 flex min-w-0 flex-col gap-3 border-0 p-0">
           <Field label="Jira site">
             <Input
               type="url"
@@ -347,10 +349,10 @@ export function JiraSettings({
             title="Field mapping"
             description="How Jira statuses, priorities, types, fields and people correspond to this project."
             actions={<>
-            <Button variant="ghost" size="sm" disabled={busy || metadataLoading || editingMappings} onClick={() => void run(loadMetadata, "mapping")}>Refresh Jira options</Button>
-            {!editingMappings ? <Button variant="secondary" size="sm" disabled={busy} onClick={() => setEditingMappings(true)}>Edit</Button> : <>
-              <Button variant="ghost" size="sm" disabled={busy} onClick={() => { setMappings(connection.mappings); setConfig(connectionConfig(connection)); setEditingMappings(false); }}>Cancel</Button>
-              <Button variant="primary" size="sm" disabled={busy} onClick={() => void run(async () => {
+            <Button variant="ghost" size="sm" disabled={locked || metadataLoading || editingMappings} onClick={() => void run(loadMetadata, "mapping")}>Refresh Jira options</Button>
+            {!editingMappings ? <Button variant="secondary" size="sm" disabled={locked} onClick={() => setEditingMappings(true)}>Edit</Button> : <>
+              <Button variant="ghost" size="sm" disabled={locked} onClick={() => { setMappings(connection.mappings); setConfig(connectionConfig(connection)); setEditingMappings(false); }}>Cancel</Button>
+              <Button variant="primary" size="sm" disabled={locked} onClick={() => void run(async () => {
                 if (config.issueTypeId !== connection.issueTypeId) {
                   const saved = await actions.save({ ...connectionConfig(connection), issueTypeId: config.issueTypeId });
                   setConnection(saved);
@@ -382,7 +384,7 @@ export function JiraSettings({
               : kind === "fields" ? [...builtInIssueFields, ...(settings.fields ?? [])] : members;
             const mapped = rows.filter(row => !!mappings[kind]?.[row.id]).length;
             return <Disclosure key={kind} summary={kind === "issueTypes" ? "Issue types" : kind[0]!.toUpperCase() + kind.slice(1)} count={`${mapped} / ${metadata ? rows.length : `${rows.length} known`}`}>
-              <fieldset disabled={busy || !editingMappings} className="m-0 flex min-w-0 flex-col gap-3 border-0 p-0">
+              <fieldset disabled={locked || !editingMappings} className="m-0 flex min-w-0 flex-col gap-3 border-0 p-0">
                 {kind === "users" && <Note>Map Jira users, including imported historical users, to project members. Unlinked users keep their imported attribution and have no login or project access.</Note>}
                 {kind === "fields" && <Note>Unmapped fields are ignored. Mapping labels to Tags replaces issue tags on import and creates missing tags by name.</Note>}
                 <div className="flex max-h-[340px] flex-col gap-2 overflow-auto">{rows.map(row => {
@@ -410,16 +412,16 @@ export function JiraSettings({
             title="Sync"
             description="Automatic import brings in issues updated since the last run. A full import scans everything with the saved mappings."
             actions={!editingSchedule ? (
-              <Button variant="secondary" size="sm" disabled={busy} onClick={() => { setScheduleDraft(connection.scheduleMinutes as 15 | 60 | 1440 | null); setEditingSchedule(true); }}>Edit schedule</Button>
+              <Button variant="secondary" size="sm" disabled={locked} onClick={() => { setScheduleDraft(connection.scheduleMinutes as 15 | 60 | 1440 | null); setEditingSchedule(true); }}>Edit schedule</Button>
             ) : (
               <>
-                <Button variant="ghost" size="sm" disabled={busy} onClick={() => setEditingSchedule(false)}>Cancel</Button>
-                <Button variant="primary" size="sm" disabled={busy} onClick={() => void run(async () => { setConnection(await actions.schedule(scheduleDraft)); setEditingSchedule(false); setFeedback("Import schedule saved."); })}>Save</Button>
+                <Button variant="ghost" size="sm" disabled={locked} onClick={() => setEditingSchedule(false)}>Cancel</Button>
+                <Button variant="primary" size="sm" disabled={locked} onClick={() => void run(async () => { setConnection(await actions.schedule(scheduleDraft)); setEditingSchedule(false); setFeedback("Import schedule saved."); })}>Save</Button>
               </>
             )}
           >
           <Field label="Automatic import" className="max-w-[280px]">
-            <Select disabled={busy || !editingSchedule} value={(editingSchedule ? scheduleDraft : connection.scheduleMinutes) ?? ""} onChange={e => setScheduleDraft(e.target.value ? Number(e.target.value) as 15 | 60 | 1440 : null)}><option value="">Off</option><option value="15">Every 15 minutes</option><option value="60">Every hour</option><option value="1440">Every day</option></Select>
+            <Select disabled={locked || !editingSchedule} value={(editingSchedule ? scheduleDraft : connection.scheduleMinutes) ?? ""} onChange={e => setScheduleDraft(e.target.value ? Number(e.target.value) as 15 | 60 | 1440 : null)}><option value="">Off</option><option value="15">Every 15 minutes</option><option value="60">Every hour</option><option value="1440">Every day</option></Select>
           </Field>
           <Note>
             The first scheduled run imports all issues; later runs fetch issues updated since the last successful run, with a five-minute overlap. Turning the schedule off prevents future runs; Stop import cancels the current one.
@@ -429,7 +431,7 @@ export function JiraSettings({
           <div className="flex flex-wrap items-center gap-2">
             <Button
               variant="secondary"
-              disabled={busy}
+              disabled={locked}
               onClick={() =>
                 void run(async () => {
                   cancel.current = false;
@@ -556,7 +558,7 @@ export function JiraSettings({
             <SettingsSection
               title="Needs reconciliation"
               description="A request may have succeeded in Jira before its response was lost. Find the created entity and link its ID before retrying."
-              actions={<Button variant={editingReconciliation ? "ghost" : "secondary"} size="sm" disabled={busy} onClick={() => setEditingReconciliation(value => !value)}>{editingReconciliation ? "Cancel" : "Edit"}</Button>}
+              actions={<Button variant={editingReconciliation ? "ghost" : "secondary"} size="sm" disabled={locked} onClick={() => setEditingReconciliation(value => !value)}>{editingReconciliation ? "Cancel" : "Edit"}</Button>}
             >
               {pending.map((p) => (
                 <form
@@ -579,13 +581,13 @@ export function JiraSettings({
                 >
                   <Field label={`${p.kind} · ${p.id}`} className="min-w-0 flex-1">
                     <Input
-                      disabled={busy || !editingReconciliation}
+                      disabled={locked || !editingReconciliation}
                       name="externalId"
                       required
                       placeholder="Jira issue ID/key or comment ID"
                     />
                   </Field>
-                  <Button variant="primary" disabled={busy || !editingReconciliation} type="submit">
+                  <Button variant="primary" disabled={locked || !editingReconciliation} type="submit">
                     Link
                   </Button>
                 </form>
@@ -605,7 +607,7 @@ export function JiraSettings({
                 <span className="mono font-medium text-ink">{f.key}</span>
                 <span className="min-w-0 flex-1 text-ink-2">{f.error}</span>
                 <Button
-                  disabled={busy}
+                  disabled={locked}
                   variant="secondary"
                   size="sm"
                   onClick={() =>
@@ -621,7 +623,7 @@ export function JiraSettings({
                 </Button>
                 {f.error.includes("Both Spectron and Jira changed") && (
                   <Button
-                    disabled={busy}
+                    disabled={locked}
                     variant="ghost"
                     size="sm"
                     onClick={() =>
@@ -645,7 +647,7 @@ export function JiraSettings({
           </ul>
         </SettingsSection>
       )}
-      {connection && <ExportSettings actions={actions.exports} disabled={busy} onBusyChange={value => { setExportBusy(value); onBusyChange(value); }} />}
+      {connection && <ExportSettings actions={actions.exports} disabled={locked} onBusyChange={setExportBusy} />}
       {connection && <IntegrationSyncLog active feedback={feedback} error={error} lastScheduledAt={connection.lastScheduledAt} lastScheduleResult={connection.lastScheduleResult} />}
     </div>
   );

@@ -282,17 +282,28 @@ test("personal local agents, immutable handoffs, scoped file links, expiry and r
   assert.match(draft.summary, /Please fix this issue/);
   assert.match(draft.summary, /keyboard shortcut/);
   assert.match(draft.summary, /Run the relevant checks/);
-  await call("comments.create", member, {
-    ...scope,
-    parentId: null,
-    body: [{ type: "text", text: "Later comment after handoff" }],
-    files: [],
-  }, true);
+  await call(
+    "comments.create",
+    member,
+    {
+      ...scope,
+      parentId: null,
+      body: [{ type: "text", text: "Later comment after handoff" }],
+      files: [],
+    },
+    true,
+  );
   const afterComment = await call<
     { id: string; lastActivity: { preview: string } }[]
   >("issues.list", owner, { projectId: project.id });
-  assert.equal(afterComment.find(row => row.id === issue.id)!.lastActivity.preview, "Later comment after handoff");
-  assert.equal((await call<LocalHandoffDraft>("handoffs.draft", owner, ref)).summary, draft.summary);
+  assert.equal(
+    afterComment.find((row) => row.id === issue.id)!.lastActivity.preview,
+    "Later comment after handoff",
+  );
+  assert.equal(
+    (await call<LocalHandoffDraft>("handoffs.draft", owner, ref)).summary,
+    draft.summary,
+  );
   await call("handoffs.draft", member, ref, false, 404);
   const publicList = await call<LocalHandoffView[]>(
     "handoffs.list",
@@ -349,6 +360,125 @@ test("personal local agents, immutable handoffs, scoped file links, expiry and r
   assert.doesNotMatch(
     (await call<LocalHandoffDraft>("handoffs.draft", owner, ref)).summary,
     /token=/,
+  );
+  // A follow-up starts a fresh app chat, so it needs earlier requests and
+  // uploaded files even when they were never attached to a comment or issue.
+  const memberAgent = await call<{ id: string }>(
+    "ai.createAgent",
+    member,
+    {
+      ...agentInput,
+      name: "Member Codex",
+      instructions: "PRIVATE_EARLIER_AGENT_INSTRUCTIONS",
+    },
+    true,
+  );
+  const memberFile = await upload(project.id, "earlier-member.txt");
+  const memberHandoff = await call<LocalHandoffView>(
+    "handoffs.create",
+    member,
+    {
+      ...input,
+      agentId: memberAgent.id,
+      requestId: createId(),
+      message: "Also preserve the existing keyboard behavior.",
+      fileIds: [memberFile.projectFileId],
+    },
+    true,
+  );
+  const memberDraft = await call<LocalHandoffDraft>("handoffs.draft", member, {
+    ...scope,
+    id: memberHandoff.id,
+  });
+  const earlierToken = new URL(
+    memberDraft.summary.match(/\]\((http[^\s)]+\/api\/files\/[^\s)]+)\)/)![1]!,
+  ).searchParams.get("token")!;
+  const otherIssue = await call<{ id: string }>(
+    "issues.create",
+    owner,
+    { projectId: project.id, title: "Unrelated issue" },
+    true,
+  );
+  await call(
+    "handoffs.create",
+    owner,
+    {
+      ...input,
+      issueId: otherIssue.id,
+      requestId: createId(),
+      message: "UNRELATED_ISSUE_REQUEST",
+      fileIds: [unrelated.projectFileId],
+    },
+    true,
+  );
+  const followup = await call<LocalHandoffView>(
+    "handoffs.create",
+    owner,
+    {
+      ...input,
+      requestId: createId(),
+      message: "Now add regression tests for the change I requested earlier.",
+      fileIds: [],
+    },
+    true,
+  );
+  const followupDraft = await call<LocalHandoffDraft>("handoffs.draft", owner, {
+    ...scope,
+    id: followup.id,
+  });
+  assert.match(followupDraft.summary, /Please fix this issue/);
+  assert.match(
+    followupDraft.summary,
+    /Also preserve the existing keyboard behavior/,
+  );
+  assert.match(
+    followupDraft.summary,
+    /member → Member Codex \(local handoff\)/,
+  );
+  assert.match(followupDraft.summary, /notes\.txt/);
+  assert.match(followupDraft.summary, /earlier-member\.txt/);
+  assert.ok(
+    followupDraft.summary.indexOf("Please fix this issue") <
+      followupDraft.summary.indexOf(
+        "Also preserve the existing keyboard behavior",
+      ),
+  );
+  assert.doesNotMatch(
+    followupDraft.summary,
+    /PRIVATE_EARLIER_AGENT_INSTRUCTIONS|UNRELATED_ISSUE_REQUEST|unrelated\.txt/,
+  );
+  assert.ok(!followupDraft.summary.includes(earlierToken));
+  const followupFileURLs = Array.from(
+    followupDraft.summary.matchAll(/\]\((http[^\s)]+\/api\/files\/[^\s)]+)\)/g),
+    (match) => match[1]!,
+  );
+  assert.equal(followupFileURLs.length, 2);
+  for (const fileLink of followupFileURLs) {
+    assert.equal(new URL(fileLink).searchParams.get("handoff"), followup.id);
+    assert.equal((await api.request(fileLink)).status, 200);
+  }
+  assert.equal((await api.request(fileURL)).status, 404);
+  assert.equal(
+    (
+      await call<LocalHandoffDraft>("handoffs.draft", member, {
+        ...scope,
+        id: memberHandoff.id,
+      })
+    ).summary,
+    memberDraft.summary,
+  );
+  assert.doesNotMatch(
+    JSON.stringify(
+      await call<LocalHandoffView[]>("handoffs.list", member, scope),
+    ),
+    /token|summary|fileToken|originUrl/,
+  );
+  await call(
+    "handoffs.draft",
+    member,
+    { ...scope, id: followup.id },
+    false,
+    404,
   );
   const t3Handoff = await call<LocalHandoffView>(
     "handoffs.create",
