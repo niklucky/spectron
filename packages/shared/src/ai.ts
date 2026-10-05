@@ -153,14 +153,16 @@ export type AgentIdentity = {
   name: string;
   avatar: string | null;
   role: string;
-  provider: AIProvider;
+  provider: AIProvider | null;
+  localApp?: "codex" | "t3code" | null | undefined;
   model: string;
   effort: AIEffort | null;
 };
 export type AgentInput = {
   name: string;
   avatar: string | null;
-  connectionId: string;
+  connectionId: string | null;
+  localApp?: "codex" | "t3code" | null | undefined;
   model: string;
   effort: AIEffort | null;
   role: string;

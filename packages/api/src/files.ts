@@ -25,6 +25,7 @@ export function createFileRoutes(
   auth: Auth,
   files: FileService,
   appURL: string,
+  handoffs?: import("@spectron/backend").LocalHandoffService,
 ) {
   const routes = new Hono();
   routes.onError((error, c) => {
@@ -71,11 +72,17 @@ export function createFileRoutes(
   });
   routes.on(["GET", "HEAD"], "/:projectId/:projectFileId", async (c) => {
     const session = await auth.api.getSession({ headers: c.req.raw.headers });
-    if (!session) return c.json({ error: "Unauthorized" }, 401);
     const projectId = id.parse(c.req.param("projectId"));
     const projectFileId = id.parse(c.req.param("projectFileId"));
+    const token = c.req.query("token"), handoffId = c.req.query("handoff");
+    let userId = session?.user.id;
+    if (token || handoffId) {
+      if (!token || !handoffId || !handoffs) throw new ProjectAccessError("File not found.");
+      userId = await handoffs.downloadOwner(projectId, projectFileId, id.parse(handoffId), token);
+    }
+    if (!userId) return c.json({ error: "Unauthorized" }, 401);
     const file = await files.download(
-      session.user.id,
+      userId,
       projectId,
       projectFileId,
     );
@@ -86,7 +93,7 @@ export function createFileRoutes(
         filePreviewKind(file.contentType) !== null &&
           c.req.query("download") !== "1",
       ),
-      "Cache-Control": "private, no-cache",
+      "Cache-Control": token ? "no-store" : "private, no-cache",
       "X-Content-Type-Options": "nosniff",
       "Content-Security-Policy": "sandbox",
       "Referrer-Policy": "no-referrer",

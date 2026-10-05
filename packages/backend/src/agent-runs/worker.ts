@@ -52,6 +52,7 @@ export function createAgentWorker(
     );
   }
   async function preparation(row: Run): Promise<RuntimePreparation> {
+    if (!row.agent.provider || row.agent.localApp) throw new Error("Local app agents cannot run in a server workspace.");
     await authorized(row);
     const [connection] = await db
       .select()

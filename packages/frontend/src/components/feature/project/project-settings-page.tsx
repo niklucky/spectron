@@ -33,7 +33,7 @@ export type ProjectSettingsActions = {
   discoverLogo: (url: string) => Promise<{ logo: string | null }>;
 };
 
-const tabs = ["general", "members", "states", "priorities", "types", "tags", "fields", "integrations"] as const;
+const tabs = ["general", "members", "states", "priorities", "types", "tags", "fields", "integrations", "local-apps"] as const;
 type Tab = (typeof tabs)[number];
 const titles: Record<Tab, { label: string; description: string }> = {
   general: { label: "General", description: "Name, issue prefix, website and logo." },
@@ -44,6 +44,7 @@ const titles: Record<Tab, { label: string; description: string }> = {
   tags: { label: "Tags", description: "Free labels for grouping issues." },
   fields: { label: "Fields", description: "Custom fields on this project’s issues." },
   integrations: { label: "Integrations", description: "Services connected to this project, and what else is available." },
+  "local-apps": { label: "Local apps", description: "Your Codex and T3 Code workspace on this computer." },
 };
 const providerDescriptions: Record<string, string> = {
   jira: "Connect a Jira project, map its people and fields, then import issues or export changes back.",
@@ -59,6 +60,7 @@ export function ProjectSettingsPage({
   onArchive,
   yandexSettings,
   gitSettings,
+  localAppSettings,
   externalBusy = false,
   loadIntegrations,
 }: {
@@ -67,6 +69,7 @@ export function ProjectSettingsPage({
   onArchive?: (() => Promise<void>) | undefined;
   yandexSettings?: ReactNode;
   gitSettings?: (provider: "github" | "gitlab") => ReactNode;
+  localAppSettings?: ReactNode;
   externalBusy?: boolean;
   project: ProjectSummary;
   actions: ProjectSettingsActions;
@@ -141,6 +144,8 @@ export function ProjectSettingsPage({
             />
           )}
         </>
+      ) : tab === "local-apps" ? (
+        localAppSettings
       ) : tab === "fields" ? (
         <ProjectFields actions={actions.fields} owner={owner} onBusyChange={setBusy} />
       ) : tab === "integrations" ? (

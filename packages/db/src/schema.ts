@@ -189,6 +189,7 @@ export const aiAgent = pgTable("ai_agents", {
   id: text("id").$defaultFn(createId).primaryKey(),
   ownerId: text("owner_id").notNull().references(() => user.id, { onDelete: "cascade" }),
   connectionId: text("connection_id"),
+  localApp: text("local_app").$type<"codex" | "t3code">(),
   name: text("name").notNull(),
   avatar: text("avatar"),
   model: text("model").notNull(),
@@ -202,7 +203,8 @@ export const aiAgent = pgTable("ai_agents", {
   uniqueIndex("ai_agents_owner_id_unique").on(t.ownerId, t.id),
   index("ai_agents_connection_idx").on(t.connectionId),
   foreignKey({ columns: [t.ownerId, t.connectionId], foreignColumns: [aiConnection.ownerId, aiConnection.id], name: "ai_agents_connection_owner_fk" }).onDelete("restrict"),
-  check("ai_agents_active_connection", sql`${t.deletedAt} IS NOT NULL OR ${t.connectionId} IS NOT NULL`),
+  check("ai_agents_active_connection", sql`${t.deletedAt} IS NOT NULL OR (${t.localApp} IS NULL AND ${t.connectionId} IS NOT NULL) OR (${t.localApp} IS NOT NULL AND ${t.localApp} IN ('codex', 't3code') AND ${t.connectionId} IS NULL)`),
+  check("ai_agents_local_app", sql`${t.localApp} IS NULL OR ${t.localApp} IN ('codex', 't3code')`),
 ]);
 
 export const aiAgentShare = pgTable("ai_agent_shares", {
@@ -853,6 +855,31 @@ export const gitRepository = pgTable("git_repositories", {
 ]);
 
 // Private context/configuration is never selected by the run presentation API.
+export const localHandoff = pgTable("local_handoffs", {
+  id: text("id").$defaultFn(createId).primaryKey(),
+  projectId: text("project_id").notNull(),
+  issueId: text("issue_id").notNull(),
+  ownerId: text("owner_id").notNull().references(() => user.id, { onDelete: "restrict" }),
+  ownerName: text("owner_name").notNull(),
+  requestId: text("request_id").notNull(),
+  agentName: text("agent_name").notNull(),
+  application: text("application").$type<import("@spectron/shared").LocalApp>().notNull(),
+  message: text("message").notNull(),
+  summary: text("summary").notNull(),
+  originUrl: text("origin_url"),
+  repositoryId: text("repository_id"),
+  attachments: jsonb("attachments").$type<{ id: string; name: string }[]>().notNull(),
+  fileToken: text("file_token"),
+  filesExpireAt: timestamp("files_expire_at", { withTimezone: true }).notNull(),
+  launchRequestedAt: timestamp("launch_requested_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, t => [
+  foreignKey({ columns: [t.projectId, t.issueId], foreignColumns: [issue.projectId, issue.id], name: "local_handoffs_issue_fk" }).onDelete("restrict"),
+  uniqueIndex("local_handoffs_request_unique").on(t.ownerId, t.requestId),
+  index("local_handoffs_issue_idx").on(t.issueId, t.createdAt),
+  check("local_handoffs_application", sql`${t.application} IN ('codex', 't3code')`),
+]);
+
 export const agentRun = pgTable('agent_runs', {
   id: text('id').$defaultFn(createId).primaryKey(),
   projectId: text('project_id').notNull(), issueId: text('issue_id').notNull(),

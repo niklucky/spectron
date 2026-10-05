@@ -21,6 +21,7 @@ export type Context = {
   runs: AgentRunService;
   gitWorkflow: ReturnType<typeof import("@spectron/backend").createGitWorkflow>;
   ai: AIService;
+  handoffs: import("@spectron/backend").LocalHandoffService;
   git: GitService;
   exports: ExportService;
   tracker: TrackerService;
@@ -52,11 +53,13 @@ export async function createContext(
   git: GitService,
   runs: AgentRunService,
   gitWorkflow: Context["gitWorkflow"],
+  handoffs: Context["handoffs"],
 ): Promise<Context> {
   const session = await auth.api.getSession({ headers: request.headers });
   return {
     userId: session?.user.id || null,
     ai,
+    handoffs,
     runs,
     gitWorkflow,
     git,

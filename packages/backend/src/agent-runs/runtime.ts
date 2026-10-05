@@ -152,6 +152,7 @@ export function openCodeConfig(
   limits: ModelLimits = modelLimits(agent),
 ) {
   const provider = agent.provider;
+  if (!provider || agent.localApp) throw new Error("Local app agents cannot run in a server workspace.");
   const baseURL = providerBaseURLs[provider];
   const npm =
     provider === "anthropic"
@@ -466,6 +467,7 @@ export function createDockerAgentRuntime(options: {
   return {
     writableGit,
     async prepare(run, config, signal, activity) {
+      if (!run.agent.provider || run.agent.localApp) throw new Error("Local app agents cannot run in a server workspace.");
       const dir = directory(run.id);
       secrets.set(run.id, [
         config.key,

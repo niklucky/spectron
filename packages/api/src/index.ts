@@ -7,6 +7,7 @@ import {
   createProjectService,
   createAgentRunService,
   createAIService,
+  createLocalHandoffService,
   createGitService,
   createGitAdapterFactory,
   createGitTransport,
@@ -72,6 +73,7 @@ export function createAPI(
   const worklogs = createWorklogService(db);
   const comments = createCommentService(db);
   const files = createFileService(db, fileStorage);
+  const handoffs = createLocalHandoffService(db, files, appURL);
   const gitWorkflow = createGitWorkflow(db, integrationSecret, factory);
   const runs = createAgentRunService(db, files, { secret: integrationSecret, factory });
   const tracker = createTrackerService(db, undefined, undefined, files);
@@ -100,7 +102,7 @@ export function createAPI(
       c.header("Cache-Control", "no-store");
     c.header("Referrer-Policy", "no-referrer");
   });
-  api.route("/api/files", createFileRoutes(auth, files, appURL));
+  api.route("/api/files", createFileRoutes(auth, files, appURL, handoffs));
   api.post("/api/git/webhooks/:connectionId", async c => {
     try { await gitWorkflow.webhook(c.req.param("connectionId"), c.req.raw.headers, await c.req.text()); return c.json({ accepted: true }); }
     catch { return c.json({ error: "Webhook rejected" }, 403); }
@@ -144,6 +146,7 @@ export function createAPI(
           git,
           runs,
           gitWorkflow,
+          handoffs,
         ),
     });
   });

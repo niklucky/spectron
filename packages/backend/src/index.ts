@@ -1,5 +1,6 @@
 export { createAuth } from "./auth";
 export { createAIService, type AIService } from "./ai";
+export { createLocalHandoffService, type LocalHandoffService } from "./local-handoffs";
 export type { AICredentialCheck } from "./ai-credentials";
 export type {
   Auth,

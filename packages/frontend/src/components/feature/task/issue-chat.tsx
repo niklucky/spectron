@@ -1,6 +1,8 @@
 import { GitActivityCards } from "./git-activity";
 import { AgentRunCard } from "./agent-run-card";
 import { ChatComposer } from "./chat-composer";
+import { LocalHandoffCard } from "./local-handoff-card";
+import type { LocalHandoffView } from "@spectron/shared";
 import { agentRunPollDelay, type AgentRunView } from "@spectron/shared";
 import { formatDateTime } from "../../../lib/date-format";
 import { AttachmentMarkdown, nonInlineFiles } from "./issue-comments";
@@ -77,6 +79,17 @@ export function IssueChat({
   void issues;
   void onSelect;
   const [runs, setRuns] = useState<AgentRunView[]>([]);
+  const [handoffs, setHandoffs] = useState<LocalHandoffView[]>([]);
+  const [handoffError, setHandoffError] = useState("");
+  useEffect(() => {
+    if (!active || !actions.handoffs) return;
+    let alive = true;
+    const refresh = () => {
+      void actions.handoffs!.list({ projectId: issue.projectId, issueId: issue.id }).then(rows => { if (alive) { setHandoffs(rows); setHandoffError(""); } }, cause => { if (alive) setHandoffError(cause instanceof Error ? cause.message : "Could not load local handoffs."); });
+    };
+    refresh(); window.addEventListener("focus", refresh);
+    return () => { alive = false; window.removeEventListener("focus", refresh); };
+  }, [active, actions.handoffs, issue.id, issue.projectId, revision]);
   const [runError, setRunError] = useState("");
   const [events, setEvents] = useState<IssueActivityEvent[]>([]),
     [cursor, setCursor] = useState<string | null>(null),
@@ -206,7 +219,7 @@ export function IssueChat({
     if (scroll.current === "bottom") el.scrollTop = el.scrollHeight;
     else if (scroll.current) el.scrollTop = scroll.current.top + el.scrollHeight - scroll.current.height;
     scroll.current = null;
-  }, [events, runs]);
+  }, [events, runs, handoffs]);
   function changed() {
     scroll.current = "bottom";
     onChange();
@@ -226,11 +239,12 @@ export function IssueChat({
     !!issue.deletedAt ||
     settings.states.some((s) => s.id === issue.stateId && ["finished", "cancelled"].includes(s.trigger));
   const timeline = [
-    ...events.map((event) => ({ run: null as AgentRunView | null, event, file: null as IssueAttachmentSummary | null, date: event.comment?.createdAt ?? event.entry.createdAt })),
+    ...events.map((event) => ({ handoff: null as LocalHandoffView | null, run: null as AgentRunView | null, event, file: null as IssueAttachmentSummary | null, date: event.comment?.createdAt ?? event.entry.createdAt })),
     ...attachments
       .filter((f) => !f.inDescription && !f.commentIds?.length)
-      .map((file) => ({ run: null as AgentRunView | null, event: null, file, date: file.attachedAt ?? file.createdAt })),
-    ...runs.map((run) => ({ run, event: null, file: null, date: run.createdAt })),
+      .map((file) => ({ handoff: null as LocalHandoffView | null, run: null as AgentRunView | null, event: null, file, date: file.attachedAt ?? file.createdAt })),
+    ...runs.map((run) => ({ handoff: null as LocalHandoffView | null, run, event: null, file: null, date: run.createdAt })),
+    ...handoffs.map(handoff => ({ handoff, run: null, event: null, file: null, date: handoff.createdAt })),
   ].sort((a, b) => a.date.localeCompare(b.date));
   const names: Record<string, string> = {
     key: "Issue", title: "Title", description: "Description", stateId: "State", priorityId: "Priority",
@@ -308,8 +322,13 @@ export function IssueChat({
             />
           )}
           {runError && <p role="alert" className="text-sm text-bad">{runError}</p>}
-          {timeline.map(({ event, file, run, date }) => {
+          {handoffError && <p role="alert" className="text-sm text-bad">{handoffError}</p>}
+          {timeline.map(({ event, file, run, handoff, date }) => {
             const separator = day(date);
+            if (handoff && actions.handoffs) {
+              lastAuthor = `handoff:${handoff.id}`;
+              return <div key={handoff.id} className="contents">{separator}<LocalHandoffCard handoff={handoff} actions={actions.handoffs} currentUserId={me} changed={changed} /></div>;
+            }
             if (run && actions.runs) {
               lastAuthor = `run:${run.agent.id}`;
               return (
@@ -429,7 +448,7 @@ export function IssueChat({
       )}
       {!issue.deletedAt && (
         <div className="shrink-0 px-7 pb-4 [background:linear-gradient(transparent,var(--sp-surface)_30%)]" ref={composer} hidden={!!tool}>
-          <ChatComposer context={context} agentActions={actions.runs} />
+          <ChatComposer context={context} agentActions={actions.runs} handoffActions={actions.handoffs} currentUserId={me} />
         </div>
       )}
     </section>
