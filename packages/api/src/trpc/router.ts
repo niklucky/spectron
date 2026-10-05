@@ -19,6 +19,7 @@ import {
   gitProviders,
   aiEfforts,
   aiCatalog,
+  localApps,
   exportActions,
   issueTriggers,
   normalizeProjectURL,
@@ -119,8 +120,9 @@ const aiRevision = z.object({ id: applicationId, revision: z.number().int().posi
 const agentInput = z.object({
   name: aiName,
   avatar: z.string().max(2_800_000).nullable(),
-  connectionId: applicationId,
-  model: z.string().min(1).max(128),
+  connectionId: applicationId.nullable(),
+  localApp: z.enum(localApps).nullable().optional(),
+  model: z.string().max(128),
   effort: z.enum(aiEfforts).nullable(),
   role: z.string().trim().min(1).max(80),
   instructions: z.string().max(32000),
@@ -216,6 +218,13 @@ const runScope = z.object({ projectId: applicationId, issueId: applicationId }).
 const runRef = runScope.extend({ id: applicationId });
 const workspaceRef = runScope.extend({ workspaceId: applicationId });
 export const appRouter = t.router({
+  handoffs: t.router({
+    create: authenticated.input(runScope.extend({ requestId: applicationId, agentId: applicationId, command: z.enum(agentCommands), repositoryId: applicationId.nullable(), message: z.string().trim().min(1).max(100000), fileIds: z.array(applicationId).max(20) })).mutation(({ ctx, input }) => ctx.handoffs.create(ctx.userId, input)),
+    list: authenticated.input(runScope).query(({ ctx, input }) => ctx.handoffs.list(ctx.userId, input)),
+    draft: authenticated.input(runRef).query(({ ctx, input }) => ctx.handoffs.draft(ctx.userId, input)),
+    markLaunch: authenticated.input(runRef).mutation(({ ctx, input }) => ctx.handoffs.markLaunch(ctx.userId, input)),
+    revokeFiles: authenticated.input(runRef).mutation(({ ctx, input }) => ctx.handoffs.revokeFiles(ctx.userId, input)),
+  }),
   gitWorkflow: t.router({
     list: authenticated.input(runScope).query(({ctx,input}) => ctx.gitWorkflow.list(ctx.userId,input)),
     refresh: authenticated.input(workspaceRef).mutation(({ctx,input}) => ctx.gitWorkflow.refresh(ctx.userId,input)),

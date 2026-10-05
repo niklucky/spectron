@@ -354,6 +354,31 @@ export function createIssueService(db: Database) {
             ];
           }),
         );
+        const handoff = schema.localHandoff;
+        const latestHandoffs = await tx
+          .selectDistinctOn([handoff.issueId], {
+            issueId: handoff.issueId,
+            agentName: handoff.agentName,
+            actorName: user.name,
+            actorImage: user.image,
+            createdAt: handoff.createdAt,
+          })
+          .from(handoff)
+          .innerJoin(user, eq(user.id, handoff.ownerId))
+          .where(eq(handoff.projectId, projectId))
+          .orderBy(handoff.issueId, desc(handoff.createdAt), desc(handoff.id));
+        for (const row of latestHandoffs) {
+          const createdAt = row.createdAt.toISOString();
+          const previous = activity.get(row.issueId);
+          if (!previous || createdAt > previous.createdAt) {
+            activity.set(row.issueId, {
+              actorName: row.actorName,
+              actorImage: row.actorImage,
+              preview: `Passing work to ${row.agentName}`,
+              createdAt,
+            });
+          }
+        }
         const links = await tx.select().from(issueTag).where(eq(issueTag.projectId, projectId));
         const trackerLinks = await tx
           .select({ localId: schema.integrationEntity.localId, key: schema.integrationEntity.externalKey })

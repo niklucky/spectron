@@ -14,6 +14,7 @@ import type {
 import { Button } from "../../ui/button";
 import { Dialog } from "../../ui/dialog";
 import { Avatar } from "../../ui/avatar";
+import { localAppName, type LocalApp } from "@spectron/shared";
 
 type Revision = { id: string; revision: number };
 export type AISettingsActions = {
@@ -72,7 +73,7 @@ function AgentHeading({ agent }: { agent: AgentIdentity }) {
         <Avatar initials={agent.name.slice(0, 1).toUpperCase()} />
       )}
       <div>
-        <strong>{agent.name}</strong> <span className="ai-badge">AI</span>
+        <strong>{agent.name}</strong> <span className="ai-badge">{agent.localApp ? "Local" : "AI"}</span>
         <p>
           {agent.role} · {agent.ownerName}
         </p>
@@ -241,7 +242,6 @@ export function AISettingsPage({
           <div className="ai-section-heading">
             <h2>Your agents</h2>
             <Button
-              disabled={!connections.length}
               onClick={() => startAction(() => setAgentEdit("new"))}
             >
               Create agent
@@ -251,9 +251,9 @@ export function AISettingsPage({
             Agents are private by default. Only you can edit your agents and
             their instructions.
           </p>
-          {!connections.length ? (
+          {!connections.length && !agents.length ? (
             <p className="ai-empty">
-              Start by{" "}
+              Create a local Codex or T3 Code agent, or start by{" "}
               <Button
                 variant="ghost"
                 onClick={() => {
@@ -277,14 +277,14 @@ export function AISettingsPage({
             {agents.map((a) => (
               <article className="ai-card" key={a.id}>
                 <AgentHeading agent={a} />
-                <p>
+                {a.localApp ? <p>{localAppName(a.localApp)} · Uses your desktop app settings</p> : <><p>
                   {a.model} ·{" "}
                   {a.effort ? `${a.effort} effort` : "No effort setting"}
                 </p>
                 <p>
                   Connection:{" "}
                   {connections.find((c) => c.id === a.connectionId)?.name}
-                </p>
+                </p></>}
                 <div className="ai-actions">
                   <Button
                     variant="ghost"
@@ -294,6 +294,7 @@ export function AISettingsPage({
                   </Button>
                   <Button
                     variant="ghost"
+                    disabled={!!a.localApp}
                     onClick={() => startAction(() => setSharing(a))}
                   >
                     Sharing
@@ -582,15 +583,15 @@ function AgentEditor({
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const firstConnection = connections[0]!;
-  const firstModel = catalog.find((p) => p.id === firstConnection.provider)!
-    .models[0]!;
+  const firstConnection = connections[0];
+  const firstModel = catalog.find((p) => p.id === firstConnection?.provider)?.models[0];
   const [input, setInput] = useState<AgentInput>(
     initial
       ? {
           name: initial.name,
           avatar: initial.avatar,
           connectionId: initial.connectionId,
+          localApp: initial.localApp ?? null,
           model: initial.model,
           effort: initial.effort,
           role: initial.role,
@@ -599,9 +600,10 @@ function AgentEditor({
       : {
           name: "",
           avatar: null,
-          connectionId: firstConnection.id,
-          model: firstModel.id,
-          effort: firstModel.defaultEffort,
+          connectionId: firstConnection?.id ?? null,
+          localApp: firstConnection ? null : "codex",
+          model: firstModel?.id ?? "",
+          effort: firstModel?.defaultEffort ?? null,
           role: "Developer",
           instructions: "",
         },
@@ -610,8 +612,8 @@ function AgentEditor({
   const provider = catalog.find(
     (p) =>
       p.id === connections.find((c) => c.id === input.connectionId)?.provider,
-  )!;
-  const model = provider.models.find((m) => m.id === input.model);
+  );
+  const model = provider?.models.find((m) => m.id === input.model);
   const patch = (values: Partial<AgentInput>) =>
     setInput((v) => ({ ...v, ...values }));
   async function upload(file?: File) {
@@ -660,6 +662,17 @@ function AgentEditor({
       >
         <fieldset disabled={op.busy}>
           <label>
+            Runs in
+            <select value={input.localApp ?? "server"} onChange={e => {
+              const localApp = e.target.value === "server" ? null : e.target.value as LocalApp;
+              patch({ localApp, connectionId: localApp ? null : firstConnection?.id ?? null, model: localApp ? "" : firstModel?.id ?? "", effort: localApp ? null : firstModel?.defaultEffort ?? null });
+            }}>
+              <option value="server" disabled={!connections.length}>Spectron</option>
+              <option value="codex">Local Codex</option>
+              <option value="t3code">Local T3 Code</option>
+            </select>
+          </label>
+          <label>
             Name
             <input
               required
@@ -694,10 +707,10 @@ function AgentEditor({
               </Button>
             )}
           </div>
-          <label>
+          {!input.localApp && <><label>
             AI connection
             <select
-              value={input.connectionId}
+              value={input.connectionId ?? ""}
               onChange={(e) => {
                 const c = connections.find((v) => v.id === e.target.value)!;
                 const m = catalog.find((p) => p.id === c.provider)!.models[0]!;
@@ -721,7 +734,7 @@ function AgentEditor({
               <select
                 value={input.model}
                 onChange={(e) => {
-                  const m = provider.models.find(
+                  const m = provider!.models.find(
                     (v) => v.id === e.target.value,
                   )!;
                   patch({ model: m.id, effort: m.defaultEffort });
@@ -732,7 +745,7 @@ function AgentEditor({
                     {input.model} (unavailable)
                   </option>
                 )}
-                {provider.models.map((m) => (
+                {provider?.models.map((m) => (
                   <option key={m.id} value={m.id}>
                     {m.name}
                   </option>
@@ -759,7 +772,8 @@ function AgentEditor({
                 )}
               </select>
             </label>
-          </div>
+          </div></>}
+          {input.localApp && <p>{input.localApp === "codex" ? "Opens a new Codex chat with the issue context ready to send." : "Opens T3 Code. Copy the summary and paste it into a new chat; T3 Code does not yet support prefilling from links."} Uses your desktop account and model settings. Set your workspace in Project settings → Local apps.</p>}
           <label>
             Role / function
             <input
@@ -786,8 +800,7 @@ function AgentEditor({
             />
           </label>
           <p>
-            Role names guide behavior. Access comes from project permissions and
-            sharing settings.
+            {input.localApp ? "Local app agents are personal. These instructions are included in the handoff summary." : "Role names guide behavior. Access comes from project permissions and sharing settings."}
           </p>
           {op.error && (
             <p className="ai-error" role="alert">
@@ -798,7 +811,7 @@ function AgentEditor({
             <Button variant="ghost" onClick={onClose}>
               Cancel
             </Button>
-            <Button type="submit" disabled={!model}>
+            <Button type="submit" disabled={!input.localApp && !model}>
               {op.busy ? "Saving…" : "Save agent"}
             </Button>
           </div>

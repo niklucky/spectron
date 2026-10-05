@@ -13,6 +13,7 @@
     "start": "tsx src/server.ts",
     "test": "tsx --test test/auth.test.ts",
     "test:ai": "tsx --test test/ai.test.ts",
+    "test:handoffs": "tsx --test test/local-handoffs.test.ts ../../apps/app/test/local-workspace.test.ts",
     "test:projects": "tsx --test test/projects.test.ts test/project-logo.test.ts test/invitations.test.ts test/id-migration.test.ts",
     "test:issues": "tsx --test test/issues.test.ts test/message-format.test.ts",
     "test:files": "tsx --test test/files.test.ts",

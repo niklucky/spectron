@@ -48,7 +48,7 @@ const connectionSummary = (row: Connection): AIConnectionSummary => ({
 });
 const identity = (
   row: Agent,
-  provider: Connection["provider"],
+  provider: Connection["provider"] | null,
   ownerName: string,
 ): AgentIdentity => ({
   kind: "agent",
@@ -59,6 +59,7 @@ const identity = (
   avatar: row.avatar,
   role: row.role,
   provider,
+  localApp: row.localApp,
   model: row.model,
   effort: row.effort,
 });
@@ -240,13 +241,13 @@ export function createAIService(
       const rows = await db
         .select({ agent, provider: connection.provider, ownerName: user.name })
         .from(agent)
-        .innerJoin(connection, eq(connection.id, agent.connectionId))
+        .leftJoin(connection, eq(connection.id, agent.connectionId))
         .innerJoin(user, eq(user.id, agent.ownerId))
         .where(and(eq(agent.ownerId, ownerId), isNull(agent.deletedAt)))
         .orderBy(asc(agent.createdAt), asc(agent.id));
       return rows.map(({ agent: row, provider, ownerName }) => ({
         ...identity(row, provider, ownerName),
-        connectionId: row.connectionId!,
+        connectionId: row.connectionId,
         instructions: row.instructions,
         revision: row.revision,
         createdAt: row.createdAt.toISOString(),
@@ -265,31 +266,37 @@ export function createAIService(
           .where(activeOwned(ownerId, input.id));
         if (!owned) throw new ProjectAccessError("Agent not found.");
       }
-      await ownConnection(ownerId, input.connectionId);
+      if (input.localApp) {
+        if (!["codex", "t3code"].includes(input.localApp) || input.connectionId !== null)
+          throw new IssueInputError("Choose Codex or T3 Code without an AI connection.");
+      } else {
+        if (!input.connectionId) throw new IssueInputError("Select an AI connection.");
+        await ownConnection(ownerId, input.connectionId);
+      }
       const avatar = await normalizeLogoDataURL(input.avatar);
       return db.transaction(async (tx) => {
-        const [c] = await tx
+        const [c] = input.localApp ? [] : await tx
           .select()
           .from(connection)
           .where(
             and(
-              eq(connection.id, input.connectionId),
+              eq(connection.id, input.connectionId!),
               eq(connection.ownerId, ownerId),
             ),
           )
           .for("share");
-        if (!c) throw new ProjectAccessError("AI connection not found.");
+        if (!input.localApp && !c) throw new ProjectAccessError("AI connection not found.");
         const model = aiCatalog
-          .find((p) => p.id === c.provider)
+          .find((p) => p.id === c?.provider)
           ?.models.find((m) => m.id === input.model);
-        if (!model)
+        if (!input.localApp && !model)
           throw new IssueInputError(
             "This model is not supported by the selected connection. Choose a listed model.",
           );
         if (
-          model.efforts.length
-            ? !input.effort || !model.efforts.includes(input.effort)
-            : input.effort !== null
+          !input.localApp && (model!.efforts.length
+            ? !input.effort || !model!.efforts.includes(input.effort)
+            : input.effort !== null)
         )
           throw new IssueInputError(
             "This effort level is not supported by the selected model.",
@@ -297,9 +304,10 @@ export function createAIService(
         const values = {
           name: input.name,
           avatar,
-          connectionId: c.id,
-          model: model.id,
-          effort: input.effort,
+          connectionId: c?.id ?? null,
+          localApp: input.localApp ?? null,
+          model: input.localApp ? "" : model!.id,
+          effort: input.localApp ? null : input.effort,
           role: input.role,
           instructions: input.instructions,
         };
@@ -316,6 +324,7 @@ export function createAIService(
             .where(eq(agent.id, existing.id))
             .returning();
           saved = updated!;
+          if (input.localApp) await tx.delete(share).where(eq(share.agentId, saved.id));
         } else {
           const [created] = await tx
             .insert(agent)
@@ -394,6 +403,8 @@ export function createAIService(
     ) {
       return db.transaction(async (tx) => {
         const row = await lockAgent(tx, ownerId, input.id);
+        if (row.localApp && input.visibility !== "private")
+          throw new IssueInputError("Local app agents are personal and cannot be shared.");
         if (row.revision !== input.revision)
           throw new IssueConflictError(
             "This agent changed. Reload before updating sharing.",
@@ -501,15 +512,17 @@ export function createAIService(
           avatar: agent.avatar,
           role: agent.role,
           provider: connection.provider,
+          localApp: agent.localApp,
           model: agent.model,
           effort: agent.effort,
         })
         .from(agent)
-        .innerJoin(connection, eq(connection.id, agent.connectionId))
+        .leftJoin(connection, eq(connection.id, agent.connectionId))
         .innerJoin(user, eq(user.id, agent.ownerId))
         .where(
           and(
             isNull(agent.deletedAt),
+            sql`(${agent.localApp} IS NULL OR ${agent.ownerId} = ${userId})`,
             sql`EXISTS (SELECT 1 FROM ${membership} WHERE ${membership.projectId} = ${projectId} AND ${membership.userId} = ${agent.ownerId})`,
             sql`EXISTS (SELECT 1 FROM ${membership} WHERE ${membership.projectId} = ${projectId} AND ${membership.userId} = ${userId})`,
             sql`EXISTS (SELECT 1 FROM ${project} WHERE ${project.id} = ${projectId} AND ${project.state} = 'active')`,

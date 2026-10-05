@@ -251,6 +251,8 @@ export function createAgentRunService(
           throw new ProjectAccessError(
             "This agent is no longer available to you.",
           );
+        if (agent.localApp || !agent.provider)
+          throw new IssueInputError("Use a local app handoff for this agent.");
         const [config] = await tx
           .select()
           .from(aiAgent)

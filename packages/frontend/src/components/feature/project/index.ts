@@ -3,4 +3,5 @@ export { CreateProjectDialog } from "./create-project-dialog";
 export { ProjectEmptyState } from "./project-empty-state";
 
 export { ProjectSettingsPage } from "./project-settings-page";
+export { LocalAppSettings } from "./local-app-settings";
 export { ProjectPage, projectSections, isProjectSection, type ProjectSection } from "./project-page";

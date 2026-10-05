@@ -4,6 +4,9 @@ import {
   commentBodyFromText,
   createId,
   moveMentionRanges,
+  localAppLaunch,
+  localAppName,
+  type LocalHandoffActions,
   projectFileURL,
   type AgentCommand,
   type AgentIdentity,
@@ -13,6 +16,8 @@ import {
   type ProjectMemberSummary,
   type ReviewTarget,
 } from "@spectron/shared";
+import { preferredLocalRepositoryId, readLocalWorkspace } from "../../../lib/local-workspace";
+import { isT3Preview } from "../../../lib/local-app-launch";
 import { MessageMarkdown } from "../../ui/message-markdown";
 import { IconButton } from "../../ui/button";
 import { Icon, type IconName } from "../../ui/icon";
@@ -48,11 +53,15 @@ const optionClass =
 export function ChatComposer({
   context,
   agentActions,
+  handoffActions,
+  currentUserId = "",
   parentId = null,
   onSent,
 }: {
   context: CommentContext;
   agentActions?: AgentRunActions | undefined;
+  handoffActions?: LocalHandoffActions | undefined;
+  currentUserId?: string;
   parentId?: string | null;
   onSent?: () => void;
 }) {
@@ -60,14 +69,18 @@ export function ChatComposer({
     [repositories, setRepositories] = useState<GitRepository[]>([]);
   const [agentId, setAgentId] = useState(""),
     [command, setCommand] = useState<AgentCommand>("discuss"),
-    [repositoryIds, setRepositoryIds] = useState<string[]>([]);
+    [serverRepositoryIds, setServerRepositoryIds] = useState<string[]>([]),
+    [localRepositoryIds, setLocalRepositoryIds] = useState<string[]>([]);
+  const agent = agents.find((a) => a.id === agentId);
+  const repositoryIds = agent?.localApp ? localRepositoryIds : serverRepositoryIds;
+  const setRepositoryIds = agent?.localApp ? setLocalRepositoryIds : setServerRepositoryIds;
   const [reviewBranch, setReviewBranch] = useState("");
   const [reviewTargets, setReviewTargets] = useState<ReviewTarget[]>([]);
   const [reviewWorkspaceId, setReviewWorkspaceId] = useState("");
   const [agentError, setAgentError] = useState("");
   const requestId = useRef(createId());
   useEffect(() => {
-    if (!agentActions || command !== "review-code") return;
+    if (!agentActions || command !== "review-code" || agents.find(a => a.id === agentId)?.localApp) return;
     let alive = true;
     void agentActions.reviewTargets(context.scope).then(
       (targets) => {
@@ -84,7 +97,7 @@ export function ChatComposer({
     return () => {
       alive = false;
     };
-  }, [agentActions, command, context.scope.projectId, context.scope.issueId]);
+  }, [agentActions, command, context.scope.projectId, context.scope.issueId, agentId, agents]);
   useEffect(() => {
     if (!agentActions) return;
     let alive = true;
@@ -96,7 +109,7 @@ export function ChatComposer({
         if (alive) {
           setAgents(a);
           setRepositories(repos);
-          setRepositoryIds(repos.filter((r) => repos.length === 1 || r.isDefault).map((r) => r.id));
+          setServerRepositoryIds(repos.filter((r) => repos.length === 1 || r.isDefault).map((r) => r.id));
         }
       },
       (e) => {
@@ -150,7 +163,6 @@ export function ChatComposer({
   const slashCommands = slash
     ? agentCommands.filter((c) => c !== "discuss" && c.startsWith(slash[1]!.toLowerCase()))
     : [];
-  const agent = agents.find((a) => a.id === agentId);
 
   function setText(text: string, extra?: (m: typeof draft.mentions) => typeof draft.mentions) {
     setDraft((previous) => {
@@ -177,6 +189,11 @@ export function ChatComposer({
   }
   function selectAgent(a: AgentIdentity) {
     setAgentId(a.id);
+    if (a.localApp) {
+      const workspace = readLocalWorkspace(currentUserId, context.scope.projectId);
+      const repositoryId = preferredLocalRepositoryId(workspace, repositories);
+      setLocalRepositoryIds(repositoryId ? [repositoryId] : []);
+    }
     if (match) {
       const start = caret - match[1]!.length - 1;
       setText(draft.text.slice(0, start) + draft.text.slice(caret));
@@ -236,7 +253,9 @@ export function ChatComposer({
   }
   const canSend = !!draft.text.trim() || !!files.length;
   const hint = agent
-    ? command === "discuss"
+    ? agent.localApp
+      ? agent.localApp === "codex" ? "opens a Codex draft with issue context" : "opens T3 Code · copy and paste the summary"
+      : command === "discuss"
       ? "discussion with code access"
       : command === "implement"
         ? "opens a draft PR per repository"
@@ -274,9 +293,33 @@ export function ChatComposer({
           if (busy || voice.listening || !canSend) return;
           setBusy(true);
           setError("");
+          setStatus("");
           try {
             if (agentActions && command !== "discuss" && !agentId) throw new Error("Select an agent for this command.");
-            if (agentId && agentActions) {
+            if (agent?.localApp) {
+              if (!handoffActions) throw new Error("Local app handoffs are unavailable.");
+              if (repositoryIds.length > 1) throw new Error("Choose one repository for this local handoff.");
+              const handoff = await handoffActions.create({ ...context.scope, requestId: requestId.current, agentId, command, repositoryId: repositoryIds[0] ?? null, message: draft.text.trim() || "Review the attached files.", fileIds: files.map(f => f.projectFileId) });
+              // Persist first. The chat card keeps an explicit launch link when
+              // the browser declines an asynchronous protocol navigation.
+              if (isT3Preview(navigator.userAgent)) {
+                setStatus("Handoff saved. T3 Code's preview cannot launch desktop apps. Use Copy app link in the chat, then paste it into Chrome or Safari's address bar.");
+              } else try {
+                const prepared = await handoffActions.draft({ ...context.scope, id: handoff.id });
+                const workspace = readLocalWorkspace(currentUserId, context.scope.projectId, prepared.repositoryId);
+                const launch = localAppLaunch(agent.localApp, prepared.summary, { path: workspace.path, originUrl: workspace.originUrl || prepared.originUrl || "" });
+                if (!launch.prefilled) {
+                  void navigator.clipboard.writeText(prepared.summary).then(
+                    () => { if (active.current) setStatus("Summary copied. Paste it into your local app's new chat."); },
+                    () => { if (active.current) setStatus("Handoff saved. Use Copy summary in the chat, then paste it into your local app."); },
+                  );
+                }
+                window.location.assign(launch.url);
+                void handoffActions.markLaunch({ ...context.scope, id: handoff.id }).catch(() => {});
+              } catch {
+                setStatus(`Handoff saved. Use Open ${localAppName(agent.localApp)} in the chat.`);
+              }
+            } else if (agentId && agentActions) {
               if (command === "review-code" && !reviewWorkspaceId && (!reviewBranch.trim() || repositoryIds.length !== 1))
                 throw new Error("Select a linked PR/MR, or enter a branch and select exactly one repository.");
               if (command !== "review-code" && !repositoryIds.length) throw new Error("Select at least one project repository.");
@@ -326,8 +369,8 @@ export function ChatComposer({
                 {matchingAgents.map((a) => (
                   <button type="button" key={a.id} role="option" className={cn(optionClass, "mention-option")} onClick={() => selectAgent(a)}>
                     <Avatar name={a.name} image={a.avatar} kind="agent" size="md" />
-                    <span className="min-w-0"><b className="block truncate text-base font-semibold">{a.name}</b><span className="block truncate text-sm text-ink-3">{a.role} · runs only with a command</span></span>
-                    <Pill tone="accent">AI</Pill>
+                    <span className="min-w-0"><b className="block truncate text-base font-semibold">{a.name}</b><span className="block truncate text-sm text-ink-3">{a.localApp ? `Opens ${localAppName(a.localApp)} on this computer` : a.role}</span></span>
+                    <Pill tone="accent">{a.localApp ? "Local" : "AI"}</Pill>
                   </button>
                 ))}
                 {people.length > 0 && <div className="label-caps px-2.5 pt-2 pb-1">People</div>}
@@ -382,13 +425,13 @@ export function ChatComposer({
             <>
               {agent && <Chip onRemove={() => { setAgentId(""); setCommand("discuss"); }} removeLabel="Remove agent"><Avatar name={agent.name} image={agent.avatar} kind="agent" size="xs" className="mr-0.5 rounded-[30%]" />{agent.name}</Chip>}
               {command !== "discuss" && <Chip mono onRemove={() => setCommand("discuss")} removeLabel="Remove command">/{command}</Chip>}
-              {agent && (command !== "review-code" || !reviewWorkspaceId) && repositories.filter((r) => repositoryIds.includes(r.id)).map((repo) => (
+              {agent && (agent.localApp || command !== "review-code" || !reviewWorkspaceId) && repositories.filter((r) => repositoryIds.includes(r.id)).map((repo) => (
                 <Chip key={repo.id} tone="neutral" mono onRemove={repositories.length > 1 ? () => setRepositoryIds((ids) => ids.filter((id) => id !== repo.id)) : undefined} removeLabel={`Remove ${repo.fullName}`}>
                   <Icon name="branch" size={12} />{repo.fullName}
                 </Chip>
               ))}
-              {agent && repositories.length > 1 && (command !== "review-code" || !reviewWorkspaceId) && (
-                <Menu label="Repositories" icon="plus" className="size-6" items={repositories.map((repo) => ({ label: `${repositoryIds.includes(repo.id) ? "✓ " : ""}${repo.fullName}`, icon: "branch" as const, onSelect: () => setRepositoryIds((ids) => ids.includes(repo.id) ? ids.filter((id) => id !== repo.id) : [...ids, repo.id]) }))} />
+              {agent && repositories.length > 1 && (agent.localApp || command !== "review-code" || !reviewWorkspaceId) && (
+                <Menu label="Repositories" icon="plus" className="size-6" items={repositories.map((repo) => ({ label: `${repositoryIds.includes(repo.id) ? "✓ " : ""}${repo.fullName}`, icon: "branch" as const, onSelect: () => setRepositoryIds((ids) => agent.localApp ? [repo.id] : ids.includes(repo.id) ? ids.filter((id) => id !== repo.id) : [...ids, repo.id]) }))} />
               )}
             </>
           ) : undefined
@@ -422,7 +465,7 @@ export function ChatComposer({
             <span className="ml-auto mr-1.5 hidden text-xs text-ink-3 md:inline">
               <kbd className="mono rounded-sm border border-line-soft bg-surface-2 px-1 text-2xs">↵</kbd> send · <kbd className="mono rounded-sm border border-line-soft bg-surface-2 px-1 text-2xs">⇧↵</kbd> newline
             </span>
-            <SendButton disabled={busy || voice.listening || !canSend} label={agent && command !== "discuss" ? `Run /${command}` : "Send"} />
+            <SendButton disabled={busy || voice.listening || !canSend} label={agent?.localApp ? `Pass to ${agent.name}` : agent && command !== "discuss" ? `Run /${command}` : "Send"} />
           </>
         }
       >
@@ -460,7 +503,7 @@ export function ChatComposer({
             }}
           />
         )}
-        {agent && command === "review-code" && (
+        {agent && !agent.localApp && command === "review-code" && (
           <div className="flex flex-wrap items-center gap-2 px-3.5 pb-1 text-sm">
             <select className="h-7 max-w-full rounded-md bg-surface-2 px-2 text-sm text-ink hairline" aria-label="PR/MR to review" value={reviewWorkspaceId} disabled={busy} onChange={(e) => setReviewWorkspaceId(e.target.value)}>
               <option value="">{reviewTargets.length ? "Choose a PR/MR or review a branch" : "Review a branch"}</option>

@@ -29,6 +29,7 @@ import type { CommentActions } from "./issue-comments";
 import { commentText, type CommentBody } from "@spectron/shared";
 
 export type IssuePanelActions = {
+  handoffs?: import('@spectron/shared').LocalHandoffActions;
   runs?: import('@spectron/shared').AgentRunActions;
   gitWorkflow?: import('@spectron/shared').GitWorkflowActions;
   canCreateTag?: (projectId: string) => boolean;

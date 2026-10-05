@@ -1,5 +1,6 @@
 export const productName = "Spectron";
 export * from "./ai";
+export * from "./local-handoffs";
 export { normalizeProjectURL } from "./projects";
 export type {
   CreateProjectInput,

@@ -38,6 +38,7 @@ import { previewMedia } from "./fixtures/preview-metadata";
 import {
   CreateProjectDialog,
   ProjectSettingsPage,
+  LocalAppSettings,
   ProjectEmptyState,
   ProjectPage,
   type ProjectSection,
@@ -357,6 +358,13 @@ function Workspace({
         reconcile: input => trpc.gitWorkflow.reconcile.mutate(input),
         address: input => trpc.runs.address.mutate(input),
       } satisfies import('@spectron/shared').GitWorkflowActions,
+      handoffs: {
+        create: input => trpc.handoffs.create.mutate(input),
+        list: input => trpc.handoffs.list.query(input),
+        draft: input => trpc.handoffs.draft.query(input),
+        markLaunch: input => trpc.handoffs.markLaunch.mutate(input),
+        revokeFiles: input => trpc.handoffs.revokeFiles.mutate(input),
+      } satisfies import('@spectron/shared').LocalHandoffActions,
       runs: {
         takeover: (input: Parameters<import('@spectron/shared').AgentRunActions['takeover']>[0]) => trpc.runs.takeover.mutate(input),
         address: (input: Parameters<import('@spectron/shared').AgentRunActions['address']>[0]) => trpc.runs.address.mutate(input),
@@ -705,6 +713,7 @@ function Workspace({
                 workspace.showNotice("Project archived.");
               }}
               gitSettings={provider => settingsProject.role === "owner" ? <GitSettings key={`${settingsProject.id}:${provider}`} projectId={settingsProject.id} provider={provider} onBusyChange={setIntegrationBusy} /> : <p className="muted">Only the project owner can manage Git connections.</p>}
+              localAppSettings={<LocalAppSettings projectId={settingsProject.id} userId={user.id} repositories={issueActions.runs!.repositories} />}
               yandexSettings={
                 settingsProject.role === "owner" ? (
                   <ProjectIntegrationSettings

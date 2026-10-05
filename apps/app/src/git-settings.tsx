@@ -46,9 +46,10 @@ export function GitSettings({ projectId, provider, onBusyChange }: { projectId: 
   const busy = !!pending;
   if (loading) return <p role="status">Loading Git connections…</p>;
   return <div className="git-settings">
-    <header><div><h2>{providerName(provider)} repositories</h2><p className="muted">Connect a provider account and choose code available to this project's agents.</p></div>
-      <Button disabled={busy || !!editing} onClick={() => { clear(); setBrowsing(null); setEditing("new"); }}>Add connection</Button></header>
-    <p className="muted">All project members use the connection's provider identity. Only project owners can configure it. Tokens are encrypted and cannot be displayed again.</p>
+    <div className="flex items-start justify-between gap-4">
+      <p className="muted">All project members use the connection's provider identity. Only project owners can configure it. Tokens are encrypted and cannot be displayed again.</p>
+      <Button variant="primary" className="shrink-0" disabled={busy || !!editing} onClick={() => { clear(); setBrowsing(null); setEditing("new"); }}>Add connection</Button>
+    </div>
     {error && <p className="project-error" role="alert">{error} <Button variant="ghost" disabled={busy} onClick={() => void run("refresh", async () => { setBrowsing(null); setEditing(null); await reload(); })}>Reload settings</Button></p>}
     {feedback && <p className="project-feedback" role="status">{feedback}</p>}
     {editing && <ConnectionForm key={editing === "new" ? "new" : `${editing.id}:${editing.revision}`} connection={editing === "new" ? null : editing} provider={provider} busy={busy}
