@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { Icon, type IconName } from "../../ui/icon";
 import { IconButton } from "../../ui/button";
+import { BrandLogo } from "../../ui/brand-logo";
 import { ProjectMark } from "../project";
 import { cn } from "../../ui/cn";
 import type { Project } from "../task/types";
@@ -98,17 +99,7 @@ export function Sidebar({
           className="flex items-center gap-2.5 text-ink no-underline"
           aria-label="Spectron home"
         >
-          <svg
-            viewBox="0 0 24 24"
-            className="size-5"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2.6"
-            strokeLinecap="round"
-            aria-hidden="true"
-          >
-            <path d="M6 15 9 5M11 19l3-14M16 15l3-10" />
-          </svg>
+          <BrandLogo />
           {!collapsed && (
             <span className="text-base font-semibold tracking-[-0.02em]">
               spectron

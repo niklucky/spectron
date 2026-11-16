@@ -2,6 +2,7 @@ import { useState, type ReactNode } from "react";
 import { Input, PasswordInput, PasswordStrength } from "../../ui/input";
 import { Button } from "../../ui/button";
 import { Icon, type IconName } from "../../ui/icon";
+import { BrandLogo } from "../../ui/brand-logo";
 import { PASSWORD_MIN_LENGTH } from "../../../lib/password-strength";
 
 export type AuthMode =
@@ -186,7 +187,7 @@ function AuthForm({
 
   return (
     <>
-      <Mark />
+      <BrandLogo className="size-20" />
       <h1
         id="auth-title"
         className="mt-6 text-center text-xl font-semibold tracking-[-0.015em]"

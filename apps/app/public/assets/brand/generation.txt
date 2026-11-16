@@ -1,0 +1,20 @@
+Spectron brand assets
+
+The transparent logo was extracted using the built-in image generation tool
+from the approved wide S-wave concept. The circle interior stays opaque;
+the surrounding canvas is transparent and the halo has partial alpha.
+
+Prompt:
+Extract the approved Spectron circular logo from this image onto a genuinely TRANSPARENT background with alpha. Preserve the exact circular orb, wide vertical S-shaped spectral light wave, soft colors, dark opaque interior of the orb, fine luminous rim and delicate outer halo. Remove only black canvas OUTSIDE the orb; keep black INSIDE the circle opaque. Preserve halo as semitransparent colored light fading smoothly to zero alpha; no black square or matte around the halo. Do not redesign, reshape or change colors. Center the complete mark on a square canvas, circle diameter about 82 percent of canvas width with enough transparent margin for the full soft halo. Output 1024 by 1024 PNG, true alpha transparency, no checkerboard painted into image.
+
+Exports:
+logo.png: transparent 1024 x 1024 master.
+logo-128.png: smaller transparent image for interface branding.
+app-icon.png: opaque 1024 x 1024 icon, cropped from the approved original
+concept with a black background. Also exported at 192 and 512 pixels.
+apple-touch-icon.png: opaque 180 x 180 icon.
+favicon-16.png, favicon-32.png, favicon-48.png: transparent logo exports.
+favicon.ico: the three favicon PNG sizes packaged in an ICO container.
+
+Resizing and PNG export used macOS sips. No new image generation was used
+for the icon sizes, so their artwork remains consistent with the masters.
