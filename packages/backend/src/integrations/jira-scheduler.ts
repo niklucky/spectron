@@ -62,6 +62,8 @@ export function createJiraScheduler(db: Database, jira: JiraService) {
         }, 60_000);
         heartbeat.unref();
         let completed = false;
+        let interrupted = false;
+        let nextProgressWrite = 0;
         // Re-read a short overlap for delayed indexing and clock differences.
         // Keep this lower bound identical across every page in the run.
         const updatedAfter = !manual && c.scheduledImportWatermark
@@ -72,6 +74,10 @@ export function createJiraScheduler(db: Database, jira: JiraService) {
           await jira.prepare(actor, c.projectId, runId);
           let token: string | undefined;
           do {
+            if (stopped) {
+              interrupted = true;
+              break;
+            }
             const page = await jira.search(
               actor,
               c.projectId,
@@ -87,10 +93,15 @@ export function createJiraScheduler(db: Database, jira: JiraService) {
               progress.totalIsEstimate = true;
             }
             for (const issue of page.issues) {
-              if (stopped)
-                throw new Error("Import interrupted by server shutdown.");
+              if (stopped) {
+                interrupted = true;
+                break;
+              }
               progress.currentKey = issue.key;
-              await db.update(table).set({ importProgress: progress }).where(ownsRun);
+              if (Date.now() >= nextProgressWrite) {
+                await db.update(table).set({ importProgress: progress }).where(ownsRun);
+                nextProgressWrite = Date.now() + 1000;
+              }
               try {
                 await jira.import(
                   actor,
@@ -102,46 +113,57 @@ export function createJiraScheduler(db: Database, jira: JiraService) {
                 progress.imported++;
               } catch (error) {
                 const [state] = await db
-                  .select()
-                  .from(s.jiraIntegration)
+                  .select({ importCancelled: table.importCancelled })
+                  .from(table)
                   .where(ownsRun);
                 if (!state || state.importCancelled)
                   throw new Error("Import stopped.");
                 progress.failed++;
-                progress.errors.push({
-                  id: issue.id, key: issue.key, error: error instanceof Error ? error.message : "Import failed",
-                });
+                if (progress.errors.length < 100) {
+                  progress.errors.push({
+                    id: issue.id, key: issue.key,
+                    error: error instanceof Error ? error.message.slice(0, 1000) : "Import failed",
+                  });
+                }
               }
             }
             token = page.nextPageToken ?? undefined;
-          } while (token);
-          completed = progress.failed === 0 && !stopped;
+          } while (token && !interrupted);
+          completed = progress.failed === 0 && !interrupted;
         } catch (error) {
           progress.message = error instanceof Error ? error.message : "Import failed.";
         } finally {
           clearInterval(heartbeat);
-          progress.currentKey = null;
-          progress.status = completed ? "finished" : "failed";
-          const details = progress.message ?? progress.errors.slice(0, 3)
-            .map(issue => `${issue.key}: ${issue.error}`).join("; ");
-          const result = `${progress.imported} imported, ${progress.failed} failed. ${details}`.trimEnd();
-          await db
-            .update(s.jiraIntegration)
-            .set({
-              fullImportUserId: null,
-              importProgress: sql`CASE WHEN ${table.importCancelled} THEN jsonb_set(${JSON.stringify(progress)}::jsonb, '{status}', '"stopped"') ELSE ${JSON.stringify(progress)}::jsonb END`,
-              importRunId: null,
-              scheduleLeaseUntil: null,
-              ...(!manual && { lastScheduleResult: result.slice(0, 4000) }),
-              // A stop can arrive after the last page; check cancellation atomically.
-              ...(completed && !manual
-                ? {
-                    scheduledImportWatermark: sql`CASE WHEN ${s.jiraIntegration.importCancelled} = false THEN ${startedAt.toISOString()}::timestamptz ELSE ${s.jiraIntegration.scheduledImportWatermark} END`,
-                  }
-                : {}),
-            })
-            .where(ownsRun);
         }
+        if (interrupted && manual) {
+          const [queued] = await db.update(table).set({
+            scheduleLeaseUntil: null,
+            importProgress: { ...progress, currentKey: null, status: "queued" },
+          }).where(and(ownsRun, eq(table.importCancelled, false))).returning({ id: table.id });
+          if (queued) continue;
+        }
+        if (interrupted) progress.message = "Import interrupted by server shutdown.";
+        progress.currentKey = null;
+        progress.status = completed ? "finished" : "failed";
+        const details = progress.message ?? progress.errors.slice(0, 3)
+          .map(issue => `${issue.key}: ${issue.error}`).join("; ");
+        const result = `${progress.imported} imported, ${progress.failed} failed. ${details}`.trimEnd();
+        await db
+          .update(s.jiraIntegration)
+          .set({
+            fullImportUserId: null,
+            importProgress: sql`CASE WHEN ${table.importCancelled} THEN jsonb_set(${JSON.stringify(progress)}::jsonb, '{status}', '"stopped"') ELSE ${JSON.stringify(progress)}::jsonb END`,
+            importRunId: null,
+            scheduleLeaseUntil: null,
+            ...(!manual && { lastScheduleResult: result.slice(0, 4000) }),
+            // A stop can arrive after the last page; check cancellation atomically.
+            ...(completed && !manual
+              ? {
+                  scheduledImportWatermark: sql`CASE WHEN ${s.jiraIntegration.importCancelled} = false THEN ${startedAt.toISOString()}::timestamptz ELSE ${s.jiraIntegration.scheduledImportWatermark} END`,
+                }
+              : {}),
+          })
+          .where(ownsRun);
       }
     } finally {
       running = false;

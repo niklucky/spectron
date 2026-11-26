@@ -36,11 +36,15 @@ export function DocumentFilePreview({ family, extension, name, src, size }: {
   const [preview, setPreview] = useState<Preview | null>(null);
   const [loading, setLoading] = useState(false);
 
+  // Larger Office files are fetched only when the user opens their preview.
+  const [requestedSrc, setRequestedSrc] = useState<string>();
+  const isOffice = family !== "Plain text" && family !== "JSON";
+  const deferOffice = isOffice && size > 2 * 1024 * 1024 && requestedSrc !== src;
   useEffect(() => {
     setPreview(null);
     setLoading(false);
-    if (!src || !button.current) return;
-    if (family !== "Plain text" && family !== "JSON" && (size > 50 * 1024 * 1024 || !/[XMB]$/.test(extension))) return;
+    if (!src || !button.current || deferOffice) return;
+    if (isOffice && (size > 50 * 1024 * 1024 || !/[XMB]$/.test(extension))) return;
     const controller = new AbortController();
     const { signal } = controller;
     let imageURL: string | undefined;
@@ -79,12 +83,12 @@ export function DocumentFilePreview({ family, extension, name, src, size }: {
       controller.abort();
       if (imageURL) URL.revokeObjectURL(imageURL);
     };
-  }, [src, family, extension, size]);
+  }, [src, family, extension, size, deferOffice, isOffice]);
 
   return <>
     <button ref={button} type="button" aria-label={`Preview ${name}`} title={`Preview ${name}`}
       className="relative block size-full overflow-hidden rounded-lg bg-surface-2 text-ink focus-visible:outline-accent"
-      onClick={() => setOpen(true)}>
+      onClick={() => { setRequestedSrc(src); setOpen(true); }}>
       {preview && <div aria-hidden="true" className="absolute inset-x-[8%] top-2 h-full overflow-hidden rounded-t-sm bg-surface p-[6%] text-left text-[8px] leading-snug shadow-soft">
         <Contents preview={preview} miniature />
       </div>}

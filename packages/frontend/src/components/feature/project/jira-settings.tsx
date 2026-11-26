@@ -579,7 +579,9 @@ export function JiraSettings({
       {connection && !!failures.length && (
         <SettingsSection
           title="Import errors"
-          description="An issue may be partially imported. Fix the mapping or the error and retry."
+          description={progress && progress.failed > 100
+            ? `Showing retry details from the first 100 of ${progress.failed} failures. Fix the cause and run a full import to retry them all.`
+            : "An issue may be partially imported. Fix the mapping or the error and retry."}
         >
           <ul className="flex flex-col text-sm">
             {failures.map((f) => (

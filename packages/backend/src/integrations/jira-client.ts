@@ -381,6 +381,28 @@ export class JiraClient {
     return this.request<JiraField[]>("GET", "/rest/api/3/field");
   }
 
+  async getEditableFields(issueId: string): Promise<Set<string>> {
+    const meta = await this.request<{ fields: Record<string, { operations: string[] }> }>(
+      "GET", `/rest/api/3/issue/${encodeURIComponent(issueId)}/editmeta`,
+    );
+    return new Set(Object.keys(meta.fields).filter(id => meta.fields[id]?.operations.includes("set")));
+  }
+
+  async getCreatableFields(projectKey: string, issueTypeId: string): Promise<Set<string>> {
+    const ids = new Set<string>();
+    let startAt = 0;
+    while (true) {
+      const page = await this.request<{ fields: { fieldId: string; operations: string[] }[]; total: number }>(
+        "GET", `/rest/api/3/issue/createmeta/${encodeURIComponent(projectKey)}/issuetypes/${encodeURIComponent(issueTypeId)}`,
+        undefined, { startAt, maxResults: 100 },
+      );
+      for (const field of page.fields) if (field.operations.includes("set")) ids.add(field.fieldId);
+      startAt += page.fields.length;
+      if (startAt >= page.total) return ids;
+      if (!page.fields.length) throw new Error("Jira create field metadata pagination stalled.");
+    }
+  }
+
   async getAssignableUsers(
     projectKey: string,
     query = "",
@@ -538,7 +560,7 @@ export function minutesToJiraEstimate(minutes: number): string {
   return `${minutes}m`;
 }
 
-function formatJiraDate(value: Date): string {
+export function formatJiraDate(value: Date): string {
   return value.toISOString().replace("Z", "+0000");
 }
 

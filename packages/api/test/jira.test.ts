@@ -139,6 +139,7 @@ test("Jira project fields, import, publishing, conflicts and retry safety", asyn
       reporter: actor,
       assignee: actor,
       created: "2026-01-01T10:00:00Z",
+      votes: { votes: 7 },
       customfield_1: 3,
       customfield_2: "2026-09-01",
       customfield_3: actor,
@@ -212,6 +213,9 @@ test("Jira project fields, import, publishing, conflicts and retry safety", asyn
           ],
         },
       ]);
+    const writable = [1, 2, 3, 4, 5, 6].map(i => ({ fieldId: `customfield_${i}`, operations: ["set"] }));
+    if (path.endsWith("/editmeta")) return json({ fields: Object.fromEntries(writable.map(f => [f.fieldId, f])) });
+    if (path.includes("/issue/createmeta/")) return json({ fields: writable, total: writable.length });
     if (path.endsWith("/priority")) return json([{ id: "2", name: "Medium" }]);
     if (path.endsWith("/field"))
       return json([
@@ -220,6 +224,7 @@ test("Jira project fields, import, publishing, conflicts and retry safety", asyn
           name: `Field ${id}`,
           schema: { type: ["number", "date", "user", "string"][id - 1] },
         })),
+        { id: "votes", name: "Votes", schema: { type: "votes" } },
         { id: "customfield_6", name: "Details", schema: { type: "array" } },
         { id: "summary", name: "Summary" },
         {
@@ -412,7 +417,7 @@ test("Jira project fields, import, publishing, conflicts and retry safety", asyn
   await assert.rejects(jira.import("owner", p.id, "100"), /Jira description has 1000001 characters; Spectron allows 1,000,000/);
   remote.fields.description = originalDescription;
   const createMappings = { ...saved.mappings, fields: {
-    customfield_1: createJiraFieldOnImport, customfield_2: createJiraFieldOnImport,
+    votes: createJiraJsonOnImport, customfield_1: createJiraFieldOnImport, customfield_2: createJiraFieldOnImport,
     customfield_5: createJiraFieldOnImport, customfield_6: createJiraFieldOnImport, customfield_3: createJiraJsonOnImport,
   } };
   await jira.mappings("owner", p.id, createMappings);
@@ -436,8 +441,12 @@ test("Jira project fields, import, publishing, conflicts and retry safety", asyn
     fieldValues: { ...importedValues, [datetimeId]: "2026-09-02T04:05:06.123+03:00", [jsonId]: { enabled: false, nested: [1, null] } },
   });
   await jira.pushIssue("owner", p.id, initialIssue.id);
-  assert.equal(writes.at(-1)!.customfield_5, "2026-09-02T01:05:06.123Z");
+  assert.equal(writes.at(-1)!.customfield_5, "2026-09-02T01:05:06.123+0000");
   assert.deepEqual(writes.at(-1)!.customfield_6, { enabled: false, nested: [1, null] });
+  assert.deepEqual(importedValues[createdMappings.fields.votes!], { votes: 7 });
+  await jira.mappings("owner", p.id, createdMappings);
+  await jira.pushIssue("owner", p.id, initialIssue.id, true);
+  assert.equal("votes" in writes.at(-1)!, false);
   remote.fields.customfield_5 = "2026-09-01T09:00:00+0300";
   await jira.mappings("owner", p.id, { ...createdMappings, fields: {
     ...createdMappings.fields, customfield_4: createJiraFieldOnImport, missing: createJiraFieldOnImport,
@@ -1025,6 +1034,41 @@ test("Jira project fields, import, publishing, conflicts and retry safety", asyn
   await reader.import("owner", p.id, "100", false, retry.runId);
   await reader.finishImport("owner", p.id, retry.runId);
   assert.deepEqual((await reader.get("owner", p.id))!.importProgress?.errors, []);
+  await jira.startFullImport("owner", p.id);
+  const failures = Array.from({ length: 107 }, (_, n) => ({ id: String(n), key: `FAIL-${n}` }));
+  await createJiraScheduler(db, {
+    ...jira,
+    search: async () => ({ issues: failures, nextPageToken: null }),
+    import: async () => { throw new Error("x".repeat(1500)); },
+  }).tick();
+  const limited = (await reader.get("owner", p.id))!.importProgress!;
+  assert.equal(limited.failed, 107);
+  assert.equal(limited.errors.length, 100);
+  assert.equal(limited.errors[99]?.id, "99");
+  assert.equal(limited.errors[0]?.error.length, 1000);
+
+  const restart = await jira.startFullImport("owner", p.id);
+  let signalPageRequested!: () => void;
+  let releasePage!: () => void;
+  const pageRequested = new Promise<void>(resolve => { signalPageRequested = resolve; });
+  const resume = new Promise<void>(resolve => { releasePage = resolve; });
+  const stopWorker = createJiraScheduler(db, {
+    ...jira,
+    search: async () => {
+      signalPageRequested();
+      await resume;
+      return { issues: [{ id: "100", key: "TEAM-1" }], nextPageToken: null };
+    },
+  }).start();
+  await pageRequested;
+  const shutdown = stopWorker();
+  releasePage();
+  await shutdown;
+  const released = (await reader.get("owner", p.id))!;
+  assert.equal(released.importRunId, restart.importRunId);
+  assert.equal(released.importProgress?.status, "queued");
+  await worker.tick();
+  assert.equal((await reader.get("owner", p.id))?.importProgress?.status, "finished");
   await projects.archive("owner", p.id);
   await assert.rejects(
     jira.import("owner", p.id, imported.id),

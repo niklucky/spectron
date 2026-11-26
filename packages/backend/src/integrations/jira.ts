@@ -31,6 +31,7 @@ import type { FileService } from "../files";
 import {
   JiraClient,
   JiraApiError,
+  formatJiraDate,
   adfToText,
   textToAdf,
   type JiraIssue,
@@ -1504,6 +1505,9 @@ export function createJiraService(
             ),
           );
         const remoteFields = await api.getFields();
+        const createType = !remote && local.issueTypeId && Object.keys(c.mappings.issueTypes ?? {}).length
+          ? reverse(c.mappings.issueTypes ?? {}, local.issueTypeId, "issue type") : c.issueTypeId;
+        let writableFields: Set<string> | undefined;
         const previousValues = (before.fieldValues ?? {}) as FieldValues;
         for (const [external, localId] of Object.entries(c.mappings.fields)) {
           if (localId === "issue:tags" || isPendingJiraField(localId)) continue;
@@ -1535,8 +1539,16 @@ export function createJiraService(
           const field = definitions.find((f) => f.id === localId);
           if (!field)
             throw new IssueInputError("A mapped field no longer exists.");
+          writableFields ??= remote
+            ? await api.getEditableFields(remote.id)
+            : await api.getCreatableFields(c.projectKey, createType);
+          if (!writableFields.has(external)) continue;
           const value = row.fieldValues[localId] ?? null;
           const remoteField = remoteFields.find((f) => f.id === external);
+          if (field.type === "datetime" && value !== null) {
+            fields[external] = formatJiraDate(new Date(String(value)));
+            continue;
+          }
           fields[external] =
             field.type === "user" && value !== null
               ? { accountId: await externalUser(c, String(value)) }
@@ -1550,7 +1562,7 @@ export function createJiraService(
           : null;
         if (!remote) {
           fields.project = { key: c.projectKey };
-          fields.issuetype = { id: local.issueTypeId && Object.keys(c.mappings.issueTypes ?? {}).length ? reverse(c.mappings.issueTypes ?? {}, local.issueTypeId, "issue type") : c.issueTypeId };
+          fields.issuetype = { id: createType };
           // Persist intent before non-idempotent POST. A timeout/crash cannot lead to blind retries.
           await db
             .insert(s.integrationRecord)
