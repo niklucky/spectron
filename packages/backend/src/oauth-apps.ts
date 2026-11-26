@@ -4,11 +4,27 @@ import type { OAuthAppSummary } from "@spectron/shared";
 
 const { oauthConsent, oauthClient, oauthRefreshToken, oauthAccessToken } = schema;
 
+/** An https homepage the UI can show, or null for anything unparsable. */
+function httpsURL(value: string | null) {
+  if (!value) return null;
+  try {
+    return new URL(value).protocol === "https:" ? value : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
- * Apps a person connected through the MCP OAuth flow. Disconnecting removes
- * the consent and revokes the app's tokens; the MCP route also requires a
- * live consent on every request, so short-lived JWT access tokens stop
- * working at once instead of when they expire.
+ * Apps a person connected through the MCP OAuth flow, keyed by their consent.
+ *
+ * - Disconnecting deletes the consent, revokes the app's tokens and clears
+ *   refresh-rotation replay state.
+ * - A database trigger (migration 0034) refuses to store a refresh token
+ *   without a live consent, so a rotation racing a disconnect cannot survive
+ *   it.
+ * - The MCP route accepts an access token only if it was issued after the
+ *   current consent was created, so reconnecting does not revive tokens from
+ *   an earlier connection.
  */
 export function createOAuthAppService(db: Database) {
   return {
@@ -22,9 +38,9 @@ export function createOAuthAppService(db: Database) {
       return rows.map(({ consent, client }) => ({
         clientId: client.clientId,
         name: client.name,
-        uri: client.uri?.startsWith("https:") ? client.uri : null,
+        uri: httpsURL(client.uri),
         scopes: consent.scopes,
-        connectedAt: (consent.createdAt ?? consent.updatedAt ?? new Date(0)).toISOString(),
+        connectedAt: consent.createdAt.toISOString(),
       }));
     },
     async disconnect(userId: string, clientId: string) {
@@ -33,9 +49,11 @@ export function createOAuthAppService(db: Database) {
         await tx
           .delete(oauthConsent)
           .where(and(eq(oauthConsent.userId, userId), eq(oauthConsent.clientId, clientId)));
+        // Revoke live tokens and drop cached rotation responses, which would
+        // otherwise let a just-rotated token be replayed for its reuse window.
         await tx
           .update(oauthRefreshToken)
-          .set({ revoked: now })
+          .set({ revoked: now, rotationReplayResponse: null, rotationReplayExpiresAt: null })
           .where(
             and(
               eq(oauthRefreshToken.userId, userId),
@@ -43,6 +61,10 @@ export function createOAuthAppService(db: Database) {
               isNull(oauthRefreshToken.revoked),
             ),
           );
+        await tx
+          .update(oauthRefreshToken)
+          .set({ rotationReplayResponse: null, rotationReplayExpiresAt: null })
+          .where(and(eq(oauthRefreshToken.userId, userId), eq(oauthRefreshToken.clientId, clientId)));
         await tx
           .update(oauthAccessToken)
           .set({ revoked: now })
@@ -55,14 +77,18 @@ export function createOAuthAppService(db: Database) {
           );
       });
     },
-    /** Whether the person still allows this client; checked on every MCP request. */
-    async isConnected(userId: string, clientId: string) {
+    /**
+     * When the person's current connection to this client began, or null if
+     * they disconnected it. Checked on every MCP request.
+     */
+    async connectedSince(userId: string, clientId: string): Promise<Date | null> {
       const [row] = await db
-        .select({ id: oauthConsent.id })
+        .select({ createdAt: oauthConsent.createdAt })
         .from(oauthConsent)
         .where(and(eq(oauthConsent.userId, userId), eq(oauthConsent.clientId, clientId)))
+        .orderBy(desc(oauthConsent.createdAt))
         .limit(1);
-      return !!row;
+      return row ? row.createdAt : null;
     },
   };
 }

@@ -228,6 +228,22 @@ export function createPublicApiService(db: Database, appURL: string) {
     return { states, priorities, types, tags, fields };
   }
 
+  /**
+   * Runs project reads while holding the caller's membership (FOR SHARE), so
+   * a concurrent removal cannot race them; a committed removal leaves no row.
+   */
+  async function asMember<T>(userId: string, projectId: string, read: (tx: Executor) => Promise<T>) {
+    return db.transaction(async (tx) => {
+      const [membership] = await tx
+        .select({ userId: projectMember.userId })
+        .from(projectMember)
+        .where(and(eq(projectMember.projectId, projectId), eq(projectMember.userId, userId)))
+        .for("share");
+      if (!membership) throw new ProjectAccessError("Project not found.");
+      return read(tx);
+    });
+  }
+
   function pick<T extends { id: string; name: string; deletedAt: Date | null }>(
     rows: T[],
     ref: string,
@@ -263,17 +279,10 @@ export function createPublicApiService(db: Database, appURL: string) {
 
     async projectDetail(userId: string, ref: string) {
       const p = await resolveProject(userId, ref);
-      // Hold the caller's membership for the reads so a concurrent removal
-      // cannot race them; a removal already committed leaves no row.
-      const { states, priorities, types, tags, fields, people } = await db.transaction(async (tx) => {
-        const [membership] = await tx
-          .select({ userId: projectMember.userId })
-          .from(projectMember)
-          .where(and(eq(projectMember.projectId, p.id), eq(projectMember.userId, userId)))
-          .for("share");
-        if (!membership) throw new ProjectAccessError(`Project ${ref} not found.`);
-        return { ...(await options(p.id, tx)), people: await members(p.id, tx) };
-      });
+      const { states, priorities, types, tags, fields, people } = await asMember(userId, p.id, async (tx) => ({
+        ...(await options(p.id, tx)),
+        people: await members(p.id, tx),
+      }));
       const active = <T extends { deletedAt: Date | null }>(rows: T[]) => rows.filter((r) => !r.deletedAt);
       return {
         ...p,
@@ -297,7 +306,8 @@ export function createPublicApiService(db: Database, appURL: string) {
       projectId: string,
       input: PublicIssueInput,
     ): Promise<Partial<IssueFields>> {
-      const { states, priorities, types, tags } = await options(projectId);
+      // Option names appear in validation errors, so read them as a member.
+      const { states, priorities, types, tags } = await asMember(userId, projectId, (tx) => options(projectId, tx));
       const out: Partial<IssueFields> = {};
       if (input.title !== undefined) out.title = input.title;
       if (input.description !== undefined) out.description = input.description;

@@ -15,25 +15,28 @@ type AuthUser = { id: string; name: string; email: string };
 /*
  * MCP clients (Claude, Codex, …) connect through OAuth. Spectron's authorize
  * endpoint sends people here with a signed copy of the client's request:
- * /login when they need to sign in, /oauth/consent to approve the client.
+ * /login (or /register) when they need to sign in, /oauth/consent to approve
+ * the client. The signed query travels with every step, and the server
+ * verifies it before resuming (the oauthProviderClient plugin adds it to
+ * sign-in requests; /oauth2/continue takes it for an existing session).
  */
-const OAUTH_INTERNAL = new Set(["sig", "exp", "ba_iat", "ba_param"]);
-function oauthRequest(search: string) {
+function signedOAuthRequest(search: string) {
   const params = new URLSearchParams(search);
-  if (!params.has("sig") || !params.has("client_id")) return null;
-  return params;
+  return params.has("sig") && params.has("client_id") ? params : null;
 }
-/** The client's original authorize request, to resume it once signed in. */
-function authorizeURL(params: URLSearchParams) {
-  const signed = new Set(params.getAll("ba_param"));
-  const original = new URLSearchParams();
-  for (const [key, value] of params)
-    if (signed.has(key) && !OAUTH_INTERNAL.has(key)) original.append(key, value);
-  // A prompt=login request has just been satisfied; repeating it would loop.
-  const prompt = original.get("prompt")?.split(" ").filter((p) => p && p !== "login");
-  if (prompt?.length) original.set("prompt", prompt.join(" "));
-  else original.delete("prompt");
-  return `/api/auth/oauth2/authorize?${original}`;
+async function postOAuth(path: string, body: Record<string, unknown>) {
+  const response = await fetch(`/api/auth/oauth2/${path}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ ...body, oauth_query: window.location.search.slice(1) }),
+  });
+  const result = (await response.json().catch(() => ({}))) as { url?: string; message?: string };
+  if (response.ok && result.url) return result.url;
+  throw new Error(
+    response.status === 400 || response.status === 401
+      ? "This request expired. Start again from the app you were connecting."
+      : result.message || "Couldn’t continue. Please try again.",
+  );
 }
 export function AuthGate({
   children,
@@ -51,25 +54,38 @@ export function AuthGate({
       : "login";
   const params = new URLSearchParams(window.location.search);
   const token = params.get("token");
-  const oauth = path === "login" || path === "oauth/consent" ? oauthRequest(window.location.search) : null;
   const isConsent = path === "oauth/consent";
-  // Where a successful sign-in goes next.
-  const afterSignIn = () =>
-    oauth && !isConsent ? authorizeURL(oauth) : isConsent ? window.location.href : `/${window.location.hash}`;
-  const resumeOAuth = !!data && !!oauth && !isConsent;
-  const oauthSearch = oauth ? window.location.search : "";
+  const oauth =
+    path === "login" || path === "register" || isConsent ? signedOAuthRequest(window.location.search) : null;
+  // The client asked for a fresh sign-in (prompt=login, or max_age that the
+  // current session is too old for): an existing session must not satisfy it.
+  const reauth = !!oauth && !isConsent && (oauth.get("prompt")?.split(" ").includes("login") || oauth.has("max_age"));
+  // Someone already signed in (another tab, or back from a login link):
+  // resume the client's request; the server re-verifies its signature.
+  const resumeOAuth = !!data && !!oauth && !isConsent && !reauth;
+  const [resumeFailed, setResumeFailed] = useState("");
   useEffect(() => {
-    const request = oauthRequest(oauthSearch);
-    if (resumeOAuth && request) window.location.replace(authorizeURL(request));
-  }, [resumeOAuth, oauthSearch]);
-  const continueHash = /^#invite\/[a-f0-9]{64}$/.test(window.location.hash)
+    if (!resumeOAuth) return;
+    // created:true also clears prompt=create, which signing up just satisfied.
+    postOAuth("continue", { created: true })
+      .then((url) => {
+        // A request that still needs a sign-in comes back here; show the form.
+        if (new URL(url, window.location.origin).pathname === "/login")
+          setResumeFailed("Sign in again to continue.");
+        else window.location.replace(url);
+      })
+      .catch((cause: unknown) => setResumeFailed(cause instanceof Error ? cause.message : "Couldn’t continue."));
+  }, [resumeOAuth]);
+  const invite = /^#invite\/[a-f0-9]{64}$/.test(window.location.hash)
     ? window.location.hash
     : "";
+  // Links between login, sign-up and back keep the OAuth request with them.
+  const continueHash = oauth ? window.location.search : invite;
   // The magic-link verifier redirects here with ?error= when a link is stale.
   const linkError =
     mode === "login" && params.has("error")
       ? "That login link has expired or was already used. Request a new one."
-      : "";
+      : resumeFailed || (reauth ? "The app you are connecting asked you to sign in again." : "");
   if (isPending)
     return (
       <main
@@ -88,14 +104,14 @@ export function AuthGate({
         </Button>
       </main>
     );
-  if (resumeOAuth)
+  if (resumeOAuth && !resumeFailed)
     return (
       <main className="grid h-dvh place-content-center bg-surface text-ink-2" role="status">
         Continuing to the app…
       </main>
     );
   if (data && isConsent) return <ConsentGate user={data.user} />;
-  if (data && mode !== "reset-password")
+  if (data && mode !== "reset-password" && !oauth)
     return children(data.user, data.session.id);
 
   async function submit(fields: AuthFields) {
@@ -129,8 +145,12 @@ export function AuthGate({
         result.error.message || "The request couldn’t be completed.",
       );
     }
-    if (mode === "login" || mode === "register")
-      window.location.replace(afterSignIn());
+    if (mode === "login" || mode === "register") {
+      // With a signed OAuth request in the page, the server resumes the
+      // authorization as part of sign-in and returns where to go next.
+      const next = oauth ? (result.data as { url?: string } | null)?.url : undefined;
+      window.location.replace(next ?? (oauth ? window.location.href : `/${invite}`));
+    }
     if (mode === "reset-password")
       window.history.replaceState(null, "", "/reset-password");
   }
@@ -139,7 +159,8 @@ export function AuthGate({
       email,
       // Only used when the address is new: a readable name until they edit it.
       name: email.split("@")[0] || email,
-      callbackURL: oauth || isConsent ? afterSignIn().replace(window.location.origin, "") : `/${continueHash}`,
+      // Back to this page, signed request intact, to resume once signed in.
+      callbackURL: oauth ? `${window.location.pathname}${window.location.search}` : `/${invite}`,
       errorCallbackURL: "/login",
     });
     if (result.error) {
@@ -157,7 +178,8 @@ export function AuthGate({
       continueHash={continueHash}
       notice={linkError}
       onSubmit={submit}
-      onMagicLink={sendMagicLink}
+      // A login link cannot prove the fresh sign-in the app asked for.
+      onMagicLink={reauth ? undefined : sendMagicLink}
       invalidReset={
         mode === "reset-password" && (!token || params.has("error"))
       }
@@ -169,7 +191,7 @@ function ConsentGate({ user }: { user: AuthUser }) {
   const [request, setRequest] = useState<OAuthConsentRequest | null>(null);
   const [failure, setFailure] = useState("");
   useEffect(() => {
-    const params = oauthRequest(window.location.search);
+    const params = signedOAuthRequest(window.location.search);
     // Another site could frame this page and trick a click on Allow.
     if (window.top !== window.self) {
       setFailure("For your safety, approve connections in their own browser window.");
@@ -187,13 +209,24 @@ function ConsentGate({ user }: { user: AuthUser }) {
         return null;
       }
     };
+    // Native apps return to custom schemes without a host
+    // (com.example.app:/callback); show those in full.
+    const destination = (value: string | null) => {
+      if (!value) return "unknown address";
+      try {
+        const url = new URL(value);
+        return url.host || `${url.protocol}${url.pathname}`;
+      } catch {
+        return value;
+      }
+    };
     void fetch(`/api/auth/oauth2/public-client?client_id=${encodeURIComponent(clientId)}`)
       .then(async (response) => {
         if (!response.ok) throw new Error();
         const client = (await response.json()) as { client_name?: string };
         setRequest({
           clientName: client.client_name ?? null,
-          redirectHost: host(params.get("redirect_uri")) ?? "unknown address",
+          redirectHost: destination(params.get("redirect_uri")),
           clientHost: /^https:\/\//.test(clientId) ? host(clientId) : null,
           scopes: (params.get("scope") ?? "").split(" ").filter(Boolean),
           account: { name: user.name, email: user.email },
@@ -217,19 +250,7 @@ function ConsentGate({ user }: { user: AuthUser }) {
     <OAuthConsentScreen
       request={request}
       onDecision={async (accept) => {
-        const response = await fetch("/api/auth/oauth2/consent", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ accept, oauth_query: window.location.search.slice(1) }),
-        });
-        const body = (await response.json().catch(() => ({}))) as { url?: string; message?: string };
-        if (!response.ok || !body.url)
-          throw new Error(
-            response.status === 400 || response.status === 401
-              ? "This request expired. Start again from the app you were connecting."
-              : body.message || "Couldn’t complete the connection. Please try again.",
-          );
-        window.location.assign(body.url);
+        window.location.assign(await postOAuth("consent", { accept }));
       }}
     />
   );

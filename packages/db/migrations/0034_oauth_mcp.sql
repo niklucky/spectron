@@ -10,7 +10,7 @@ CREATE TABLE "jwks" (
 --> statement-breakpoint
 CREATE TABLE "oauth_access_tokens" (
 	"id" text PRIMARY KEY NOT NULL,
-	"token" text,
+	"token" text NOT NULL,
 	"client_id" text NOT NULL,
 	"session_id" text,
 	"user_id" text,
@@ -19,8 +19,8 @@ CREATE TABLE "oauth_access_tokens" (
 	"resources" text[],
 	"requested_user_info_claims" text[],
 	"refresh_id" text,
-	"expires_at" timestamp with time zone,
-	"created_at" timestamp with time zone,
+	"expires_at" timestamp with time zone NOT NULL,
+	"created_at" timestamp with time zone NOT NULL,
 	"revoked" timestamp with time zone,
 	"confirmation" jsonb,
 	"scopes" text[] NOT NULL,
@@ -64,7 +64,9 @@ CREATE TABLE "oauth_clients" (
 	"dpop_bound_access_tokens" boolean DEFAULT false,
 	"reference_id" text,
 	"metadata" jsonb,
-	CONSTRAINT "oauth_clients_client_id_unique" UNIQUE("client_id")
+	CONSTRAINT "oauth_clients_client_id_unique" UNIQUE("client_id"),
+	CONSTRAINT "oauth_clients_no_backchannel_logout" CHECK ("oauth_clients"."backchannel_logout_uri" IS NULL),
+	CONSTRAINT "oauth_clients_no_jwks_uri" CHECK ("oauth_clients"."jwks_uri" IS NULL)
 );
 --> statement-breakpoint
 CREATE TABLE "oauth_client_assertions" (
@@ -88,8 +90,8 @@ CREATE TABLE "oauth_consents" (
 	"resources" text[],
 	"requested_user_info_claims" text[],
 	"scopes" text[] NOT NULL,
-	"created_at" timestamp with time zone,
-	"updated_at" timestamp with time zone
+	"created_at" timestamp with time zone NOT NULL,
+	"updated_at" timestamp with time zone NOT NULL
 );
 --> statement-breakpoint
 CREATE TABLE "oauth_refresh_tokens" (
@@ -102,8 +104,8 @@ CREATE TABLE "oauth_refresh_tokens" (
 	"authorization_code_id" text,
 	"resources" text[],
 	"requested_user_info_claims" text[],
-	"expires_at" timestamp with time zone,
-	"created_at" timestamp with time zone,
+	"expires_at" timestamp with time zone NOT NULL,
+	"created_at" timestamp with time zone NOT NULL,
 	"revoked" timestamp with time zone,
 	"rotated_at" timestamp with time zone,
 	"rotation_replay_response" text,
@@ -158,4 +160,23 @@ CREATE INDEX "oauth_consents_user_id_idx" ON "oauth_consents" USING btree ("user
 CREATE INDEX "oauth_refresh_tokens_client_id_idx" ON "oauth_refresh_tokens" USING btree ("client_id");--> statement-breakpoint
 CREATE INDEX "oauth_refresh_tokens_session_id_idx" ON "oauth_refresh_tokens" USING btree ("session_id");--> statement-breakpoint
 CREATE INDEX "oauth_refresh_tokens_user_id_idx" ON "oauth_refresh_tokens" USING btree ("user_id");--> statement-breakpoint
-CREATE INDEX "oauth_refresh_tokens_authorization_code_id_idx" ON "oauth_refresh_tokens" USING btree ("authorization_code_id");
+CREATE INDEX "oauth_refresh_tokens_authorization_code_id_idx" ON "oauth_refresh_tokens" USING btree ("authorization_code_id");--> statement-breakpoint
+-- A refresh token is a lasting grant: it may only be stored while the person's
+-- consent for that client exists. Disconnecting deletes the consent first, so
+-- a rotation racing it either waits on the share lock and is then revoked by
+-- the disconnect, or finds no consent and is refused here.
+CREATE FUNCTION "oauth_refresh_token_requires_consent"() RETURNS trigger AS $$
+BEGIN
+	PERFORM 1 FROM "oauth_consents"
+		WHERE "user_id" = NEW."user_id" AND "client_id" = NEW."client_id"
+		FOR SHARE;
+	IF NOT FOUND THEN
+		RAISE EXCEPTION 'OAuth access for this app was disconnected' USING ERRCODE = 'P0001';
+	END IF;
+	RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+--> statement-breakpoint
+CREATE TRIGGER "oauth_refresh_tokens_require_consent"
+	BEFORE INSERT ON "oauth_refresh_tokens"
+	FOR EACH ROW EXECUTE FUNCTION "oauth_refresh_token_requires_consent"();

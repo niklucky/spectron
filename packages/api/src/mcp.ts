@@ -9,12 +9,19 @@
  * Either way the tools act as that person, who must have a verified email.
  */
 
-import { createMcpHandler, McpServer, type AuthInfo } from "@modelcontextprotocol/server";
+import { readFile } from "node:fs/promises";
+import {
+  createMcpHandler,
+  McpServer,
+  originValidationResponse,
+  type AuthInfo,
+} from "@modelcontextprotocol/server";
 import { z } from "zod";
 import {
-  createMcpTokenVerifier,
+  createMcpCredentialReader,
   type ApiTokenService,
   type Auth,
+  type FileService,
   type OAuthAppService,
 } from "@spectron/backend";
 import { issueTriggers } from "@spectron/shared";
@@ -61,7 +68,7 @@ async function run(action: () => Promise<unknown>) {
   }
 }
 
-function buildServer(ops: Operations, actor: Actor) {
+function buildServer(ops: Operations, files: FileService, actor: Actor) {
   const me = actor.userId;
   const server = new McpServer(
     { name: "spectron", version: "1.0.0" },
@@ -203,11 +210,49 @@ function buildServer(ops: Operations, actor: Actor) {
   server.registerTool(
     "list_attachments",
     {
-      description: "Files attached to an issue, with download URLs for the REST API.",
+      description:
+        "Files attached to an issue. Read one with read_file; each url is a REST download link that needs a personal access token.",
       inputSchema: z.object({ issue: issueRef }),
       annotations: read,
     },
     ({ issue }) => run(() => ops.listAttachments(me, issue)),
+  );
+  server.registerTool(
+    "read_file",
+    {
+      description: `Read an attached file by its id (from list_attachments, get_issue or comments). Text is returned as text, images as images, other files as base64. Files over ${MCP_MAX_FILE_BYTES / 1024 / 1024} MB are refused.`,
+      inputSchema: z.object({
+        project: z.string().min(1).max(64).describe("Project key or id the file belongs to."),
+        fileId: id,
+      }),
+      annotations: read,
+    },
+    async ({ project, fileId }) => {
+      try {
+        const p = await ops.resolveProject(me, project);
+        const file = await files.download(me, p.id, fileId);
+        if (file.sizeBytes > MCP_MAX_FILE_BYTES)
+          throw new ApiError(413, "file_too_large", `This file is larger than ${MCP_MAX_FILE_BYTES / 1024 / 1024} MB.`);
+        const bytes = await readFile(file.path);
+        const type = file.contentType;
+        if (type.startsWith("text/") || /^application\/(json|xml|yaml|x-yaml|javascript)/.test(type))
+          return { content: [{ type: "text" as const, text: bytes.toString("utf8") }] };
+        if (/^image\/(png|jpeg|gif|webp)$/.test(type))
+          return { content: [{ type: "image" as const, data: bytes.toString("base64"), mimeType: type }] };
+        return {
+          content: [
+            {
+              type: "resource" as const,
+              resource: { uri: `spectron://files/${p.id}/${fileId}`, mimeType: type, blob: bytes.toString("base64") },
+            },
+          ],
+        };
+      } catch (error) {
+        const { status, code, message } = apiErrorStatus(error);
+        if (status === 500) console.error("MCP tool call failed.");
+        return { isError: true, content: [{ type: "text" as const, text: `${code}: ${message}` }] };
+      }
+    },
   );
   server.registerTool(
     "upload_file",
@@ -250,69 +295,85 @@ export function createMcpRoute({
   auth,
   tokens,
   apps,
+  files,
   operations,
   appURL,
 }: {
   auth: Auth;
   tokens: ApiTokenService;
   apps: OAuthAppService;
+  files: FileService;
   operations: Operations;
   appURL: string;
 }) {
-  const verify = createMcpTokenVerifier(auth, appURL);
+  const readCredential = createMcpCredentialReader(auth, appURL);
   const metadata = `${appURL}/.well-known/oauth-protected-resource/api/mcp`;
+  // Browsers send Origin; native and server-side clients usually do not. A
+  // present Origin must be Spectron's own (MCP Streamable HTTP, DNS rebinding).
+  const allowedHosts = [new URL(appURL).hostname];
   const handler = createMcpHandler(
     ({ authInfo }) => {
       const actor = authInfo?.extra as Actor | undefined;
       // The route below always sets this; a missing actor must never fall back to anyone.
       if (!actor?.userId) throw new Error("MCP request without an authenticated actor.");
-      return buildServer(operations, actor);
+      return buildServer(operations, files, actor);
     },
     { maxRequestBodySize: MCP_MAX_BODY_BYTES, onerror: () => console.error("MCP request failed.") },
   );
   const serve = (request: Request, info: AuthInfo) => handler.fetch(request, { authInfo: info });
-  /** RFC 6750 / RFC 9728 challenge: tells MCP clients where to start OAuth. */
-  const challenge = (status: 401 | 403, message: string, error?: "invalid_token") =>
+  const reply = (status: number, message: string, challenge?: string) =>
     new Response(JSON.stringify({ jsonrpc: "2.0", error: { code: -32000, message }, id: null }), {
       status,
       headers: {
         "content-type": "application/json",
-        "www-authenticate": `Bearer ${error ? `error="${error}", ` : ""}resource_metadata="${metadata}"`,
+        ...(challenge ? { "www-authenticate": challenge } : {}),
       },
     });
-  const viaOAuth = async (request: Request, token: string) => {
-    let claims: Awaited<ReturnType<typeof verify>>;
-    try {
-      claims = await verify(token);
-    } catch {
-      return challenge(401, "Invalid or expired access token.", "invalid_token");
-    }
-    const person = await tokens.verifiedUser(claims.sub!);
-    if (!person) return challenge(403, "Your Spectron account must have a verified email.");
-    const clientId = typeof claims.azp === "string" ? claims.azp : String(claims.client_id ?? "");
-    // Disconnecting an app in settings removes its consent; honour that
-    // immediately rather than when this access token expires.
-    if (!clientId || !(await apps.isConnected(person.id, clientId)))
-      return challenge(401, "This app was disconnected from Spectron. Connect it again.", "invalid_token");
-    return serve(request, {
-      token,
-      clientId,
-      scopes: typeof claims.scope === "string" ? claims.scope.split(" ") : [],
-      ...(typeof claims.exp === "number" ? { expiresAt: claims.exp } : {}),
-      extra: { userId: person.id, via: `oauth:${clientId}` } satisfies Actor,
-    });
-  };
+  /** RFC 6750 / RFC 9728 challenge: tells MCP clients where to start OAuth. */
+  const challenge = (scheme: "Bearer" | "DPoP", error?: "invalid_token" | "invalid_request") =>
+    `${scheme} ${error ? `error="${error}", ` : ""}resource_metadata="${metadata}"`;
+
   return async (request: Request): Promise<Response> => {
-    const bearer = /^Bearer\s+(\S+)$/i.exec(request.headers.get("authorization") ?? "")?.[1];
-    if (!bearer) return challenge(401, "Sign in to Spectron to use this MCP server.");
-    if (!bearer.startsWith("spk_")) return viaOAuth(request, bearer);
-    const actor = await tokens.authenticate(bearer);
-    if (!actor) return challenge(401, "Invalid or revoked personal access token.", "invalid_token");
-    return serve(request, {
-      token: "",
-      clientId: `pat:${actor.token.id}`,
-      scopes: [],
-      extra: { userId: actor.user.id, via: `token:${actor.token.name}` } satisfies Actor,
-    });
+    const rejectedOrigin = originValidationResponse(request, allowedHosts);
+    if (rejectedOrigin) return rejectedOrigin;
+    const credential = await readCredential(request);
+    switch (credential.kind) {
+      case "missing":
+        return reply(401, "Sign in to Spectron to use this MCP server.", challenge("Bearer"));
+      case "malformed":
+        return reply(400, "Malformed Authorization header.", challenge("Bearer", "invalid_request"));
+      case "invalid":
+        return reply(401, "Invalid or expired access token.", challenge(credential.scheme, "invalid_token"));
+      case "personal": {
+        const actor = await tokens.authenticate(credential.token);
+        if (!actor) return reply(401, "Invalid or revoked personal access token.", challenge("Bearer", "invalid_token"));
+        return serve(request, {
+          token: "",
+          clientId: `pat:${actor.token.id}`,
+          scopes: [],
+          extra: { userId: actor.user.id, via: `token:${actor.token.name}` } satisfies Actor,
+        });
+      }
+      case "oauth": {
+        const { claims } = credential;
+        const person = await tokens.verifiedUser(claims.sub);
+        // Not something re-authorizing fixes, so no challenge (RFC 6750 §3.1).
+        if (!person) return reply(403, "Your Spectron account must have a verified email.");
+        const clientId = typeof claims.azp === "string" ? claims.azp : String(claims.client_id ?? "");
+        // The token must belong to the person's current connection with this
+        // app: disconnecting deletes it, and reconnecting starts a new one, so
+        // tokens from before either are refused immediately.
+        const since = clientId ? await apps.connectedSince(person.id, clientId) : null;
+        if (!since || claims.iat < Math.floor(since.getTime() / 1000))
+          return reply(401, "This app was disconnected from Spectron. Connect it again.", challenge("Bearer", "invalid_token"));
+        return serve(request, {
+          token: "",
+          clientId,
+          scopes: typeof claims.scope === "string" ? claims.scope.split(" ") : [],
+          ...(typeof claims.exp === "number" ? { expiresAt: claims.exp } : {}),
+          extra: { userId: person.id, via: `oauth:${clientId}` } satisfies Actor,
+        });
+      }
+    }
   };
 }

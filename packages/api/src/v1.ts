@@ -198,13 +198,12 @@ export function createV1Routes({
   v1.get("/issues/:issue/attachments", async (c) => c.json(await ops.listAttachments(me(c), c.req.param("issue"))));
   v1.post("/issues/:issue/attachments", async (c) => {
     // ?filename=… uploads the request body and attaches it in one transaction;
-    // otherwise JSON {fileId} links an already uploaded project file.
-    if (c.req.query("filename") !== undefined) {
-      const target = await ops.resolveIssue(me(c), c.req.param("issue"));
-      return c.json(await upload(c, target.projectId, target.id), 201);
-    }
+    // otherwise JSON {fileId} links an already uploaded project file. The
+    // issue is resolved first so an unknown issue is a 404 either way.
+    const target = await ops.resolveIssue(me(c), c.req.param("issue"));
+    if (c.req.query("filename") !== undefined) return c.json(await upload(c, target.projectId, target.id), 201);
     const { fileId } = await json(c, linkAttachment);
-    return c.json(await ops.linkFile(me(c), c.req.param("issue"), fileId), 201);
+    return c.json(await ops.linkFile(me(c), target.id, fileId), 201);
   });
 
   // Registered last: a mounted app's notFound handler is not consulted by the parent.

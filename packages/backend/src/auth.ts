@@ -1,6 +1,12 @@
 import { betterAuth } from "better-auth";
-import { verifyJwsAccessToken } from "better-auth/oauth2";
+import {
+  createDpopReplayStore,
+  enforceDpopBinding,
+  parseAccessTokenAuthorization,
+  verifyJwsAccessToken,
+} from "better-auth/oauth2";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
+import { APIError, createAuthMiddleware, getSessionFromCtx } from "better-auth/api";
 import { jwt, magicLink } from "better-auth/plugins";
 import { mcp } from "@better-auth/mcp";
 import { cimd } from "@better-auth/cimd";
@@ -14,6 +20,29 @@ export type VerificationEmail = { to: string; url: string };
 export const MAGIC_LINK_EXPIRES_IN = 10 * 60;
 /** The MCP server is a protected resource of this same app. */
 export const mcpResource = (appURL: string) => `${appURL}/api/mcp`;
+const UNUSED_OAUTH_PATHS = [
+  "/oauth2/create-client",
+  "/oauth2/get-client",
+  "/oauth2/get-clients",
+  "/oauth2/update-client",
+  "/oauth2/delete-client",
+  "/oauth2/client/rotate-secret",
+  "/oauth2/client/rotate-keys",
+  "/oauth2/get-consent",
+  "/oauth2/get-consents",
+  "/oauth2/update-consent",
+  "/oauth2/delete-consent",
+  "/oauth2/end-session",
+  "/oauth2/end-session/confirm",
+  "/oauth2/userinfo",
+  "/oauth2/introspect",
+  "/oauth2/public-client-prelogin",
+  "/admin/oauth2/create-client",
+  "/admin/oauth2/update-client",
+  "/admin/oauth2/resources",
+  "/admin/oauth2/resources/:identifier",
+  "/admin/oauth2/resources/:identifier/clients/:client_id",
+];
 /** SPA routes the OAuth authorize flow sends people to. */
 export const OAUTH_LOGIN_PAGE = "/login";
 export const OAUTH_CONSENT_PAGE = "/oauth/consent";
@@ -39,7 +68,36 @@ export function createAuth(db: Database, config: AuthConfig) {
     trustedOrigins: [config.appURL],
     // The JWT plugin's session-token endpoint would mint JWTs signed with the
     // same keys as MCP access tokens; only the OAuth endpoints may issue them.
-    disabledPaths: ["/token"],
+    // The OAuth provider's client/consent management, OIDC logout, UserInfo
+    // and introspection endpoints are not used by MCP clients: Spectron
+    // manages connected apps itself (oauth-apps.ts).
+    disabledPaths: ["/token", ...UNUSED_OAUTH_PATHS],
+    hooks: {
+      before: createAuthMiddleware(async (ctx) => {
+        // A consent is a lasting grant. An unverified account may belong to
+        // someone squatting the address, whose grant would outlive the real
+        // owner reclaiming it; only verified accounts may connect apps.
+        // The provider would fetch these URLs server-side; MCP clients never
+        // need them. A database constraint backs this up for clients that
+        // arrive through a metadata document.
+        if (ctx.path === "/oauth2/register") {
+          const body = (ctx.body ?? {}) as Record<string, unknown>;
+          for (const field of ["backchannel_logout_uri", "jwks_uri"])
+            if (body[field] !== undefined)
+              throw new APIError("BAD_REQUEST", {
+                error: "invalid_client_metadata",
+                error_description: `${field} is not supported.`,
+              });
+          return;
+        }
+        if (ctx.path !== "/oauth2/consent") return;
+        const session = await getSessionFromCtx(ctx);
+        if (session && !session.user.emailVerified)
+          throw new APIError("FORBIDDEN", {
+            message: "Verify your email address before connecting apps to Spectron.",
+          });
+      }),
+    },
     database: drizzleAdapter(db, { provider: "pg", schema, transaction: true }),
     emailAndPassword: {
       enabled: true,
@@ -138,26 +196,55 @@ export function createAuth(db: Database, config: AuthConfig) {
 }
 export type Auth = ReturnType<typeof createAuth>;
 
-/**
- * Verifies an MCP access token in-process against this server's own signing
- * keys (no HTTP round-trip to /jwks): signature, issuer, the MCP audience and
- * the RFC 9068 `at+jwt` type. Throws when the token is not acceptable.
- */
 type JwksFetch = Exclude<Parameters<typeof verifyJwsAccessToken>[1]["jwksFetch"], string>;
-export function createMcpTokenVerifier(auth: Auth, appURL: string) {
+export type McpCredential =
+  | { kind: "missing" }
+  | { kind: "malformed" }
+  | { kind: "personal"; token: string }
+  | { kind: "invalid"; scheme: "Bearer" | "DPoP" }
+  | { kind: "oauth"; claims: { sub: string; iat: number; azp?: unknown; client_id?: unknown; scope?: unknown; exp?: unknown } };
+
+/**
+ * Reads the credential of an MCP request. OAuth access tokens are verified
+ * in-process against this server's own signing keys (no HTTP round-trip to
+ * /jwks): signature, issuer, the MCP audience, the RFC 9068 `at+jwt` type and
+ * required claims. A DPoP-bound token must arrive with the DPoP scheme and a
+ * valid proof for the public MCP URL (RFC 9449 §7); proofs are single-use via
+ * the auth database. Personal access tokens (spk_…) are returned as such.
+ */
+export function createMcpCredentialReader(auth: Auth, appURL: string) {
   const issuer = `${appURL}/api/auth`;
   const audience = mcpResource(appURL);
   // Identity key for the JWKS cache (5-minute TTL, refetch on unknown kid).
   const jwksCacheKey = {};
-  return async (token: string) => {
-    const claims = await verifyJwsAccessToken(token, {
-      jwksFetch: (() => auth.api.getJwks()) as JwksFetch,
-      jwksCacheKey,
-      verifyOptions: { issuer, audience, typ: "at+jwt" },
-    });
-    // Sender-constrained (DPoP) tokens need a proof this server does not check.
-    if (claims.cnf) throw new Error("DPoP-bound access tokens are not supported.");
-    if (typeof claims.sub !== "string") throw new Error("Access token has no subject.");
-    return claims;
+  const replayStore = auth.$context.then((ctx) => createDpopReplayStore(ctx.internalAdapter));
+  return async (request: Request): Promise<McpCredential> => {
+    const header = request.headers.get("authorization");
+    if (!header) return { kind: "missing" };
+    const authorization = parseAccessTokenAuthorization(header);
+    if (!authorization || authorization.scheme === "Unknown" || !authorization.token) return { kind: "malformed" };
+    if (authorization.scheme === "Bearer" && authorization.token.startsWith("spk_"))
+      return { kind: "personal", token: authorization.token };
+    try {
+      const claims = await verifyJwsAccessToken(authorization.token, {
+        jwksFetch: (() => auth.api.getJwks()) as JwksFetch,
+        jwksCacheKey,
+        // RFC 9068: exp, iat and sub are mandatory; fail closed without them.
+        verifyOptions: { issuer, audience, typ: "at+jwt", requiredClaims: ["exp", "iat", "sub"] },
+      });
+      if (typeof claims.sub !== "string" || typeof claims.iat !== "number")
+        return { kind: "invalid", scheme: authorization.scheme };
+      await enforceDpopBinding({
+        payload: claims,
+        authorization,
+        proofJwt: request.headers.get("dpop"),
+        method: request.method,
+        url: audience,
+        replayStore: await replayStore,
+      });
+      return { kind: "oauth", claims: claims as typeof claims & { sub: string; iat: number } };
+    } catch {
+      return { kind: "invalid", scheme: authorization.scheme };
+    }
   };
 }

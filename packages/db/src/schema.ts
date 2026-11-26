@@ -196,7 +196,14 @@ export const oauthClient = pgTable(
     referenceId: text("reference_id"),
     metadata: jsonb("metadata"),
   },
-  (t) => [index("oauth_clients_user_id_idx").on(t.userId)],
+  (t) => [
+    index("oauth_clients_user_id_idx").on(t.userId),
+    // The provider would fetch these URLs server-side (back-channel logout,
+    // client keys) with only a syntactic private-host check. MCP clients are
+    // public clients that need neither, so no registration may store them.
+    check("oauth_clients_no_backchannel_logout", sql`${t.backchannelLogoutUri} IS NULL`),
+    check("oauth_clients_no_jwks_uri", sql`${t.jwksUri} IS NULL`),
+  ],
 );
 export const oauthResource = pgTable("oauth_resources", {
   id: text("id").primaryKey(),
@@ -249,8 +256,8 @@ export const oauthRefreshToken = pgTable(
     authorizationCodeId: text("authorization_code_id"),
     resources: text("resources").array(),
     requestedUserInfoClaims: text("requested_user_info_claims").array(),
-    expiresAt: authTime("expires_at"),
-    createdAt: authTime("created_at"),
+    expiresAt: authTime("expires_at").notNull(),
+    createdAt: authTime("created_at").notNull(),
     revoked: authTime("revoked"),
     rotatedAt: authTime("rotated_at"),
     rotationReplayResponse: text("rotation_replay_response"),
@@ -270,7 +277,7 @@ export const oauthAccessToken = pgTable(
   "oauth_access_tokens",
   {
     id: text("id").primaryKey(),
-    token: text("token").unique(),
+    token: text("token").notNull().unique(),
     clientId: text("client_id")
       .notNull()
       .references(() => oauthClient.clientId, { onDelete: "cascade" }),
@@ -281,8 +288,8 @@ export const oauthAccessToken = pgTable(
     resources: text("resources").array(),
     requestedUserInfoClaims: text("requested_user_info_claims").array(),
     refreshId: text("refresh_id").references(() => oauthRefreshToken.id, { onDelete: "cascade" }),
-    expiresAt: authTime("expires_at"),
-    createdAt: authTime("created_at"),
+    expiresAt: authTime("expires_at").notNull(),
+    createdAt: authTime("created_at").notNull(),
     revoked: authTime("revoked"),
     confirmation: jsonb("confirmation"),
     scopes: text("scopes").array().notNull(),
@@ -307,8 +314,8 @@ export const oauthConsent = pgTable(
     resources: text("resources").array(),
     requestedUserInfoClaims: text("requested_user_info_claims").array(),
     scopes: text("scopes").array().notNull(),
-    createdAt: authTime("created_at"),
-    updatedAt: authTime("updated_at"),
+    createdAt: authTime("created_at").notNull(),
+    updatedAt: authTime("updated_at").notNull(),
   },
   (t) => [
     index("oauth_consents_client_id_idx").on(t.clientId),

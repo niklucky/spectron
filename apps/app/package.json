@@ -10,6 +10,7 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@better-auth/oauth-provider": "1.7.20",
     "@spectron/frontend": "workspace:*",
     "@spectron/shared": "workspace:*",
     "@tanstack/react-hotkeys": "0.10.0",

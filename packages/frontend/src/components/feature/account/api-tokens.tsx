@@ -20,6 +20,13 @@ const message = (cause: unknown, fallback: string) =>
 const lifetimeLabel = (days: number | null) =>
   days === null ? "No expiry" : days === 365 ? "1 year" : `${days} days`;
 const day = (iso: string) => new Date(iso).toLocaleDateString();
+const hostOf = (url: string) => {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
+  }
+};
 
 /** Personal access tokens for the public API, used by agents, scripts and the CLI. */
 export function ApiTokens({ actions }: { actions: ApiTokenActions }) {
@@ -303,7 +310,7 @@ function ConnectedApps({
             <h3>{app.name || "Unnamed app"}</h3>
             <p>
               Connected {day(app.connectedAt)}
-              {app.uri && ` · ${new URL(app.uri).host}`}
+              {app.uri && ` · ${hostOf(app.uri)}`}
             </p>
             <div className="ai-actions">
               <Button

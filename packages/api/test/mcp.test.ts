@@ -97,6 +97,21 @@ test("MCP server: OAuth discovery, sign-in, consent, tools and disconnect", asyn
   assert.notEqual((await request("/.well-known/security.txt")).status, 200);
   // The JWT plugin's session-token endpoint is disabled: only OAuth issues JWTs.
   assert.equal((await request("/api/auth/token", { headers: { cookie: owner.cookie } })).status, 404);
+  // Client/consent management, OIDC logout, UserInfo and introspection are off.
+  for (const [method, path] of [
+    ["GET", "/api/auth/oauth2/userinfo"],
+    ["GET", "/api/auth/oauth2/get-clients"],
+    ["POST", "/api/auth/oauth2/create-client"],
+    ["POST", "/api/auth/oauth2/delete-consent"],
+    ["GET", "/api/auth/oauth2/get-consents"],
+    ["POST", "/api/auth/oauth2/introspect"],
+    ["GET", "/api/auth/oauth2/end-session"],
+  ] as const)
+    assert.equal(
+      (await request(path, { method, headers: { origin, cookie: owner.cookie, "content-type": "application/json" }, ...(method === "POST" ? { body: "{}" } : {}) })).status,
+      404,
+      path,
+    );
 
   // --- Dynamic registration, sign-in redirect, consent, token -------------
   const redirectURI = "http://127.0.0.1:33418/callback";
@@ -113,6 +128,18 @@ test("MCP server: OAuth discovery, sign-in, consent, tools and disconnect", asyn
   });
   assert.equal(registered.status, 201, await registered.clone().text());
   const clientId = ((await registered.json()) as { client_id: string }).client_id;
+  for (const extra of [
+    { backchannel_logout_uri: "https://127.0.0.1.nip.io/logout" },
+    { jwks_uri: "https://example.test/jwks.json", token_endpoint_auth_method: "private_key_jwt" },
+  ]) {
+    const refusedClient = await request("/api/auth/oauth2/register", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ client_name: "Fetches", redirect_uris: [redirectURI], token_endpoint_auth_method: "none", ...extra }),
+    });
+    assert.equal(refusedClient.status, 400, JSON.stringify(extra));
+    assert.equal(((await refusedClient.json()) as { error: string }).error, "invalid_client_metadata");
+  }
 
   const authorize = (actor: { cookie: string } | null, extra: Record<string, string> = {}) => {
     const verifier = randomBytes(32).toString("base64url");
@@ -174,13 +201,50 @@ test("MCP server: OAuth discovery, sign-in, consent, tools and disconnect", asyn
   });
   assert.notEqual(refused.status, 200);
 
-  const exchange = async (body: Record<string, string>) => {
+  await pool.query("UPDATE users SET email_verified = false WHERE id = $1", [member.id]);
+  const unverifiedConsent = await request("/api/auth/oauth2/consent", {
+    method: "POST",
+    headers: { origin, cookie: member.cookie, "content-type": "application/json" },
+    body: JSON.stringify({ accept: true, oauth_query: (await consentFor(member)).query }),
+  });
+  assert.equal(unverifiedConsent.status, 403);
+  assert.match(((await unverifiedConsent.json()) as { message: string }).message, /Verify your email/);
+  await pool.query("UPDATE users SET email_verified = true WHERE id = $1", [member.id]);
+  // The SPA resumes a signed request for an existing session via /continue,
+  // and the server re-verifies the signature.
+  const signedLogin = login.search.slice(1);
+  const resumed = await request("/api/auth/oauth2/continue", {
+    method: "POST",
+    headers: { origin, cookie: owner.cookie, "content-type": "application/json" },
+    body: JSON.stringify({ created: true, oauth_query: signedLogin }),
+  });
+  assert.equal(resumed.status, 200);
+  assert.match(((await resumed.json()) as { url: string }).url, /^\/oauth\/consent\?/);
+  const forgedResume = await request("/api/auth/oauth2/continue", {
+    method: "POST",
+    headers: { origin, cookie: owner.cookie, "content-type": "application/json" },
+    body: JSON.stringify({ created: true, oauth_query: signedLogin.replace("state=s1", "state=s2") }),
+  });
+  assert.equal(forgedResume.status, 400);
+  // Signing in with the signed request resumes authorization as part of sign-in.
+  const signIn = await request("/api/auth/sign-in/email", {
+    method: "POST",
+    headers: { origin, "content-type": "application/json", accept: "application/json" },
+    body: JSON.stringify({ email: owner.email, password: "a long mcp test password", oauth_query: signedLogin }),
+  });
+  assert.equal(signIn.status, 200);
+  assert.match(((await signIn.json()) as { url: string }).url, /^\/oauth\/consent\?/);
+
+  const exchange = async (body: Record<string, string>, headers: Record<string, string> = {}) => {
     const r = await request("/api/auth/oauth2/token", {
       method: "POST",
-      headers: { "content-type": "application/x-www-form-urlencoded" },
+      headers: { "content-type": "application/x-www-form-urlencoded", ...headers },
       body: new URLSearchParams(body),
     });
-    return { status: r.status, body: (await r.json()) as { access_token?: string; refresh_token?: string } };
+    return {
+      status: r.status,
+      body: (await r.json()) as { access_token?: string; refresh_token?: string; token_type?: string },
+    };
   };
   const connect = async (actor: { cookie: string }) => {
     const flow = await consentFor(actor);
@@ -255,6 +319,7 @@ test("MCP server: OAuth discovery, sign-in, consent, tools and disconnect", asyn
       "list_attachments",
       "list_comments",
       "list_projects",
+      "read_file",
       "search_issues",
       "update_issue",
       "upload_file",
@@ -309,6 +374,18 @@ test("MCP server: OAuth discovery, sign-in, consent, tools and disconnect", asyn
   });
   assert.equal(uploaded.filename, "notes.txt");
   assert.equal(uploaded.sizeBytes, 12);
+  const readBack = await mcp(access, "tools/call", { name: "read_file", arguments: { project: "SP", fileId: uploaded.id } });
+  assert.deepEqual(readBack.message!.result.content, [{ type: "text", text: "agent notes\n" }]);
+  const png = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=",
+    "base64",
+  );
+  const image = await ok(access, "upload_file", { project: "SP", filename: "dot.png", contentBase64: png.toString("base64") });
+  const imageBack = await mcp(access, "tools/call", { name: "read_file", arguments: { project: "SP", fileId: image.id } });
+  assert.equal(imageBack.message!.result.content[0].type, "image");
+  assert.equal(imageBack.message!.result.content[0].mimeType, "image/png");
+  const notMine = await tool(access, "read_file", { project: "SP", fileId: "aaaaaaaaaaaaaaaaaaaaa" });
+  assert.match((notMine as { error: string }).error, /^not_found:/);
   const attachments = await ok(access, "list_attachments", { issue: "SP-1" });
   assert.deepEqual(attachments.attachments.map((a: { id: string }) => a.id), [uploaded.id]);
   const loose = await ok(access, "upload_file", {
@@ -337,6 +414,25 @@ test("MCP server: OAuth discovery, sign-in, consent, tools and disconnect", asyn
     body: "x".repeat(6 * 1024 * 1024),
   });
   assert.equal(huge.status, 413);
+  // A browser Origin must be Spectron's own; native clients send none.
+  const fromElsewhere = await request("/api/mcp", {
+    method: "POST",
+    headers: { authorization: `Bearer ${access}`, origin: "https://evil.example", "content-type": "application/json", accept: "application/json, text/event-stream" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+  });
+  assert.equal(fromElsewhere.status, 403);
+  const fromSpectron = await request("/api/mcp", {
+    method: "POST",
+    headers: { authorization: `Bearer ${access}`, origin, "content-type": "application/json", accept: "application/json, text/event-stream", "mcp-protocol-version": "2025-06-18" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+  });
+  assert.equal(fromSpectron.status, 200);
+  // Malformed credentials are a bad request, not a prompt to sign in.
+  for (const authorization of ["Basic abc", "Bearer", "Token xyz"]) {
+    const malformed = await request("/api/mcp", { method: "POST", headers: { authorization, "content-type": "application/json" }, body: "{}" });
+    assert.equal(malformed.status, 400, authorization);
+    assert.match(malformed.headers.get("www-authenticate") ?? "", /error="invalid_request"/);
+  }
 
   // --- Isolation and token checks -------------------------------------------
   const outsiderTokens = await connect(outsider);
@@ -347,7 +443,14 @@ test("MCP server: OAuth discovery, sign-in, consent, tools and disconnect", asyn
   assert.equal((await mcp(forged, "tools/list")).status, 401);
   // Tokens only act for verified accounts.
   await pool.query("UPDATE users SET email_verified = false WHERE id = $1", [outsider.id]);
-  assert.equal((await mcp(outsiderTokens.access_token, "tools/list")).status, 403);
+  const unverifiedCall = await request("/api/mcp", {
+    method: "POST",
+    headers: { authorization: `Bearer ${outsiderTokens.access_token}`, "content-type": "application/json", accept: "application/json, text/event-stream" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+  });
+  assert.equal(unverifiedCall.status, 403);
+  // Re-authorizing cannot fix this, so no Bearer challenge (RFC 6750 §3.1).
+  assert.equal(unverifiedCall.headers.get("www-authenticate"), null);
   await pool.query("UPDATE users SET email_verified = true WHERE id = $1", [outsider.id]);
 
   // --- Refresh and disconnect -----------------------------------------------
@@ -372,11 +475,88 @@ test("MCP server: OAuth discovery, sign-in, consent, tools and disconnect", asyn
     resource,
   });
   assert.notEqual(afterDisconnect.status, 200);
+  // The token rotated a moment ago is inside the reuse window, but its cached
+  // response was dropped on disconnect.
+  const replayed = await exchange({
+    grant_type: "refresh_token",
+    refresh_token: ownerTokens.refresh_token,
+    client_id: clientId,
+    resource,
+  });
+  assert.notEqual(replayed.status, 200, JSON.stringify(replayed.body));
+  // The database refuses refresh tokens without a live consent.
+  await assert.rejects(
+    pool.query(
+      "INSERT INTO oauth_refresh_tokens (id, token, client_id, user_id, scopes, expires_at, created_at) VALUES ('rt-race', 'h', $1, $2, '{openid}', now() + interval '1 day', now())",
+      [clientId, owner.id],
+    ),
+    /disconnected/,
+  );
+  // Reconnecting starts a new connection: tokens from the old one stay dead.
+  await new Promise((resolve) => setTimeout(resolve, 1100));
+  const reconnected = await connect(owner);
+  assert.equal((await mcp(refreshed.body.access_token!, "tools/list")).status, 401);
+  assert.equal((await mcp(access, "tools/list")).status, 401);
+  assert.equal((await mcp(reconnected.access_token, "tools/list")).status, 200);
   // The outsider's connection to the same client is untouched.
   assert.equal((await mcp(outsiderTokens.access_token, "tools/list")).status, 200);
   // Disconnecting someone else's app is a no-op.
   await trpc("oauthApps.disconnect", owner, { clientId });
   assert.equal((await mcp(outsiderTokens.access_token, "tools/list")).status, 200);
+
+  // --- DPoP-bound tokens ------------------------------------------------------
+  const { subtle } = globalThis.crypto;
+  const keys = await subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"]);
+  const { kty, crv, x, y } = await subtle.exportKey("jwk", keys.publicKey);
+  const b64url = (value: object) => Buffer.from(JSON.stringify(value)).toString("base64url");
+  const dpopProof = async (htm: string, htu: string, accessToken?: string) => {
+    const input = `${b64url({ typ: "dpop+jwt", alg: "ES256", jwk: { kty, crv, x, y } })}.${b64url({
+      jti: randomUUID(),
+      htm,
+      htu,
+      iat: Math.floor(Date.now() / 1000),
+      ...(accessToken ? { ath: createHash("sha256").update(accessToken).digest("base64url") } : {}),
+    })}`;
+    const signature = Buffer.from(await subtle.sign({ name: "ECDSA", hash: "SHA-256" }, keys.privateKey, Buffer.from(input)));
+    return `${input}.${signature.toString("base64url")}`;
+  };
+  const dpopFlow = authorize(outsider);
+  const dpopCode = new URL((await dpopFlow.response).headers.get("location")!).searchParams.get("code")!;
+  const bound = await exchange(
+    {
+      grant_type: "authorization_code",
+      code: dpopCode,
+      redirect_uri: redirectURI,
+      client_id: clientId,
+      code_verifier: dpopFlow.verifier,
+      resource,
+    },
+    { dpop: await dpopProof("POST", `${origin}/api/auth/oauth2/token`) },
+  );
+  assert.equal(bound.status, 200, JSON.stringify(bound.body));
+  assert.equal(bound.body.token_type, "DPoP");
+  const boundToken = bound.body.access_token!;
+  const dpopCall = async (authorization: string, proof?: string) =>
+    request("/api/mcp", {
+      method: "POST",
+      headers: {
+        authorization,
+        ...(proof ? { dpop: proof } : {}),
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        "mcp-protocol-version": "2025-06-18",
+      },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+    });
+  const proof = await dpopProof("POST", resource, boundToken);
+  assert.equal((await dpopCall(`DPoP ${boundToken}`, proof)).status, 200);
+  // Proofs are single-use, bound to the token, and required.
+  assert.equal((await dpopCall(`DPoP ${boundToken}`, proof)).status, 401);
+  const withoutProof = await dpopCall(`DPoP ${boundToken}`);
+  assert.equal(withoutProof.status, 401);
+  assert.match(withoutProof.headers.get("www-authenticate") ?? "", /^DPoP /);
+  assert.equal((await dpopCall(`Bearer ${boundToken}`, await dpopProof("POST", resource, boundToken))).status, 401);
+  assert.equal((await dpopCall(`DPoP ${boundToken}`, await dpopProof("POST", resource, access))).status, 401);
 
   // --- Personal access tokens work too --------------------------------------
   const pat = await trpc<{ token: string }>("apiTokens.create", member, { name: "Codex", expiresInDays: 30 });

@@ -1,5 +1,5 @@
 {
-  "id": "e13bd68b-b192-467b-a030-63505bbec3fb",
+  "id": "0f96c8f3-76a3-44d6-93d0-8af7975908b7",
   "prevId": "39b31912-63e1-449f-af88-abb845c7db6e",
   "version": "7",
   "dialect": "postgresql",
@@ -5422,7 +5422,7 @@
           "name": "token",
           "type": "text",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "client_id": {
           "name": "client_id",
@@ -5476,13 +5476,13 @@
           "name": "expires_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "revoked": {
           "name": "revoked",
@@ -5915,7 +5915,16 @@
         }
       },
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "oauth_clients_no_backchannel_logout": {
+          "name": "oauth_clients_no_backchannel_logout",
+          "value": "\"oauth_clients\".\"backchannel_logout_uri\" IS NULL"
+        },
+        "oauth_clients_no_jwks_uri": {
+          "name": "oauth_clients_no_jwks_uri",
+          "value": "\"oauth_clients\".\"jwks_uri\" IS NULL"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.oauth_client_assertions": {
@@ -6100,13 +6109,13 @@
           "name": "created_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "updated_at": {
           "name": "updated_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         }
       },
       "indexes": {
@@ -6237,13 +6246,13 @@
           "name": "expires_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "revoked": {
           "name": "revoked",

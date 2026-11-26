@@ -20,7 +20,7 @@ claude mcp add --transport http spectron https://<your-spectron>/api/mcp
 
 Other clients take the same URL in their "remote MCP server" or "HTTP MCP" settings.
 
-The consent screen shows the address the app returns you to. Only approve requests you started yourself.
+The consent screen shows the address the app returns you to. Only approve requests you started yourself. Connecting needs an account with a verified email.
 
 ### Personal access token
 
@@ -33,7 +33,7 @@ claude mcp add --transport http spectron https://<your-spectron>/api/mcp \
 
 ### Disconnecting
 
-Apps you approved are listed under **AI connections & agents → API tokens → Connected apps**. **Disconnect** revokes an app's access immediately, including access tokens that haven't expired yet. Tokens are revoked from the same page.
+Apps you approved are listed under **AI connections & agents → API tokens → Connected apps**. **Disconnect** revokes an app's access immediately, including access tokens that haven't expired yet. Reconnecting later starts a fresh connection; tokens from before stay revoked. Personal access tokens are revoked on the same page.
 
 ## Tools
 
@@ -49,6 +49,7 @@ Apps you approved are listed under **AI connections & agents → API tokens → 
 | `list_comments` | Comments, or one thread's replies |
 | `add_comment` | Comment, with `<@email>` mentions, replies and attachments |
 | `list_attachments` | Files on an issue |
+| `read_file` | Read an attached file: text as text, images as images, anything else as base64 (up to 3 MB) |
 | `upload_file` | Upload a base64 file (up to 3 MB) to an issue, or to a project for use in a comment |
 
 When something goes wrong, a tool returns a readable error (for example `invalid_input: Unknown status "Shipped". Available: …`), so the agent can correct the call and retry.
@@ -64,6 +65,10 @@ When something goes wrong, a tool returns a readable error (for example `invalid
 - Access tokens:
   - are short-lived (1 hour) JWTs bound to the `/api/mcp` audience, refreshed with refresh tokens (30 days)
   - are verified in-process
-  - only work while the person's email is verified and the app is still connected
+  - may be DPoP-bound (RFC 9449); bound tokens need a fresh proof on every request
+  - only work while the person's email is verified and the app is still connected, and only if they were issued for the current connection
 - Writes go through the same services as the app. History, validation and Jira export are unchanged, and edits are attributed to the person.
 - Both MCP protocol generations are served: 2026-07-28, and the 2025 stateless HTTP transport.
+- Requests from a browser must come from Spectron's own origin. Native and server-side clients send no `Origin` and are unaffected.
+- Registrations may not set `backchannel_logout_uri` or `jwks_uri`, since the server would fetch those URLs. MCP clients are public clients and need neither.
+- The OAuth provider's own client, consent, logout, UserInfo and introspection endpoints are switched off. Spectron manages connected apps itself.

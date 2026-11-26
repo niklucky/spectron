@@ -139,7 +139,7 @@ export function createAPI(
     headers.set("Access-Control-Allow-Origin", "*");
     return new Response(response.body, { status: response.status, headers });
   });
-  const mcp = createMcpRoute({ auth, tokens: apiTokens, apps: oauthApps, operations, appURL });
+  const mcp = createMcpRoute({ auth, tokens: apiTokens, apps: oauthApps, files, operations, appURL });
   api.on(["GET", "POST", "DELETE"], "/api/mcp", (c) => mcp(c.req.raw));
   api.route(
     "/api/v1",
