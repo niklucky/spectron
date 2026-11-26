@@ -36,14 +36,29 @@ export type IssueSettings = {
   states: IssueState[];
   priorities: IssuePriority[];
 };
-export type FieldValues = Record<string, string | number | null>;
+export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
+export type FieldValues = Record<string, JsonValue>;
+export const projectFieldTypes = ["text", "date", "datetime", "number", "user", "json"] as const;
 export type ProjectField = {
   id: string;
   name: string;
-  type: "text" | "date" | "number" | "user";
+  type: (typeof projectFieldTypes)[number];
   externalId: string | null;
 };
+export type IssueReadState = {
+  activityAt: string;
+  seenThrough: string | null;
+  mentionedAt: string | null;
+};
+
+export function issueAttention({ activityAt, seenThrough, mentionedAt }: IssueReadState) {
+  if (mentionedAt && (!seenThrough || mentionedAt > seenThrough)) return "mention";
+  if (!seenThrough || activityAt > seenThrough) return "unread";
+  return "read";
+}
+
 export type IssueSummary = {
+  readState?: IssueReadState;
   issueTypeId?: string | null;
   tagIds?: string[];
   author?: { name: string; image: string | null } | null;

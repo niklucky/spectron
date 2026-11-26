@@ -43,7 +43,7 @@
     0 6px 18px rgb(var(--sp-shadow-rgb) / 0.045);
   --sp-shadow-pop: 0 1px 2px rgb(var(--sp-shadow-rgb) / 0.06),
     0 8px 24px rgb(var(--sp-shadow-rgb) / 0.08);
-  --sp-font-sans: "Inter Variable", "Inter", system-ui, -apple-system,
+  --sp-font-sans: -apple-system, BlinkMacSystemFont, "Inter Variable", "Inter", system-ui,
     "Segoe UI", sans-serif;
   --sp-font-mono: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace,
     SFMono-Regular, Menlo, monospace;

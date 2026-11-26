@@ -1,0 +1,2 @@
+ALTER TABLE "project_fields" DROP CONSTRAINT "project_fields_type";--> statement-breakpoint
+ALTER TABLE "project_fields" ADD CONSTRAINT "project_fields_type" CHECK ("project_fields"."type" in ('text','date','number','user','datetime','json'));

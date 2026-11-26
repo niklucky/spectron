@@ -153,6 +153,8 @@ export function IssueChat({
       alive = false;
     };
   }, [actions.files, issue.projectId, issue.id, issue.updatedAt, active, revision, reload]);
+  const activityAt = issue.readState?.activityAt;
+  const [loadedActivity, setLoadedActivity] = useState<string>();
   const composer = useRef<HTMLDivElement>(null);
   const stream = useRef<HTMLDivElement>(null),
     generation = useRef(0),
@@ -178,6 +180,7 @@ export function IssueChat({
           if (!next) break;
         }
         if (alive && version === generation.current) {
+          setLoadedActivity(activityAt);
           setEvents(collected);
           setCursor(next);
           loaded.current = true;
@@ -192,7 +195,36 @@ export function IssueChat({
       alive = false;
       generation.current++;
     };
-  }, [actions, issue.id, issue.projectId, issue.updatedAt, active, revision, reload]);
+  }, [actions, issue.id, issue.projectId, issue.updatedAt, activityAt, active, revision, reload]);
+
+  const markRead = actions.markRead;
+  const seenThrough = issue.readState?.seenThrough;
+  useEffect(() => {
+    const element = stream.current;
+    if (!active || !element || !markRead || !activityAt || loadedActivity !== activityAt ||
+        (seenThrough && seenThrough >= activityAt)) return;
+    let visible = false;
+    let pending = false;
+    const acknowledge = () => {
+      if (pending || !visible || document.visibilityState !== "visible") return;
+      pending = true;
+      void markRead(issue.projectId, issue.id, activityAt).catch(() => { pending = false; });
+    };
+    const observer = new IntersectionObserver(([entry]) => {
+      visible = entry?.isIntersecting ?? false;
+      acknowledge();
+    });
+    observer.observe(element);
+    document.addEventListener("visibilitychange", acknowledge);
+    window.addEventListener("focus", acknowledge);
+    window.addEventListener("online", acknowledge);
+    return () => {
+      observer.disconnect();
+      document.removeEventListener("visibilitychange", acknowledge);
+      window.removeEventListener("focus", acknowledge);
+      window.removeEventListener("online", acknowledge);
+    };
+  }, [active, markRead, issue.id, issue.projectId, activityAt, loadedActivity, seenThrough]);
   useEffect(() => {
     if (!active || !events.some((e) => e.comment?.jiraSync === "pending" || e.comment?.jiraSync === "syncing")) return;
     const timer = window.setTimeout(() => setReload((n) => n + 1), 3000);

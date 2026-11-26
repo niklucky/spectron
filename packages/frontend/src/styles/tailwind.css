@@ -60,6 +60,8 @@
   --text-xs--line-height: 1.35;
   --text-sm: calc(13.5px * var(--sp-scale));
   --text-sm--line-height: 1.4;
+  --text-compact: calc(var(--font-size-base) * var(--sp-scale));
+  --text-compact--line-height: 1.45;
   --text-base: calc(15px * var(--sp-scale));
   --text-base--line-height: 1.45;
   --text-md: calc(15.5px * var(--sp-scale));
@@ -245,6 +247,11 @@
 
 /* Markdown rendered inside messages, summaries and review threads. */
 @layer components {
+  .composer-writing-area {
+    /* Four lines at the current text scale, plus the editor’s vertical padding. */
+    min-height: calc(4lh + 0.875rem);
+  }
+
   .prose-chat {
     overflow-wrap: anywhere;
   }

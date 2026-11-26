@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { test } from "node:test";
 import { createDatabase, migrateDatabase } from "@spectron/db";
 import { createAuth } from "@spectron/backend";
 import {
   createId,
+  issueAttention,
   commentText,
   commentDraftText,
   commentBodyFromText,
@@ -314,6 +316,85 @@ test("Threaded comments, mentions, files and history", async (t) => {
       );
     },
   );
+  await t.test("Flow tracks read activity and outstanding mentions independently for each reader", async () => {
+    const id = second.id;
+    const projectId = p.id;
+    const state = async (actor = member) => {
+      const issues = await data<IssueSummary[]>(await call("issues.list", actor, { projectId }));
+      const state = issues.find(row => row.id === id)?.readState;
+      assert.ok(state);
+      return state;
+    };
+    const mark = (seenThrough: string, actor = member, issueId = id) =>
+      call("issues.markRead", actor, { projectId, id: issueId, seenThrough }, true);
+    const initial = await state();
+    assert.equal(issueAttention(initial), "unread");
+    await data(await mark(initial.activityAt));
+    assert.equal(issueAttention(await state()), "read");
+    assert.equal(issueAttention(await state(owner)), "unread");
+    assert.equal((await mark(initial.activityAt, outsider)).status, 404);
+    assert.equal((await mark(initial.activityAt, owner, foreign.id)).status, 404);
+
+    const parent = await create("Question", null, owner, { issueId: id });
+    const mention = { type: "mention", userId: member.id, label: "member" };
+    const reply = await create("", parent.id, owner, { issueId: id, body: [mention] });
+    const editReply = async (body: unknown[]) => {
+      const page = await data<CommentPage>(await call("comments.list", owner, { projectId, issueId: id, parentId: parent.id }));
+      const row = page.comments.find(c => c.id === reply.id)!;
+      await data(await call("comments.update", owner, {
+        projectId, issueId: id, id: row.id, expectedUpdatedAt: row.updatedAt, body, files: [],
+      }, true));
+    };
+    await create("One more detail", null, owner, { issueId: id });
+    await data(await mark(initial.activityAt));
+    const mentioned = await state();
+    assert.equal(issueAttention(mentioned), "mention");
+    assert.equal(issueAttention(await state(owner)), "unread");
+    await data(await mark(mentioned.activityAt));
+    await data(await mark(initial.activityAt));
+    assert.equal(issueAttention(await state()), "read");
+    await editReply([mention, ...body(" revised wording")]);
+    assert.equal(issueAttention(await state()), "unread");
+    await editReply(body("No longer tagged"));
+    assert.equal((await state()).mentionedAt, null);
+    await editReply([mention]);
+    assert.equal(issueAttention(await state()), "mention");
+    await editReply(body("Removed before opening"));
+    assert.equal(issueAttention(await state()), "unread");
+  });
+  await t.test("rollout marks the existing backlog read and preserves previous visits", async () => {
+    const projectId = p.id;
+    const state = async (id: string) => {
+      const issues = await data<IssueSummary[]>(await call("issues.list", member, { projectId }));
+      const result = issues.find(i => i.id === id)?.readState;
+      assert.ok(result);
+      return result;
+    };
+    const makeIssue = async () => data<IssueSummary>(
+      await call("issues.create", owner, { projectId, title: "Rollout fixture" }, true),
+    );
+    const old = await makeIssue();
+    const mention = [{ type: "mention", userId: member.id, label: "member" }];
+    await create("", null, owner, { issueId: old.id, body: mention });
+    const before = await state(old.id);
+    assert.equal(issueAttention(before), "mention");
+    const visited = await state(second.id);
+    assert.ok(visited.seenThrough);
+
+    await pool.query(await readFile(new URL("../../db/migrations/0032_baseline_existing_issue_reads.sql", import.meta.url), "utf8"));
+    const baseline = await state(old.id);
+    assert.equal(baseline.seenThrough, before.activityAt);
+    assert.equal(issueAttention(baseline), "read");
+    assert.deepEqual(await state(second.id), visited);
+    assert.equal((await pool.query("SELECT 1 FROM issue_read_receipts WHERE user_id = $1 OR (user_id = $2 AND issue_id = $3)", [outsider.id, member.id, foreign.id])).rowCount, 0);
+
+    await create("Change after rollout", null, owner, { issueId: old.id });
+    assert.equal(issueAttention(await state(old.id)), "unread");
+    await create("", null, owner, { issueId: old.id, body: mention });
+    assert.equal(issueAttention(await state(old.id)), "mention");
+    assert.equal(issueAttention(await state((await makeIssue()).id)), "unread");
+  });
+
   const f = createId(),
     source = createId();
   await t.test(

@@ -470,20 +470,20 @@ export function ChatComposer({
         }
       >
         {preview ? (
-          <div className="prose-chat max-h-60 overflow-y-auto px-3.5 pt-2.5 pb-1 text-lg" aria-label="Message preview">
+          <div className="composer-writing-area prose-chat max-h-60 overflow-y-auto px-3.5 pt-2.5 pb-1 text-base" aria-label="Message preview">
             <MessageMarkdown text={draft.text || "Your message preview appears here."} />
           </div>
         ) : (
           <textarea
             ref={area}
-            rows={1}
+            rows={4}
             autoFocus={parentId !== null}
             aria-label="Your message"
             maxLength={100000}
             disabled={busy || voice.listening}
             value={draft.text}
             placeholder={agent ? `Message ${agent.name}…` : "Message, @ to mention, / for a command"}
-            className="block w-full resize-none bg-transparent px-3.5 pt-2.5 pb-1 text-lg text-ink outline-none placeholder:text-ink-3 disabled:opacity-60"
+            className="composer-writing-area block w-full resize-none bg-transparent px-3.5 pt-2.5 pb-1 text-base text-ink outline-none placeholder:text-ink-3 disabled:opacity-60"
             onChange={(event) => {
               setText(event.target.value);
               setCaret(event.target.selectionStart);

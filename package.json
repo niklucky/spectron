@@ -36,7 +36,7 @@
     "test:password": "pnpm --filter @spectron/api exec node --import tsx --test ../../apps/app/test/password-strength.test.ts",
     "test:git": "pnpm --filter @spectron/api test:git",
     "test:agent-runs": "pnpm --filter @spectron/api test:agent-runs",
-    "test:attachments": "pnpm --filter @spectron/api exec tsx --test test/attachment-references.test.ts"
+    "test:attachments": "pnpm --filter @spectron/api exec tsx --test test/attachment-references.test.ts ../../apps/app/test/office-file-format.test.ts ../frontend/test/read-office-preview.test.ts ../frontend/test/read-text-preview.test.ts"
   },
   "devDependencies": {
     "turbo": "2.10.12",

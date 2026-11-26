@@ -217,6 +217,9 @@ importers:
       '@tanstack/react-hotkeys':
         specifier: 0.10.0
         version: 0.10.0(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+      '@zip.js/zip.js':
+        specifier: ^2.25.0
+        version: 2.25.0
       react:
         specifier: ^19.2.8
         version: 19.2.8
@@ -230,6 +233,9 @@ importers:
       '@types/react':
         specifier: 19.2.18
         version: 19.2.18
+      '@xmldom/xmldom':
+        specifier: ^0.9.12
+        version: 0.9.12
 
   packages/shared:
     dependencies:
@@ -1413,6 +1419,14 @@ packages:
         optional: true
       oxc-transform-react:
         optional: true
+
+  '@xmldom/xmldom@0.9.12':
+    resolution: {integrity: sha512-5AXjrcMClTryPe9LgZrygpB1lj7s0S9E0+W+AHaVKAVyHanafK86iPSvG5xHVSp/jC+VH1UXu0TAEmY279xH7A==}
+    engines: {node: '>=14.6'}
+
+  '@zip.js/zip.js@2.25.0':
+    resolution: {integrity: sha512-oNRqUuU1XFu6G5d7Z0jufJ9dS9WteO0xiU/PNxsUrb4itZCsSbn191jpJzU00Gmc6S680X3DPZeF5EV4zAEMAg==}
+    engines: {bun: '>=0.7.0', deno: '>=1.0.0', node: '>=18.0.0'}
 
   bail@2.0.2:
     resolution: {integrity: sha512-0xO6mYd7JB2YesxDKplafRpsiOzPt9V02ddPCLbY1xYGPOX24NTyN50qnUxgCPcSoYMhKpAuBTjQoRZCAkUDRw==}
@@ -3182,6 +3196,10 @@ snapshots:
     dependencies:
       '@rolldown/pluginutils': 1.0.1
       vite: 8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.13)
+
+  '@xmldom/xmldom@0.9.12': {}
+
+  '@zip.js/zip.js@2.25.0': {}
 
   bail@2.0.2: {}
 

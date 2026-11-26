@@ -341,7 +341,7 @@ export const issue = pgTable(
     startAt: timestamp("start_at", { withTimezone: true, mode: "string" }),
     finishAt: timestamp("finish_at", { withTimezone: true, mode: "string" }),
     fieldValues: jsonb("field_values")
-      .$type<Record<string, string | number | null>>()
+      .$type<import("@spectron/shared").FieldValues>()
       .default({})
       .notNull(),
     number: integer("number").notNull(),
@@ -411,6 +411,16 @@ export const issueTag = pgTable("issue_tags", {
   foreignKey({ columns: [t.projectId, t.issueId], foreignColumns: [issue.projectId, issue.id], name: "issue_tags_issue_fk" }).onDelete("cascade"),
   foreignKey({ columns: [t.projectId, t.tagId], foreignColumns: [tag.projectId, tag.id], name: "issue_tags_tag_fk" }).onDelete("restrict"),
 ]);
+export const issueReadReceipt = pgTable(
+  "issue_read_receipts",
+  {
+    issueId: text("issue_id").notNull().references(() => issue.id, { onDelete: "cascade" }),
+    userId: text("user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+    seenThrough: timestamp("seen_through", { withTimezone: true }).notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.userId, t.issueId] })],
+);
+
 export const issueHistory = pgTable(
   "issue_history",
   {
@@ -579,6 +589,7 @@ export const commentMention = pgTable(
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
   },
   (t) => [
+    index("comment_mentions_active_user_idx").on(t.userId).where(sql`${t.deletedAt} IS NULL`),
     uniqueIndex("comment_mentions_user_unique").on(t.commentId, t.userId),
   ],
 );
@@ -654,14 +665,14 @@ export const projectField = pgTable(
       .references(() => project.id, { onDelete: "restrict" }),
     ...external(),
     name: text("name").notNull(),
-    type: text("type").$type<"text" | "date" | "number" | "user">().notNull(),
+    type: text("type").$type<import("@spectron/shared").ProjectField["type"]>().notNull(),
     ...dates(),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
   },
   (t) => [
     check(
       "project_fields_type",
-      sql`${t.type} in ('text','date','number','user')`,
+      sql`${t.type} in ('text','date','number','user','datetime','json')`,
     ),
   ],
 );
@@ -693,6 +704,8 @@ export const jiraIntegration = pgTable("jira_integrations", {
   lastScheduleResult: text("last_schedule_result"),
   scheduleLeaseUntil: timestamp("schedule_lease_until", { withTimezone: true }),
   importRunId: text("import_run_id"),
+  fullImportUserId: text("full_import_user_id"),
+  importProgress: jsonb("import_progress").$type<import("@spectron/shared").JiraImportProgress>(),
   importCancelled: boolean("import_cancelled").default(false).notNull(),
   lease: text("lease"),
   leaseUntil: timestamp("lease_until", { withTimezone: true }),

@@ -5,7 +5,7 @@ export type { Task, TaskListItem, Project } from "./types";
 export { IssuePanel } from "./issue-panel";
 export type { IssuePanelActions } from "./issue-panel";
 
-export { defaultTaskFilters } from "./task-filters";
+export { defaultTaskFilters, defaultTaskFiltersForView } from "./task-filters";
 export type { TaskFilters } from "./task-filters";
 export { NewIssueChat } from "./new-issue-chat";
 

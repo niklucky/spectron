@@ -41,7 +41,7 @@ export function ProjectIntegrationSettings({
     trigger: IssueTrigger;
     remoteId: string;
     name: string;
-    type: "text" | "date" | "number" | "user";
+    type: import("@spectron/shared").ProjectField["type"];
   } | null>(null);
   const [token, setToken] = useState("");
   const [metadata, setMetadata] = useState<Metadata | null>(null);

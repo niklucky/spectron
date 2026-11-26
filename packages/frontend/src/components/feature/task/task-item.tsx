@@ -1,5 +1,5 @@
 import { formatDateTime } from "../../../lib/date-format";
-import { messagePlainText } from "@spectron/shared";
+import { issueAttention, messagePlainText } from "@spectron/shared";
 import { Avatar } from "../../ui/avatar";
 import { IssueRow } from "../../ui/list";
 import type { Project, TaskListItem } from "./types";
@@ -27,6 +27,7 @@ export function taskActivityTime(item: TaskListItem): string {
 
 export function TaskItem({
   item,
+  isFlow,
   project,
   selectedId,
   onSelect,
@@ -63,6 +64,7 @@ export function TaskItem({
       timeTitle={formatDateTime(updatedAt)}
       title={item.title}
       preview={preview}
+      attention={isFlow && item.readState ? issueAttention(item.readState) : undefined}
       unread={item.unread ?? 0}
       active={selectedId === item.id}
       ariaCurrent={selectedId === item.id}

@@ -47,7 +47,7 @@ function NavItem({
       aria-current={active ? "page" : undefined}
       onClick={onClick}
       className={cn(
-        "flex h-[34px] w-full min-w-0 items-center gap-2.5 rounded-md px-2.5 text-left text-base whitespace-nowrap transition-colors select-none",
+        "flex h-[34px] w-full min-w-0 items-center gap-2.5 rounded-md px-2.5 text-left text-compact whitespace-nowrap transition-colors select-none",
         collapsed && "justify-center px-0",
         active
           ? "bg-surface text-ink shadow-[0_1px_1px_rgb(0_0_0/0.04),inset_0_0_0_1px_var(--sp-line)]"

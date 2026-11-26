@@ -26,6 +26,7 @@ export function Menu({
   items,
   icon = "more",
   disabled = false,
+  compact = false,
   className = "",
   trigger,
   align = "start",
@@ -34,6 +35,7 @@ export function Menu({
   label: string;
   icon?: ComponentProps<typeof Icon>["name"] | undefined;
   disabled?: boolean | undefined;
+  compact?: boolean;
   className?: string | undefined;
   items: MenuItem[];
   trigger?: ReactNode;
@@ -140,7 +142,8 @@ export function Menu({
             key={item.label}
             role="menuitem"
             className={cn(
-              "flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-base hover:bg-surface-2 focus-visible:bg-surface-2 focus-visible:outline-none",
+              "flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left hover:bg-surface-2 focus-visible:bg-surface-2 focus-visible:outline-none",
+              compact ? "text-compact" : "text-base",
               item.danger ? "text-bad" : "text-ink",
             )}
             onClick={() => {

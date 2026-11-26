@@ -245,10 +245,10 @@ async function syncRelations(
     if (!existing.some((m) => m.userId === id && !m.deletedAt))
       await tx
         .insert(mention)
-        .values({ commentId: row.id, userId: id })
+        .values({ commentId: row.id, userId: id, updatedAt: now })
         .onConflictDoUpdate({
           target: [mention.commentId, mention.userId],
-          set: { deletedAt: null },
+          set: { deletedAt: null, updatedAt: now },
         });
   const links = await tx
     .select()

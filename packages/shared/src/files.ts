@@ -60,3 +60,18 @@ export function filePreviewKind(
     return "video";
   return null;
 }
+
+const textFormat = { family: "Plain text", extension: "TXT", mime: "text/plain" } as const;
+const jsonFormat = { family: "JSON", extension: "JSON", mime: "application/json" } as const;
+
+export function textFileFormat(filename: string, contentType = "") {
+  const mime = contentType.split(";", 1)[0]!.trim().toLowerCase();
+  if (mime === "application/json" || mime === "text/json") return jsonFormat;
+  if (mime && mime !== "text/plain" && mime !== "application/octet-stream") return;
+  if (/\.json$/i.test(filename)) return jsonFormat;
+  if (mime === "text/plain" || /\.txt$/i.test(filename)) return textFormat;
+}
+
+export function hasBinaryTextControls(text: string) {
+  return /[\x00-\x08\x0e-\x1f\x7f]/.test(text);
+}

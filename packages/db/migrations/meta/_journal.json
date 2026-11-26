@@ -204,6 +204,34 @@
       "when": 1791172988564,
       "tag": "0028_local_app_handoffs",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1795527300278,
+      "tag": "0029_jira_datetime_json_fields",
+      "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1795694757500,
+      "tag": "0030_jira_import_progress",
+      "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1795698747853,
+      "tag": "0031_issue_read_receipts",
+      "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1795700750531,
+      "tag": "0032_baseline_existing_issue_reads",
+      "breakpoints": true
     }
   ]
 }

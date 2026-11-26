@@ -22,6 +22,7 @@ import {
   localApps,
   exportActions,
   issueTriggers,
+  projectFieldTypes,
   normalizeProjectURL,
 } from "@spectron/shared";
 import type { Context } from "./context";
@@ -140,7 +141,7 @@ const issueFields = z
     finishAt: z.iso.datetime({ offset: true }).nullable(),
     fieldValues: z.record(
       z.string().min(1).max(128),
-      z.union([z.string().max(100000), z.number().finite(), z.null()]),
+      z.json(),
     ),
     title: z.string().trim().min(1).max(ISSUE_TITLE_MAX_LENGTH),
     description: z.string().max(ISSUE_DESCRIPTION_MAX_LENGTH),
@@ -363,7 +364,7 @@ export const appRouter = t.router({
         issueScope.extend({
           id: applicationId.optional(),
           name: z.string().trim().min(1).max(80),
-          type: z.enum(["text", "date", "number", "user"]),
+          type: z.enum(projectFieldTypes),
         }),
       )
       .mutation(({ ctx, input }) => ctx.fields.save(ctx.userId, input)),
@@ -414,6 +415,8 @@ export const appRouter = t.router({
       .mutation(({ ctx, input }) =>
         ctx.jira.schedule(ctx.userId, input.projectId, input.minutes),
       ),
+    startFullImport: authenticated.input(issueScope).mutation(({ ctx, input }) =>
+      ctx.jira.startFullImport(ctx.userId, input.projectId)),
     startImport: authenticated
       .input(issueScope)
       .mutation(({ ctx, input }) =>
@@ -624,6 +627,9 @@ export const appRouter = t.router({
     list: authenticated
       .input(issueScope)
       .query(({ ctx, input }) => ctx.issues.list(ctx.userId, input.projectId)),
+    markRead: authenticated
+      .input(issueRef.extend({ seenThrough: z.iso.datetime() }))
+      .mutation(({ ctx, input }) => ctx.issues.markRead(ctx.userId, input.projectId, input.id, input.seenThrough)),
     settings: authenticated
       .input(issueScope)
       .query(({ ctx, input }) =>

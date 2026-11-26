@@ -172,7 +172,7 @@ export function MessageText({
   className?: string;
 }) {
   return (
-    <div className={cn("prose-chat max-w-[66ch] text-lg", className)}>
+    <div className={cn("prose-chat max-w-[66ch] text-base", className)}>
       {children}
     </div>
   );
@@ -283,7 +283,7 @@ export function ResultState({
 
 export function ResultSummary({ children }: { children: ReactNode }) {
   return (
-    <div className="prose-chat px-3.5 pt-3 pb-1.5 text-md simple:p-0 simple:text-lg">
+    <div className="prose-chat px-3.5 pt-3 pb-1.5 text-md simple:p-0 simple:text-base">
       {children}
     </div>
   );

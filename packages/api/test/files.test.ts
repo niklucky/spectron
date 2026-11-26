@@ -223,6 +223,25 @@ test("File uploads, reusable attachments and authorized delivery", async (t) => 
       assert.equal(download.headers.get("x-content-type-options"), "nosniff");
     },
   );
+  await t.test("TXT and JSON uploads retain their text MIME type on download", async () => {
+    for (const [name, body, expected] of [
+      ["Заметки.TXT", "Первый ряд\nSecond line", "text/plain"],
+      ["values.JSON", '{"id":9007199254740993}', "application/json"],
+      ["binary.txt", "a\u0000b", "application/octet-stream"],
+    ] as const) {
+      const result = await upload(name, Buffer.from(body));
+      assert.equal(result.status, 201);
+      const saved = await result.json() as ProjectFileSummary;
+      assert.equal(saved.contentType, expected);
+      if (name.endsWith(".TXT")) {
+        await pool.query("UPDATE files SET content_type = 'application/octet-stream' WHERE id = $1", [saved.id]);
+      }
+      const response = await get(saved);
+      assert.equal(response.headers.get("content-type"), expected);
+      assert.equal(await response.text(), body);
+      assert.equal((await pool.query("SELECT content_type FROM files WHERE id = $1", [saved.id])).rows[0].content_type, expected);
+    }
+  });
   await t.test(
     "new issues attach uploaded files atomically and reject foreign files",
     async () => {

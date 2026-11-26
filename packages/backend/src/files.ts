@@ -1,6 +1,6 @@
 import { trackerImages } from "@spectron/shared";
 import { referencedAttachmentIds } from "./integrations/attachment-references";
-import { createWriteStream } from "node:fs";
+import { createReadStream, createWriteStream } from "node:fs";
 import { mkdir, rename, stat } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { Readable, Transform } from "node:stream";
@@ -11,6 +11,8 @@ import { schema, type Database } from "@spectron/db";
 import {
   createId,
   defaultMaxFileBytes,
+  hasBinaryTextControls,
+  textFileFormat,
   type FilePage,
   type ProjectFileSummary,
   type StoredFile,
@@ -87,6 +89,22 @@ const visibleFile = and(
   isNull(file.deletedAt),
   isNull(projectFile.deletedAt),
 );
+async function detectTextFile(path: string, filename: string) {
+  const format = textFileFormat(filename);
+  if (!format) return;
+  const decoder = new TextDecoder("utf-8", { fatal: true });
+  try {
+    for await (const chunk of createReadStream(path)) {
+      if (hasBinaryTextControls(decoder.decode(chunk, { stream: true }))) return;
+    }
+    decoder.decode();
+  } catch (error) {
+    if (error instanceof TypeError) return; // Invalid UTF-8.
+    throw error;
+  }
+  return { mime: format.mime, ext: format.extension.toLowerCase() };
+}
+
 export function createFileService(db: Database, config?: FileStorageConfig) {
   const maxBytes = config?.maxBytes ?? defaultMaxFileBytes;
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 1)
@@ -163,9 +181,8 @@ export function createFileService(db: Database, config?: FileStorageConfig) {
             "The upload was incomplete. Please try again.",
           );
         // Unknown or truncated formats remain opaque downloads; never trust a supplied MIME type.
-        const detected = await fileTypeFromFile(pendingPath).catch(
-          () => undefined,
-        );
+        const detected = await fileTypeFromFile(pendingPath).catch(() => undefined)
+          ?? await detectTextFile(pendingPath, filename);
         const ext =
           detected?.ext && /^[a-z0-9]+$/.test(detected.ext)
             ? detected.ext
@@ -541,6 +558,16 @@ export function createFileService(db: Database, config?: FileStorageConfig) {
       const metadata = await stat(path).catch(() => null);
       if (!metadata?.isFile() || metadata.size !== row.sizeBytes)
         throw new FileUnavailableError("File contents are unavailable.");
+      // Older uploads have opaque metadata. Repair it after checking the bytes
+      // so a ranged preview and subsequent downloads report the same type.
+      if (row.contentType === "application/octet-stream" && textFileFormat(row.filename)) {
+        const detected = await detectTextFile(path, row.filename);
+        if (detected) {
+          await db.update(file).set({ contentType: detected.mime })
+            .where(and(eq(file.id, row.id), eq(file.contentType, row.contentType)));
+          row.contentType = detected.mime;
+        }
+      }
       return { ...fileSummary(row), path, storageKey: row.storageKey };
     },
   };

@@ -1,7 +1,9 @@
+import { JiraImportProgressPopover } from "./jira-import-progress";
+import { JiraFieldPicker } from "./jira-field-picker";
 import { ExportSettings, type ExportActions } from "./export-settings";
 import { IntegrationSyncLog } from "./integration-sync-log";
 import { useEffect, useRef, useState } from "react";
-import { builtInIssueFields } from "@spectron/shared";
+import { jiraImportActivity, builtInIssueFields, jiraProjectFieldType } from "@spectron/shared";
 import type {
   JiraConfigInput,
   JiraConnection,
@@ -16,6 +18,7 @@ import { Icon } from "../../ui/icon";
 import { Spinner } from "../../ui/status";
 import { Disclosure, Feedback, Note, SettingsSection } from "../../ui/settings";
 import { formatDateTime } from "../../../lib/date-format";
+import { availableMappingOptions, jiraMappingRows } from "../../../lib/jira-mapping-rows";
 export type JiraActions = {
   exports: ExportActions;
   test: (config: JiraConfigInput) => Promise<{ issueTypes: { id: string; name: string }[] }>;
@@ -24,17 +27,10 @@ export type JiraActions = {
   discover: (config?: JiraConfigInput) => Promise<JiraMetadata>;
   mappings: (mappings: JiraMappings) => Promise<void>;
   schedule: (minutes: 15 | 60 | 1440 | null) => Promise<JiraConnection>;
+  startFullImport: () => Promise<JiraConnection>;
   startImport: () => Promise<{ runId: string }>;
   stopImport: (runId: string) => Promise<void>;
   finishImport: (runId: string) => Promise<void>;
-  prepare: (runId?: string) => Promise<JiraConnection>;
-  search: (
-    token?: string,
-    runId?: string,
-  ) => Promise<{
-    issues: { id: string; key: string }[];
-    nextPageToken: string | null;
-  }>;
   import: (
     id: string,
     overwriteLocal?: boolean,
@@ -80,6 +76,16 @@ const reserved = new Set([
   "created",
   "updated",
 ]);
+function fieldCreationInfo(id: string, field?: JiraMetadata["fields"][number]) {
+  const jiraType = field?.schema?.type || "Unknown";
+  if (id === "labels") return { jiraType, reason: "Map labels to Tags." };
+  if (!field) return { jiraType, reason: "Jira field type is unknown." };
+  const createType = jiraProjectFieldType(field);
+  const name = field.name.trim();
+  if (!name || name.length > 80) return { jiraType, reason: "Field names must be 1–80 characters." };
+  return { jiraType, createType };
+}
+
 export function JiraSettings({
   actions,
   owner,
@@ -96,8 +102,11 @@ export function JiraSettings({
   const [editingSchedule, setEditingSchedule] = useState(false);
   const [scheduleDraft, setScheduleDraft] = useState<15 | 60 | 1440 | null>(null);
   const [metadataLoading, setMetadataLoading] = useState(false);
+  const [fieldFilter, setFieldFilter] = useState("");
   const [metadataError, setMetadataError] = useState("");
   const [testStatus, setTestStatus] = useState<"idle" | "testing" | "success" | "error">("idle");
+  const [testError, setTestError] = useState("");
+  const testing = testStatus === "testing";
   const [issueTypes, setIssueTypes] = useState<{ id: string; name: string }[]>([]);
   const [connection, setConnection] = useState<JiraConnection | null>(null),
     [config, setConfig] = useState<JiraConfigInput>({
@@ -121,19 +130,17 @@ export function JiraSettings({
     // Which section the last operation belonged to, so its outcome shows
     // beside the controls that triggered it instead of further down the page.
     [scope, setScope] = useState<FeedbackScope>("connection"),
-    [failures, setFailures] = useState<
-      { id: string; key: string; error: string }[]
-    >([]),
     [accountId, setAccountId] = useState(""),
     [pending, setPending] = useState<{ id: string; kind: string }[]>([]);
   const cancel = useRef(false);
   const activeRun = useRef<string | null>(null);
   const [importing, setImporting] = useState(false);
   const [stopping, setStopping] = useState(false);
-  const locked = busy || exportBusy;
+  const foregroundBusy = busy || exportBusy;
+  const locked = foregroundBusy || !!connection?.importRunId;
   useEffect(() => {
-    onBusyChange(locked);
-  }, [locked, onBusyChange]);
+    onBusyChange(foregroundBusy);
+  }, [foregroundBusy, onBusyChange]);
   const mappingDirty =
     !!connection &&
     JSON.stringify(mappings) !== JSON.stringify(connection.mappings);
@@ -173,16 +180,39 @@ export function JiraSettings({
       cancel.current = true;
     };
   }, [actions, owner]);
+  const pollInterval = connection ? (connection.importRunId ? 2500 : 15000) : 0;
   useEffect(() => {
-    if (!owner) return;
-    const timer = setInterval(() => {
-      void actions
-        .get()
-        .then(setConnection)
-        .catch(() => {});
-    }, 5000);
-    return () => clearInterval(timer);
-  }, [actions, owner]);
+    if (!owner || !pollInterval) return;
+    let active = true;
+    let timer: ReturnType<typeof setTimeout>;
+    async function poll() {
+      try {
+        const latest = await actions.get();
+        if (active) setConnection(latest);
+      } catch { /* Keep the last known progress while reconnecting. */ }
+      if (active) timer = setTimeout(poll, pollInterval);
+    }
+    timer = setTimeout(poll, pollInterval);
+    return () => { active = false; clearTimeout(timer); };
+  }, [actions, owner, pollInterval]);
+
+  const progress = connection?.importProgress;
+  const failures = progress?.errors ?? [];
+  const activity = connection && jiraImportActivity(connection);
+  const terminalRun = progress && !["queued", "running"].includes(progress.status) ? progress.id : null;
+  useEffect(() => {
+    if (!terminalRun) return;
+    let active = true;
+    void Promise.all([actions.settings(), actions.refresh()]).then(([s]) => {
+      if (active) setSettings(s);
+    }).catch(() => {});
+    return () => { active = false; };
+  }, [terminalRun, actions]);
+  const savedMappings = connection?.mappings;
+  useEffect(() => {
+    if (!editingMappings && savedMappings) setMappings(savedMappings);
+  }, [savedMappings, editingMappings]);
+
   async function run(fn: () => Promise<void>, where: FeedbackScope = "sync") {
     if (locked) return;
     setBusy(true);
@@ -221,6 +251,20 @@ export function JiraSettings({
     if (key !== "issueTypeId") setTestStatus("idle");
     setConfig((c) => ({ ...c, [key]: value }));
   };
+  async function testConnection() {
+    if (testing) return;
+    setTestStatus("testing");
+    setTestError("");
+    try {
+      const credentials = connection && !editingConnection ? connectionConfig(connection) : config;
+      const result = await actions.test(credentials);
+      setIssueTypes(result.issueTypes);
+      setTestStatus("success");
+    } catch (cause) {
+      setTestError(cause instanceof Error ? cause.message : "Could not connect to Jira.");
+      setTestStatus("error");
+    }
+  }
   async function loadMetadata() {
     setMetadataError("");
     const metadata = await actions.discover();
@@ -230,6 +274,7 @@ export function JiraSettings({
     setSettings(settings);
     setPending(await actions.pending());
   }
+  const jiraFields = new Map(metadata?.fields.map(field => [field.id, field]));
   const map = (kind: keyof JiraMappings, id: string, value: string) =>
     setMappings((previous) => {
       const next = { ...previous, [kind]: { ...previous[kind] } };
@@ -252,9 +297,9 @@ export function JiraSettings({
         description="The connected account performs imports and exports. Credentials are encrypted on the server."
         actions={
           connection && !editingConnection ? (
-            <Button variant="secondary" size="sm" disabled={locked} onClick={() => setEditingConnection(true)}>Edit</Button>
+            <Button variant="secondary" size="sm" disabled={locked || testing} onClick={() => setEditingConnection(true)}>Edit</Button>
           ) : connection && editingConnection ? (
-            <Button variant="ghost" size="sm" disabled={locked} onClick={() => { setConfig(connectionConfig(connection)); setEditingConnection(false); }}>Cancel</Button>
+            <Button variant="ghost" size="sm" disabled={locked || testing} onClick={() => { setTestStatus("idle"); setConfig(connectionConfig(connection)); setEditingConnection(false); }}>Cancel</Button>
           ) : undefined
         }
       >
@@ -262,6 +307,7 @@ export function JiraSettings({
         className="flex max-w-[440px] flex-col gap-3"
         onSubmit={(e) => {
           e.preventDefault();
+          if (!editingConnection || testing) return;
           void run(async () => {
             const c = await actions.save({ ...config, issueTypeId: connection?.issueTypeId ?? "" });
             setConnection(c);
@@ -272,7 +318,7 @@ export function JiraSettings({
           }, "connection");
         }}
       >
-        <fieldset disabled={locked || !editingConnection} className="m-0 flex min-w-0 flex-col gap-3 border-0 p-0">
+        <fieldset disabled={locked || testing || !editingConnection} className="m-0 flex min-w-0 flex-col gap-3 border-0 p-0">
           <Field label="Jira site">
             <Input
               type="url"
@@ -316,31 +362,21 @@ export function JiraSettings({
               onChange={(e) => set("apiToken", e.target.value)}
             />
           </Field>
-          <div className="mt-1 flex flex-wrap items-center gap-2">
-          <Button type="submit" variant="primary">
-            {connection ? "Save credentials" : "Connect Jira"}
-          </Button>
-          <Button
-            variant="secondary"
-            onClick={() => void run(async () => {
-              setTestStatus("testing");
-              try {
-                const result = await actions.test(config);
-                setIssueTypes(result.issueTypes);
-                setTestStatus("success");
-                setFeedback("Connection successful.");
-              } catch (error) {
-                setTestStatus("error");
-                throw error;
-              }
-            }, "connection")}
-          >
-            {testStatus === "testing" ? <Spinner size={13} /> : <Icon name="check-circle" size={14} className={testStatus === "success" ? "text-ok" : testStatus === "error" ? "text-bad" : "text-ink-3"} />}
-            {testStatus === "testing" ? "Testing…" : testStatus === "success" ? "Connection passed" : testStatus === "error" ? "Connection failed" : "Test connection"}
-          </Button>
-          </div>
         </fieldset>
+        <div className="mt-1 flex flex-wrap items-center gap-2">
+          {editingConnection && <Button type="submit" disabled={locked || testing}>
+            {connection ? "Save credentials" : "Connect Jira"}
+          </Button>}
+          <Button variant="secondary" disabled={testing} onClick={() => void testConnection()}>
+            {testing ? <Spinner size={13} /> : <Icon name="check-circle" size={14} />}
+            {testing ? "Testing…" : "Test connection"}
+          </Button>
+        </div>
       </form>
+      <Feedback
+        error={testStatus === "error" ? testError : undefined}
+        feedback={testStatus === "success" ? "Connection successful." : undefined}
+      />
       {scope === "connection" && <Feedback error={error} feedback={feedback} />}
       </SettingsSection>
       {connection && (
@@ -358,7 +394,11 @@ export function JiraSettings({
                   setConnection(saved);
                 }
                 await actions.mappings(mappings);
-                setConnection(c => c ? { ...c, mappings } : c);
+                const latest = await actions.get();
+                if (latest) {
+                  setConnection(latest);
+                  setMappings(latest.mappings);
+                }
                 setSettings(await actions.settings());
                 setEditingMappings(false);
                 setFeedback("Mappings saved.");
@@ -373,29 +413,49 @@ export function JiraSettings({
             const remote = kind === "users"
               ? [...(settings.externalIdentities ?? []).map(i => ({ id: i.externalId, name: i.displayName })), ...(metadata?.users ?? []).map(u => ({ id: u.accountId, name: u.displayName }))]
               : kind === "issueTypes" ? (metadata?.issueTypes ?? issueTypes) : (metadata?.[kind] ?? []).filter(r => kind !== "fields" || !reserved.has(r.id));
-            const rows = [...new Map([
-              ...Object.keys(mappings[kind] ?? {}).filter(id => kind !== "fields" || !reserved.has(id)).map(id => ({ id, name: id })),
+            const rows = jiraMappingRows([
               ...remote,
               ...(kind === "fields" ? [{ id: "labels", name: "Labels (tags)" }] : []),
-            ].map(row => [row.id, row])).values()];
+            ], Object.keys(mappings[kind] ?? {}).filter(id => kind !== "fields" || !reserved.has(id)));
             const options = kind === "statuses" ? settings.states.filter(s => !s.deletedAt)
               : kind === "priorities" ? settings.priorities.filter(s => !s.deletedAt)
               : kind === "issueTypes" ? (settings.issueTypes ?? []).filter(s => !s.deletedAt)
               : kind === "fields" ? [...builtInIssueFields, ...(settings.fields ?? [])] : members;
+            const optionsForValue = availableMappingOptions(mappings[kind]);
+            const query = kind === "fields" ? fieldFilter.trim().toLowerCase() : "";
+            const visibleRows = query ? rows.filter(row =>
+              row.name.toLowerCase().includes(query) || row.id.toLowerCase().includes(query)
+            ) : rows;
             const mapped = rows.filter(row => !!mappings[kind]?.[row.id]).length;
             return <Disclosure key={kind} summary={kind === "issueTypes" ? "Issue types" : kind[0]!.toUpperCase() + kind.slice(1)} count={`${mapped} / ${metadata ? rows.length : `${rows.length} known`}`}>
+              {kind === "fields" && <Input type="search" aria-label="Filter Jira fields" placeholder="Filter by field name or ID…" value={fieldFilter} onChange={event => setFieldFilter(event.target.value)} />}
               <fieldset disabled={locked || !editingMappings} className="m-0 flex min-w-0 flex-col gap-3 border-0 p-0">
                 {kind === "users" && <Note>Map Jira users, including imported historical users, to project members. Unlinked users keep their imported attribution and have no login or project access.</Note>}
-                {kind === "fields" && <Note>Unmapped fields are ignored. Mapping labels to Tags replaces issue tags on import and creates missing tags by name.</Note>}
-                <div className="flex max-h-[340px] flex-col gap-2 overflow-auto">{rows.map(row => {
-                  const rowOptions = row.id === "labels" && kind === "fields" ? [{ id: "issue:tags", name: "Tags" }] : options;
+                {kind === "fields" && <Note>Choose an existing field or create one on import for supported Jira types. Mapping labels to Tags replaces issue tags on import.</Note>}
+                <div className="flex max-h-[340px] flex-col gap-2 overflow-auto">{visibleRows.map(row => {
+                  const candidates = row.id === "labels" && kind === "fields" ? [{ id: "issue:tags", name: "Tags" }] : options;
                   const value = mappings[kind]?.[row.id] ?? "";
-                  return <label key={row.id} className="grid grid-cols-[minmax(0,1fr)_minmax(160px,1fr)] items-center gap-3 text-sm text-ink"><span className="truncate" title={row.name}>{row.name}</span><Select aria-label={`Map ${kind} ${row.name}`} value={value} onChange={e => map(kind, row.id, e.target.value)}>
+                  const rowOptions = optionsForValue(candidates, value);
+                  const info = kind === "fields" ? fieldCreationInfo(row.id, jiraFields.get(row.id)) : undefined;
+                  const createType = info?.createType;
+                  const hintId = info ? `jira-field-info-${row.id}` : undefined;
+                  return <div key={row.id} className="grid grid-cols-[minmax(0,1fr)_minmax(160px,1fr)] items-center gap-3 text-sm text-ink">
+                    <span className="flex min-w-0 flex-col gap-0.5">
+                      <span className="truncate" title={row.name}>{row.name}</span>
+                      {info && <span id={hintId} className="text-xs text-ink-2">
+                        Jira type: {info.jiraType}
+                        {info.reason && <span className="flex items-start gap-1"><Icon name="warning" size={13} className="mt-0.5 shrink-0 text-warn" />Auto-creation unavailable. {info.reason}</span>}
+                      </span>}
+                    </span>
+                    {kind === "fields" ? <JiraFieldPicker name={row.name} value={value} options={rowOptions}
+                      createType={createType} hintId={hintId} onChange={id => map(kind, row.id, id)} /> :
+                    <Select aria-label={`Map ${kind} ${row.name}`} aria-describedby={hintId} value={value} onChange={e => map(kind, row.id, e.target.value)}>
                     <option value="">{kind === "users" ? "Keep as imported user" : kind === "statuses" || kind === "priorities" ? "Create on import" : "Do not map"}</option>
                     {value && !rowOptions.some(o => o.id === value) && <option value={value}>{value} (unavailable)</option>}
                     {rowOptions.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
-                  </Select></label>;
+                  </Select>}</div>;
                 })}</div>
+                {rows.length > 0 && !visibleRows.length && <p role="status" className="text-sm text-ink-2">No fields match your search.</p>}
                 {!rows.length && <p className="text-sm text-ink-3">No saved mappings{metadata ? " or available Jira options" : "; Jira options have not loaded yet"}.</p>}
                 {kind === "issueTypes" && <Field label="Fallback Jira type" hint="Jira requires a type when creating an issue. Used when the issue has no mapped local type." className="max-w-[320px]"><Select value={config.issueTypeId} onChange={e => set("issueTypeId", e.target.value)}>
                   {!issueTypes.some(t => t.id === config.issueTypeId) && <option value={config.issueTypeId}>{config.issueTypeId}</option>}
@@ -410,7 +470,7 @@ export function JiraSettings({
           </SettingsSection>
           <SettingsSection
             title="Sync"
-            description="Automatic import brings in issues updated since the last run. A full import scans everything with the saved mappings."
+            description="Automatic import brings in issues updated since the last run. A full import uses your saved mappings and continues when you leave this page."
             actions={!editingSchedule ? (
               <Button variant="secondary" size="sm" disabled={locked} onClick={() => { setScheduleDraft(connection.scheduleMinutes as 15 | 60 | 1440 | null); setEditingSchedule(true); }}>Edit schedule</Button>
             ) : (
@@ -429,111 +489,27 @@ export function JiraSettings({
             {connection.lastScheduledAt && <> Last run {formatDateTime(connection.lastScheduledAt)}: {connection.lastScheduleResult}.</>}
           </Note>
           <div className="flex flex-wrap items-center gap-2">
-            <Button
-              variant="secondary"
-              disabled={locked}
-              onClick={() =>
-                void run(async () => {
-                  cancel.current = false;
-                  setImporting(true);
-                  let runId: string | undefined;
-                  try {
-                    runId = (await actions.startImport()).runId;
-                    activeRun.current = runId;
-                    if (cancel.current) {
-                      await actions.stopImport(runId);
-                      return;
-                    }
-                    const prepared = await actions.prepare(runId);
-                    if (!editingMappings) setMappings(prepared.mappings);
-                    setFailures([]);
-                    let token: string | undefined;
-                    let done = 0;
-                    const failed: { id: string; key: string; error: string }[] =
-                      [];
-                    do {
-                      const page = await actions.search(token, runId);
-                      for (const issue of page.issues) {
-                        if (cancel.current) break;
-                        setFeedback(
-                          `Importing ${issue.key} · ${done} completed`,
-                        );
-                        try {
-                          await actions.import(issue.id, false, runId);
-                          done++;
-                        } catch (e) {
-                          if (
-                            cancel.current ||
-                            (e instanceof Error &&
-                              e.message.includes("Import stopped"))
-                          ) {
-                            cancel.current = true;
-                            break;
-                          }
-                          failed.push({
-                            ...issue,
-                            error:
-                              e instanceof Error ? e.message : "Import failed",
-                          });
-                          setFailures([...failed]);
-                        }
-                      }
-                      token = page.nextPageToken ?? undefined;
-                    } while (token && !cancel.current);
-                    await actions.refresh();
-                    setSettings(await actions.settings());
-                    const c = await actions.get();
-                    if (c) {
-                      setConnection(c);
-                      if (!editingMappings) setMappings(c.mappings);
-                    }
-                    setFeedback(
-                      `${cancel.current ? "Stopped" : "Import finished"}: ${done} issues imported, ${failed.length} failed. Completed records are saved; retrying imports is safe.`,
-                    );
-                  } catch (e) {
-                    if (
-                      cancel.current ||
-                      (e instanceof Error &&
-                        e.message.includes("Import stopped"))
-                    )
-                      setFeedback(
-                        "Import stopped. Completed records are saved; you can start again.",
-                      );
-                    else throw e;
-                  } finally {
-                    if (runId)
-                      await actions.finishImport(runId).catch(() => {});
-                    activeRun.current = null;
-                    setImporting(false);
-                    setStopping(false);
-                    await actions.refresh();
-                    setSettings(await actions.settings());
-                    const latest = await actions.get();
-                    if (latest) {
-                      setConnection(latest);
-                      if (!editingMappings) setMappings(latest.mappings);
-                    }
-                  }
-                })
-              }
-            >
+            <Button variant="secondary" disabled={locked}
+              onClick={() => void run(async () => {
+                setConnection(await actions.startFullImport());
+              })}>
               Full import
             </Button>
             {(importing || connection.importRunId) && (
               <Button
                 variant="ghost"
-                disabled={stopping}
+                disabled={stopping || connection.importCancelled}
                 onClick={async () => {
                   cancel.current = true;
                   setStopping(true);
-                  setFeedback("Stopping import…");
+                  setScope("sync");
+                  setError("");
+                  setFeedback("");
                   const runId = activeRun.current ?? connection.importRunId;
                   try {
                     if (runId) await actions.stopImport(runId);
                     if (!importing) {
-                      setFeedback(
-                        "Stop requested. Completed records are saved.",
-                      );
+                      setConnection(await actions.get());
                       setStopping(false);
                     }
                   } catch (e) {
@@ -546,10 +522,14 @@ export function JiraSettings({
                   }
                 }}
               >
-                {stopping ? "Stopping…" : "Stop import"}
+                {stopping || connection.importCancelled ? "Stopping…" : "Stop import"}
               </Button>
             )}
           </div>
+          {progress && (progress.id === connection.importRunId || !connection.importRunId) ? (
+            <div><JiraImportProgressPopover stopping={connection.importCancelled} progress={progress} /></div>
+          ) : activity && <p role="status" className="flex items-center gap-2 text-sm text-ink-2"><Spinner size={13} />{activity}</p>}
+          {terminalRun && progress?.message && <Note>{progress.message}</Note>}
           {mappingDirty && <Note>Import uses saved mappings. Unsaved mapping edits are not used.</Note>}
           {connection.lastImportedAt && <Note>Last issue imported {formatDateTime(connection.lastImportedAt)}.</Note>}
           {scope === "sync" && <Feedback error={error} feedback={feedback} />}
@@ -599,7 +579,9 @@ export function JiraSettings({
       {connection && !!failures.length && (
         <SettingsSection
           title="Import errors"
-          description="An issue may be partially imported. Fix the mapping or the error and retry."
+          description={progress && progress.failed > 100
+            ? `Showing retry details from the first 100 of ${progress.failed} failures. Fix the cause and run a full import to retry them all.`
+            : "An issue may be partially imported. Fix the mapping or the error and retry."}
         >
           <ul className="flex flex-col text-sm">
             {failures.map((f) => (
@@ -613,7 +595,6 @@ export function JiraSettings({
                   onClick={() =>
                     void run(async () => {
                       await importSingle(f.id);
-                      setFailures((rows) => rows.filter((r) => r.id !== f.id));
                       await actions.refresh();
                       setFeedback(`${f.key} imported.`);
                     })
@@ -629,9 +610,6 @@ export function JiraSettings({
                     onClick={() =>
                       void run(async () => {
                         await importSingle(f.id, true);
-                        setFailures((rows) =>
-                          rows.filter((r) => r.id !== f.id),
-                        );
                         await actions.refresh();
                         setFeedback(
                           `${f.key}: replaced local edits with Jira values.`,

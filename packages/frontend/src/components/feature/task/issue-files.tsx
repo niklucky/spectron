@@ -1,7 +1,10 @@
+import { DocumentFilePreview } from "./document-file-preview";
+import { officeFileFormat } from "../../../lib/office-file-format";
 import { useAttachmentGallery } from "./attachment-gallery";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   filePreviewKind,
+  textFileFormat,
   projectFileURL,
   type FilePage,
   type IssueAttachmentSummary,
@@ -43,6 +46,7 @@ export function FileTile({
   const openGallery = useAttachmentGallery();
   const url = projectFileURL(file.projectId, file.projectFileId);
   const kind = filePreviewKind(file.contentType);
+  const format = textFileFormat(file.filename, file.contentType) ?? officeFileFormat(file.filename, file.contentType);
   const box = size === "sm" ? "size-[72px]" : "h-28 w-40";
   return (
     <div className={cn("group/tile relative shrink-0", size === "sm" ? "w-[72px]" : "w-40")}>
@@ -66,6 +70,10 @@ export function FileTile({
         <video controls preload="metadata" src={url} aria-label={file.filename} className={cn("rounded-lg bg-black object-contain", size === "sm" ? "size-[72px]" : "h-28 w-40")} />
       ) : kind === "audio" ? (
         <audio controls preload="metadata" src={url} aria-label={file.filename} className="h-9 w-60 max-w-full" />
+      ) : format ? (
+        <div className={cn("overflow-hidden rounded-lg hairline", box)}>
+          <DocumentFilePreview {...format} name={file.filename} src={url} size={file.sizeBytes} />
+        </div>
       ) : (
         <a
           href={projectFileURL(file.projectId, file.projectFileId, true)}
@@ -80,7 +88,7 @@ export function FileTile({
           <a href={projectFileURL(file.projectId, file.projectFileId, true)} className="block truncate text-xs font-medium text-ink hover:underline" title={file.filename}>
             {file.filename}
           </a>
-          <span className="mono block text-2xs text-ink-3">{sizeLabel(file.sizeBytes)}</span>
+          <span className="mono block text-2xs text-ink-3">{format && `${format.extension} · `}{sizeLabel(file.sizeBytes)}</span>
         </div>
       )}
       {onRemove && (
@@ -122,6 +130,7 @@ export function AttachmentPreview({
   progress?: number | undefined;
 }) {
   const kind = filePreviewKind(contentType);
+  const format = textFileFormat(name, contentType) ?? officeFileFormat(name, contentType);
   return (
     <div className="relative w-[200px] shrink-0">
       <div className="h-[120px] overflow-hidden rounded-lg bg-surface-2 hairline">
@@ -129,6 +138,8 @@ export function AttachmentPreview({
           <img src={src} alt={name} className="size-full object-cover" />
         ) : kind === "video" && src ? (
           <video src={src} muted preload="metadata" className="size-full object-cover" />
+        ) : format ? (
+          <DocumentFilePreview {...format} name={name} src={src} size={size} />
         ) : (
           <div className="grid size-full place-items-center text-ink-3">
             <Icon name={kind === "video" ? "play" : kind === "audio" ? "volume" : kind === "image" ? "image" : "file"} size={26} />
@@ -146,7 +157,7 @@ export function AttachmentPreview({
       <div className="mt-1.5 leading-tight">
         <span className="block truncate text-sm font-medium text-ink" title={name}>{name}</span>
         <span className="mono block text-xs text-ink-3">
-          {contentType.split("/")[1]?.toUpperCase() || "FILE"} · {sizeLabel(size)}
+          {format?.extension ?? (contentType.split("/")[1]?.toUpperCase() || "FILE")} · {sizeLabel(size)}
           {progress !== undefined && progress < 1 ? ` · ${Math.round(progress * 100)}%` : ""}
         </span>
       </div>
