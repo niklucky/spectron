@@ -19,6 +19,7 @@ import {
 import { z } from "zod";
 import {
   createMcpCredentialReader,
+  MCP_DPOP_ALGORITHMS,
   type ApiTokenService,
   type Auth,
   type FileService,
@@ -330,8 +331,13 @@ export function createMcpRoute({
       },
     });
   /** RFC 6750 / RFC 9728 challenge: tells MCP clients where to start OAuth. */
-  const challenge = (scheme: "Bearer" | "DPoP", error?: "invalid_token" | "invalid_request") =>
-    `${scheme} ${error ? `error="${error}", ` : ""}resource_metadata="${metadata}"`;
+  const challenge = (
+    scheme: "Bearer" | "DPoP",
+    error?: "invalid_token" | "invalid_request" | "invalid_dpop_proof",
+  ) =>
+    `${scheme} ${error ? `error="${error}", ` : ""}${
+      scheme === "DPoP" ? `algs="${MCP_DPOP_ALGORITHMS.join(" ")}", ` : ""
+    }resource_metadata="${metadata}"`;
 
   return async (request: Request): Promise<Response> => {
     const rejectedOrigin = originValidationResponse(request, allowedHosts);
@@ -343,7 +349,11 @@ export function createMcpRoute({
       case "malformed":
         return reply(400, "Malformed Authorization header.", challenge("Bearer", "invalid_request"));
       case "invalid":
-        return reply(401, "Invalid or expired access token.", challenge(credential.scheme, "invalid_token"));
+        return reply(
+          401,
+          credential.error === "invalid_dpop_proof" ? "Invalid or missing DPoP proof." : "Invalid or expired access token.",
+          challenge(credential.scheme, credential.error),
+        );
       case "personal": {
         const actor = await tokens.authenticate(credential.token);
         if (!actor) return reply(401, "Invalid or revoked personal access token.", challenge("Bearer", "invalid_token"));
@@ -364,7 +374,7 @@ export function createMcpRoute({
         // app: disconnecting deletes it, and reconnecting starts a new one, so
         // tokens from before either are refused immediately.
         if (!clientId || !(await apps.acceptsToken(person.id, clientId, claims.iat)))
-          return reply(401, "This app was disconnected from Spectron. Connect it again.", challenge("Bearer", "invalid_token"));
+          return reply(401, "This app was disconnected from Spectron. Connect it again.", challenge(credential.scheme, "invalid_token"));
         return serve(request, {
           token: "",
           clientId,

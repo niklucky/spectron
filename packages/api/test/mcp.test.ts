@@ -264,6 +264,12 @@ test("MCP server: OAuth discovery, sign-in, consent, tools and disconnect", asyn
   const afterFresh = resumeTarget(await resume(loginPage.search.slice(1), freshCookie));
   assert.equal(afterFresh.pathname, "/api/auth/oauth2/authorize");
   assert.equal(afterFresh.searchParams.get("prompt"), null);
+  // prompt=create: a session from a sign-up after the request satisfies it.
+  const createPage = new URL((await authorize(null, { prompt: "create" }).response).headers.get("location")!, origin);
+  const newcomer = await register("newcomer@example.test");
+  const afterCreate = resumeTarget(await resume(createPage.search.slice(1), newcomer.cookie));
+  assert.equal(afterCreate.pathname, "/api/auth/oauth2/authorize");
+  assert.equal(afterCreate.searchParams.get("prompt"), null);
 
   const exchange = async (body: Record<string, string>, headers: Record<string, string> = {}) => {
     const r = await request("/api/auth/oauth2/token", {
@@ -620,13 +626,29 @@ test("MCP server: OAuth discovery, sign-in, consent, tools and disconnect", asyn
     });
   const proof = await dpopProof("POST", resource, boundToken);
   assert.equal((await dpopCall(`DPoP ${boundToken}`, proof)).status, 200);
-  // Proofs are single-use, bound to the token, and required.
-  assert.equal((await dpopCall(`DPoP ${boundToken}`, proof)).status, 401);
-  const withoutProof = await dpopCall(`DPoP ${boundToken}`);
-  assert.equal(withoutProof.status, 401);
-  assert.match(withoutProof.headers.get("www-authenticate") ?? "", /^DPoP /);
-  assert.equal((await dpopCall(`Bearer ${boundToken}`, await dpopProof("POST", resource, boundToken))).status, 401);
-  assert.equal((await dpopCall(`DPoP ${boundToken}`, await dpopProof("POST", resource, access))).status, 401);
+  // Proofs are single-use, bound to the token, and required (RFC 9449 §7.1).
+  const challengeOf = async (response: Response) => {
+    assert.equal(response.status, 401);
+    return response.headers.get("www-authenticate") ?? "";
+  };
+  const proofChallenge = /^DPoP error="invalid_dpop_proof", algs="[^"]*ES256[^"]*", resource_metadata=/;
+  assert.match(await challengeOf(await dpopCall(`DPoP ${boundToken}`, proof)), proofChallenge);
+  assert.match(await challengeOf(await dpopCall(`DPoP ${boundToken}`)), proofChallenge);
+  assert.match(
+    await challengeOf(await dpopCall(`DPoP ${boundToken}`, await dpopProof("POST", resource, access))),
+    proofChallenge,
+  );
+  // A bound token presented as a Bearer token is an invalid token, not a bad proof.
+  assert.match(
+    await challengeOf(await dpopCall(`Bearer ${boundToken}`, await dpopProof("POST", resource, boundToken))),
+    /^Bearer error="invalid_token"/,
+  );
+  // Once disconnected, a DPoP-bound token is refused with a DPoP challenge.
+  await trpc("oauthApps.disconnect", outsider, { clientId });
+  assert.match(
+    await challengeOf(await dpopCall(`DPoP ${boundToken}`, await dpopProof("POST", resource, boundToken))),
+    /^DPoP error="invalid_token", algs=/,
+  );
 
   // --- Personal access tokens work too --------------------------------------
   const pat = await trpc<{ token: string }>("apiTokens.create", member, { name: "Codex", expiresInDays: 30 });

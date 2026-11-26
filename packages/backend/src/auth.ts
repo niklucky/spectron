@@ -1,7 +1,10 @@
 import { betterAuth } from "better-auth";
 import {
   createDpopReplayStore,
+  DPOP_SIGNING_ALGORITHMS,
   enforceDpopBinding,
+  isDpopBindingError,
+  isDpopProofError,
   parseAccessTokenAuthorization,
   verifyJwsAccessToken,
 } from "better-auth/oauth2";
@@ -203,8 +206,14 @@ export type McpCredential =
   | { kind: "missing" }
   | { kind: "malformed" }
   | { kind: "personal"; token: string }
-  | { kind: "invalid"; scheme: "Bearer" | "DPoP" }
-  | { kind: "oauth"; claims: { sub: string; iat: number; azp?: unknown; client_id?: unknown; scope?: unknown; exp?: unknown } };
+  | { kind: "invalid"; scheme: "Bearer" | "DPoP"; error: "invalid_token" | "invalid_dpop_proof" }
+  | {
+      kind: "oauth";
+      scheme: "Bearer" | "DPoP";
+      claims: { sub: string; iat: number; azp?: unknown; client_id?: unknown; scope?: unknown; exp?: unknown };
+    };
+/** Algorithms advertised in RFC 9449 `DPoP` challenges. */
+export const MCP_DPOP_ALGORITHMS = DPOP_SIGNING_ALGORITHMS;
 
 /**
  * Reads the credential of an MCP request. OAuth access tokens are verified
@@ -227,15 +236,21 @@ export function createMcpCredentialReader(auth: Auth, appURL: string) {
     if (!authorization || authorization.scheme === "Unknown" || !authorization.token) return { kind: "malformed" };
     if (authorization.scheme === "Bearer" && authorization.token.startsWith("spk_"))
       return { kind: "personal", token: authorization.token };
+    const scheme = authorization.scheme;
+    let claims;
     try {
-      const claims = await verifyJwsAccessToken(authorization.token, {
+      claims = await verifyJwsAccessToken(authorization.token, {
         jwksFetch: (() => auth.api.getJwks()) as JwksFetch,
         jwksCacheKey,
         // RFC 9068: exp, iat and sub are mandatory; fail closed without them.
         verifyOptions: { issuer, audience, typ: "at+jwt", requiredClaims: ["exp", "iat", "sub"] },
       });
-      if (typeof claims.sub !== "string" || typeof claims.iat !== "number")
-        return { kind: "invalid", scheme: authorization.scheme };
+    } catch {
+      return { kind: "invalid", scheme, error: "invalid_token" };
+    }
+    if (typeof claims.sub !== "string" || typeof claims.iat !== "number")
+      return { kind: "invalid", scheme, error: "invalid_token" };
+    try {
       await enforceDpopBinding({
         payload: claims,
         authorization,
@@ -244,10 +259,16 @@ export function createMcpCredentialReader(auth: Auth, appURL: string) {
         url: audience,
         replayStore: await replayStore,
       });
-      return { kind: "oauth", claims: claims as typeof claims & { sub: string; iat: number } };
-    } catch {
-      return { kind: "invalid", scheme: authorization.scheme };
+    } catch (error) {
+      // RFC 9449 §7.1: a bad or missing proof is invalid_dpop_proof under the
+      // DPoP scheme; a token/scheme mismatch is invalid_token.
+      const proofError =
+        isDpopProofError(error) || (isDpopBindingError(error) && error.code === "invalid_dpop_proof");
+      return proofError
+        ? { kind: "invalid", scheme: "DPoP", error: "invalid_dpop_proof" }
+        : { kind: "invalid", scheme, error: "invalid_token" };
     }
+    return { kind: "oauth", scheme, claims: claims as typeof claims & { sub: string; iat: number } };
   };
 }
 

@@ -16,10 +16,12 @@ type AuthUser = { id: string; name: string; email: string };
  * MCP clients (Claude, Codex, …) connect through OAuth. Spectron's authorize
  * endpoint sends people here with a signed copy of the client's request:
  * /login (or /register) when they need to sign in, /oauth/consent to approve
- * the client. The signed query travels with every step, and the server
- * verifies it before resuming (the oauthProviderClient plugin adds it to
- * sign-in requests; /oauth2/continue takes it for an existing session).
+ * the client. Once signed in by any method, the browser goes to
+ * /api/oauth/resume with the signed query; the server verifies it, checks the
+ * session is fresh enough for prompt=login/create and max_age, and continues
+ * the authorization. Sign-in requests themselves never carry the query.
  */
+const resumeURL = () => `/api/oauth/resume${window.location.search}`;
 function signedOAuthRequest(search: string) {
   const params = new URLSearchParams(search);
   return params.has("sig") && params.has("client_id") ? params : null;
@@ -72,25 +74,19 @@ export function AuthGate({
   useEffect(() => {
     if (toLogin) window.location.replace(`/login${window.location.search}${window.location.hash}`);
   }, [toLogin]);
-  // Someone already signed in (another tab): resume the client's request;
-  // the server re-verifies its signature.
+  // Someone already signed in (another tab): resume the client's request.
+  // If it still needs a fresh sign-in or a new account, the server sends the
+  // browser back here, where reauth/wantsCreate show the form instead.
   const resumeOAuth = !!data && !!oauth && !isConsent && !reauth && !wantsCreate;
-  const [resumeFailed, setResumeFailed] = useState("");
   useEffect(() => {
-    if (!resumeOAuth) return;
-    postOAuth("continue", { created: true })
-      .then((url) => {
-        // A request that still needs a sign-in comes back here; show the form.
-        if (new URL(url, window.location.origin).pathname === "/login")
-          setResumeFailed("Sign in again to continue.");
-        else window.location.replace(url);
-      })
-      .catch((cause: unknown) => setResumeFailed(cause instanceof Error ? cause.message : "Couldn’t continue."));
+    if (resumeOAuth) window.location.replace(resumeURL());
   }, [resumeOAuth]);
   const invite = /^#invite\/[a-f0-9]{64}$/.test(window.location.hash)
     ? window.location.hash
     : "";
-  // Links between login, sign-up and back keep the OAuth request with them.
+  // Links between the auth pages keep the OAuth request with them. It is
+  // only page state: no auth request sends it, so it never blocks sign-in
+  // or password recovery, even once expired.
   const continueHash = oauth ? window.location.search : invite;
   // The magic-link verifier redirects here with ?error= when a link is stale.
   const linkError =
@@ -98,8 +94,7 @@ export function AuthGate({
       ? "That login link has expired or was already used. Request a new one."
       : params.has("oauth_expired")
         ? "That connection request expired. Start again from the app you were connecting."
-        : resumeFailed ||
-          (reauth
+        : (reauth
             ? "The app you are connecting asked you to sign in again."
             : wantsCreate
               ? "The app you are connecting asked you to create an account."
@@ -122,7 +117,7 @@ export function AuthGate({
         </Button>
       </main>
     );
-  if ((resumeOAuth && !resumeFailed) || toLogin || (wantsCreate && path === "login"))
+  if (resumeOAuth || toLogin || (wantsCreate && path === "login"))
     return (
       <main className="grid h-dvh place-content-center bg-surface text-ink-2" role="status">
         Continuing to the app…
@@ -163,14 +158,9 @@ export function AuthGate({
         result.error.message || "The request couldn’t be completed.",
       );
     }
-    if ((mode === "login" || mode === "register") && oauth) {
-      // With a signed OAuth request in the page, the server resumes the
-      // authorization as part of sign-in and returns where to go next. After
-      // sign-up, /continue also clears prompt=create, now satisfied.
-      const next =
-        mode === "register" ? await postOAuth("continue", { created: true }) : (result.data as { url?: string } | null)?.url;
-      window.location.replace(next ?? window.location.href);
-    } else if (mode === "login" || mode === "register") window.location.replace(`/${window.location.hash}`);
+    if (mode === "login" || mode === "register")
+      // A fresh session satisfies prompt=login/create and max_age on resume.
+      window.location.replace(oauth ? resumeURL() : `/${window.location.hash}`);
     if (mode === "reset-password")
       window.history.replaceState(null, "", "/reset-password");
   }
@@ -181,7 +171,7 @@ export function AuthGate({
       name: email.split("@")[0] || email,
       // The server verifies the signed request and the new session's
       // freshness, then resumes the client's authorization.
-      callbackURL: oauth ? `/api/oauth/resume${window.location.search}` : `/${invite}`,
+      callbackURL: oauth ? resumeURL() : `/${invite}`,
       errorCallbackURL: "/login",
     });
     if (result.error) {
