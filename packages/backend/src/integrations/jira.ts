@@ -1,4 +1,5 @@
 import { ISSUE_TITLE_MAX_LENGTH, ISSUE_DESCRIPTION_MAX_LENGTH } from "@spectron/shared";
+import { releaseStoppedJiraRuns } from "./jira-scheduler";
 import { exportWorklog } from "./export-worklogs";
 import { historyChanges } from "../history-changes";
 import {
@@ -127,7 +128,7 @@ function remoteIssue(row: JiraIssue, mappings: JiraMappings) {
     assignee: f.assignee?.accountId ?? null,
     ...Object.fromEntries(
       Object.keys(mappings.fields)
-        .filter((id) => mappings.fields[id])
+        .filter((id) => mappings.fields[id] && !isPendingJiraField(mappings.fields[id]))
         .map((id) => [id, f[id] ?? null]),
     ),
   };
@@ -1273,7 +1274,7 @@ export function createJiraService(
         const runId = createId();
         const [c] = await tx
           .update(s.jiraIntegration)
-          .set({ importRunId: runId, importCancelled: false })
+          .set({ importRunId: runId, importCancelled: false, scheduleLeaseUntil: null })
           .where(
             and(
               eq(s.jiraIntegration.projectId, projectId),
@@ -1298,20 +1299,12 @@ export function createJiraService(
     },
     async stopImport(userId: string, projectId: string, runId: string) {
       await connection(userId, projectId);
-      await db
-        .update(s.jiraIntegration)
-        .set({
-          importCancelled: true,
-          // A browser-owned retry may have lost its caller. Clearing its ID
-          // also cancels in-flight requests through the existing checkpoint.
-          importRunId: sql`CASE WHEN ${s.jiraIntegration.fullImportUserId} IS NULL AND ${s.jiraIntegration.scheduleLeaseUntil} IS NULL THEN NULL ELSE ${s.jiraIntegration.importRunId} END`,
-        })
-        .where(
-          and(
-            eq(s.jiraIntegration.projectId, projectId),
-            eq(s.jiraIntegration.importRunId, runId),
-          ),
-        );
+      const t = s.jiraIntegration;
+      const scope = and(eq(t.projectId, projectId), eq(t.importRunId, runId));
+      await db.transaction(async tx => {
+        await tx.update(t).set({ importCancelled: true }).where(scope);
+        await releaseStoppedJiraRuns(tx, scope);
+      });
     },
     async finishImport(userId: string, projectId: string, runId: string) {
       await connection(userId, projectId);

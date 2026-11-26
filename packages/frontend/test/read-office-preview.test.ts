@@ -26,6 +26,10 @@ test("Office previews read content even when the saved thumbnail is blank", asyn
       "xl/sharedStrings.xml": "<sst><si><t>Sales</t></si></sst>",
     }), { kind: "sheet", rows: [["", "Sales", "42"]] });
 
+    assert.deepEqual(await preview("Excel", {
+      "xl/worksheets/sheet1.xml": '<sheet><row><c r="A1" t="s"><v>14</v></c><c r="B1"><v>42</v></c></row></sheet>',
+    }), { kind: "sheet", rows: [["", "42"]] });
+
     assert.deepEqual(await preview("PowerPoint", {
       "ppt/slides/slide1.xml": "<slide><p><t>Quarterly results</t></p></slide>",
     }), { kind: "text", paragraphs: ["Quarterly results"] });

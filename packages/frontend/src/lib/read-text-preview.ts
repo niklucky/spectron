@@ -5,6 +5,8 @@ const maxBytes = 64 * 1024;
 export async function readTextPreview(url: string, signal: AbortSignal) {
   // Request one extra byte to distinguish a complete file from an excerpt.
   const response = await fetch(url, { signal, headers: { Range: `bytes=0-${maxBytes}` } });
+  if (response.status === 416 && response.headers.get("Content-Range") === "bytes */0")
+    return { kind: "source" as const, text: "", truncated: false };
   if (!response.ok || !response.body) return null;
   const reader = response.body.getReader();
   const decoder = new TextDecoder("utf-8", { fatal: true });

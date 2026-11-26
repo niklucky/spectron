@@ -64,7 +64,8 @@ export async function readOfficePreview(blob: Blob, family: OfficeFamily, signal
             const value = elements(c, "v")[0]?.textContent ?? "";
             const type = c.getAttribute("t");
             const shared = type === "s" && value !== "" ? table[Number(value)] : undefined;
-            values[col] = shared ? runs(shared) : type === "inlineStr" ? runs(c) : value.slice(0, 2000);
+            if (type === "s") values[col] = shared ? runs(shared) : "";
+            else values[col] = type === "inlineStr" ? runs(c) : value.slice(0, 2000);
           }
           if (values.some(Boolean)) rows.push(Array.from(values, v => v ?? ""));
           if (rows.length === 30) break;

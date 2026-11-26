@@ -22,3 +22,12 @@ test("preview stops at the byte limit without breaking a multibyte character", a
     assert.deepEqual(await readTextPreview(url, new AbortController().signal), { kind: "source", text: prefix, truncated: true });
   } finally { URL.revokeObjectURL(url); }
 });
+
+test("an unsatisfiable range identifies an empty stored file only when the total is zero", async t => {
+  const fetch = t.mock.method(globalThis, "fetch", async () =>
+    new Response(null, { status: 416, headers: { "Content-Range": "bytes */0" } }));
+  const read = () => readTextPreview("https://files.invalid/empty.txt", new AbortController().signal);
+  assert.deepEqual(await read(), { kind: "source", text: "", truncated: false });
+  fetch.mock.mockImplementation(async () => new Response(null, { status: 416, headers: { "Content-Range": "bytes */50" } }));
+  assert.equal(await read(), null);
+});

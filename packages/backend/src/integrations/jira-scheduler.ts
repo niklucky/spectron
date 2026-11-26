@@ -1,7 +1,26 @@
-import { and, eq, isNull, isNotNull, lt, or, sql } from "drizzle-orm";
+import { and, eq, isNull, isNotNull, lt, or, sql, type SQL } from "drizzle-orm";
 import { schema as s, type Database } from "@spectron/db";
 import { createId, type JiraImportProgress } from "@spectron/shared";
 import type { JiraService } from "./jira";
+
+// A vanished worker cannot acknowledge Stop. Fence it by clearing its run ID.
+export async function releaseStoppedJiraRuns(db: Pick<Database, "update">, scope?: SQL) {
+  const t = s.jiraIntegration;
+  const expired = lt(t.scheduleLeaseUntil, new Date());
+  await db.update(t).set({
+    importRunId: null,
+    scheduleLeaseUntil: null,
+    lastScheduleResult: sql`CASE WHEN ${t.scheduleLeaseUntil} IS NOT NULL THEN 'Import stopped.' ELSE ${t.lastScheduleResult} END`,
+    importProgress: sql`CASE WHEN ${t.importProgress}->>'id' = ${t.importRunId}
+      THEN ${t.importProgress} || '{"status":"stopped","currentKey":null}'::jsonb ELSE ${t.importProgress} END`,
+  }).where(and(
+    scope, isNotNull(t.importRunId), isNull(t.fullImportUserId),
+    or(
+      and(eq(t.importCancelled, true), or(isNull(t.scheduleLeaseUntil), expired)),
+      and(expired, isNull(t.scheduleMinutes)),
+    ),
+  ));
+}
 
 // Claims are durable across API processes; expired claims recover after a crash.
 export function createJiraScheduler(db: Database, jira: JiraService) {
@@ -16,9 +35,13 @@ export function createJiraScheduler(db: Database, jira: JiraService) {
       const free = (column: typeof table.leaseUntil | typeof table.scheduleLeaseUntil) =>
         or(isNull(column), lt(column, now));
       const manualReady = and(isNotNull(table.fullImportUserId), free(table.scheduleLeaseUntil));
+      await releaseStoppedJiraRuns(db);
       const scheduledReady = and(
-        isNull(table.fullImportUserId), lt(table.nextImportAt, now),
-        or(and(isNull(table.importRunId), isNull(table.scheduleLeaseUntil)), lt(table.scheduleLeaseUntil, now)),
+        isNull(table.fullImportUserId), isNotNull(table.scheduleMinutes), isNotNull(table.scheduleUserId),
+        or(
+          and(lt(table.nextImportAt, now), isNull(table.importRunId), isNull(table.scheduleLeaseUntil)),
+          and(lt(table.scheduleLeaseUntil, now), eq(table.importCancelled, false)),
+        ),
       );
       const candidates = await db.select().from(table)
         .where(and(free(table.leaseUntil), or(manualReady, scheduledReady))).limit(10);

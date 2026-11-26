@@ -447,6 +447,12 @@ test("Jira project fields, import, publishing, conflicts and retry safety", asyn
   await jira.mappings("owner", p.id, createdMappings);
   await jira.pushIssue("owner", p.id, initialIssue.id, true);
   assert.equal("votes" in writes.at(-1)!, false);
+  await jira.mappings("owner", p.id, { ...createdMappings, fields: {
+    ...createdMappings.fields, customfield_4: createJiraFieldOnImport, pending_json: createJiraJsonOnImport,
+  } });
+  const writesBeforePending = writes.length;
+  await jira.pushIssue("owner", p.id, initialIssue.id);
+  assert.equal(writes.length, writesBeforePending, "pending field mappings do not change sync snapshots");
   remote.fields.customfield_5 = "2026-09-01T09:00:00+0300";
   await jira.mappings("owner", p.id, { ...createdMappings, fields: {
     ...createdMappings.fields, customfield_4: createJiraFieldOnImport, missing: createJiraFieldOnImport,
@@ -861,8 +867,7 @@ test("Jira project fields, import, publishing, conflicts and retry safety", asyn
   await worker.tick();
   assert.equal(prepared, 1, "future schedule is not run early");
 
-  // A crashed process leaves a claim that another process can recover.
-  await makeScheduleDue();
+  // The next schedule is in the future, but the previous worker lost its lease.
   await pool.query(
     "UPDATE jira_integrations SET import_run_id = 'abandoned-schedule', schedule_lease_until = now() - interval '1 minute' WHERE id = $1",
     [scheduled.id],
@@ -879,6 +884,21 @@ test("Jira project fields, import, publishing, conflicts and retry safety", asyn
   );
   assert.deepEqual(countQueries, [incrementalJql.replace(" ORDER BY updated ASC", "")]);
   const successfulWatermark = await watermark();
+
+  const abandonRun = async () => {
+    const id = "orphaned-run";
+    await pool.query(`UPDATE jira_integrations SET import_run_id=$2, import_cancelled=false,
+      schedule_lease_until=now()-interval '1 minute',
+      import_progress=jsonb_build_object('id', $2::text, 'kind', 'scheduled', 'status', 'running', 'currentKey', 'X-1')
+      WHERE id=$1`, [scheduled.id, id]);
+    return id;
+  };
+  const orphan = await abandonRun();
+  await jira.stopImport("owner", p.id, orphan);
+  const stoppedOrphan = (await jira.get("owner", p.id))!;
+  assert.equal(stoppedOrphan.importRunId, null);
+  assert.equal(stoppedOrphan.importProgress?.status, "stopped");
+  assert.equal(stoppedOrphan.importProgress?.currentKey, null);
 
   await makeScheduleDue();
   await createJiraScheduler(db, {
@@ -959,6 +979,10 @@ test("Jira project fields, import, publishing, conflicts and retry safety", asyn
   assert.equal(await watermark(), beforeManual);
   const disabled = await jira.schedule("owner", p.id, null);
   assert.equal(disabled.nextImportAt, null);
+  await abandonRun();
+  await worker.tick();
+  assert.equal((await jira.get("owner", p.id))!.importRunId, null);
+  assert.equal((await jira.get("owner", p.id))!.importProgress?.status, "stopped");
   await worker.tick();
   assert.equal(prepared, 2);
   // The client only queues work. A new reader can reconnect before, during
