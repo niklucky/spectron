@@ -59,11 +59,17 @@ export function createOAuthAppService(db: Database) {
         await tx
           .delete(oauthRefreshToken)
           .where(and(eq(oauthRefreshToken.userId, userId), eq(oauthRefreshToken.clientId, clientId)));
-        // Authorization codes not yet exchanged (JSON verification values).
-        await tx.delete(verification).where(sql`CASE WHEN ${verification.value} LIKE '{"type":"authorization_code"%'
-            THEN (${verification.value}::jsonb ->> 'userId') = ${userId}
-              AND (${verification.value}::jsonb -> 'query' ->> 'client_id') = ${clientId}
-            ELSE false END`);
+        // Authorization codes not yet exchanged. Better Auth stores them as
+        // JSON.stringify text; match the exact serialized fragments instead
+        // of casting, so no other verification row can make this fail.
+        const needle = (key: string, value: string) => `"${key}":${JSON.stringify(value)}`;
+        await tx
+          .delete(verification)
+          .where(
+            sql`starts_with(${verification.value}, '{"type":"authorization_code"')
+              AND strpos(${verification.value}, ${needle("userId", userId)}) > 0
+              AND strpos(${verification.value}, ${needle("client_id", clientId)}) > 0`,
+          );
         await tx
           .insert(oauthDisconnect)
           .values({ userId, clientId, disconnectedAt: new Date() })

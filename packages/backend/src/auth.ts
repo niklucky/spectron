@@ -299,14 +299,20 @@ export function createOAuthResume(auth: Auth) {
     const fresh = Number.isFinite(issuedAt) && new Date(session.session.createdAt).getTime() >= issuedAt;
     const original = new URLSearchParams();
     for (const [key, value] of signed) if (!OAUTH_INTERNAL_PARAMS.has(key)) original.append(key, value);
-    const prompts = (original.get("prompt") ?? "").split(" ").filter(Boolean);
-    if (!fresh && (prompts.includes("login") || original.has("max_age"))) return redirect(`/login?${signed}`);
-    if (fresh) {
-      const remaining = prompts.filter((prompt) => prompt !== "login" && prompt !== "create");
-      if (remaining.length) original.set("prompt", remaining.join(" "));
-      else original.delete("prompt");
-      original.delete("max_age");
-    }
+    // Same token rules as Better Auth: space-delimited, trimmed.
+    const prompts = (original.get("prompt") ?? "").split(/\s+/).map((p) => p.trim()).filter(Boolean);
+    const maxAge = original.has("max_age") ? Number(original.get("max_age")) : null;
+    const ageSeconds = (Date.now() - new Date(session.session.createdAt).getTime()) / 1000;
+    // max_age=0 means "sign in for this request"; a positive limit is met by
+    // any session young enough (OIDC Core §3.1.2.1).
+    const maxAgeMet = maxAge === null || (maxAge === 0 ? fresh : Number.isFinite(maxAge) && ageSeconds <= maxAge);
+    if ((!fresh && prompts.includes("login")) || !maxAgeMet) return redirect(`/login?${signed}`);
+    const remaining = prompts.filter((prompt) => !(fresh && (prompt === "login" || prompt === "create")));
+    if (remaining.length) original.set("prompt", remaining.join(" "));
+    else original.delete("prompt");
+    // Satisfied here; leaving it would let authorize compare it against the
+    // session's original authentication time and send the person back.
+    if (maxAge !== null) original.delete("max_age");
     return redirect(`/api/auth/oauth2/authorize?${original}`);
   };
 }

@@ -21,7 +21,16 @@ type AuthUser = { id: string; name: string; email: string };
  * session is fresh enough for prompt=login/create and max_age, and continues
  * the authorization. Sign-in requests themselves never carry the query.
  */
-const resumeURL = () => `/api/oauth/resume${window.location.search}`;
+/** The signed OAuth request alone, without page-specific params like ?token=. */
+function oauthSearch(params: URLSearchParams) {
+  const kept = new URLSearchParams(params);
+  for (const key of ["token", "error", "oauth_expired"]) kept.delete(key);
+  return `?${kept}`;
+}
+const resumeURL = () => {
+  const params = signedOAuthRequest(window.location.search);
+  return `/api/oauth/resume${params ? oauthSearch(params) : window.location.search}`;
+};
 function signedOAuthRequest(search: string) {
   const params = new URLSearchParams(search);
   return params.has("sig") && params.has("client_id") ? params : null;
@@ -57,14 +66,17 @@ export function AuthGate({
   const params = new URLSearchParams(window.location.search);
   const token = params.get("token");
   const isConsent = path === "oauth/consent";
-  const oauth =
-    path === "login" || path === "register" || isConsent ? signedOAuthRequest(window.location.search) : null;
-  const prompts = oauth?.get("prompt")?.split(" ") ?? [];
+  // The signed request is page state on every auth page, so it survives
+  // detours such as password recovery; only sign-in and sign-up resume it.
+  const oauth = mode !== "login" || path === "login" || isConsent ? signedOAuthRequest(window.location.search) : null;
+  const signInPage = path === "login" || path === "register";
+  // Same token rules as Better Auth: space-delimited, trimmed.
+  const prompts = (oauth?.get("prompt") ?? "").split(/\s+/).map((p) => p.trim()).filter(Boolean);
   // The client asked for a fresh sign-in (prompt=login, or max_age that the
   // current session is too old for): an existing session must not satisfy it.
-  const reauth = !!oauth && !isConsent && (prompts.includes("login") || oauth.has("max_age"));
+  const reauth = !!oauth && signInPage && (prompts.includes("login") || oauth.has("max_age"));
   // The client asked for a new account (prompt=create): show sign-up.
-  const wantsCreate = !!oauth && !isConsent && prompts.includes("create");
+  const wantsCreate = !!oauth && signInPage && prompts.includes("create");
   useEffect(() => {
     if (wantsCreate && path === "login") window.location.replace(`/register${window.location.search}`);
   }, [wantsCreate, path]);
@@ -77,7 +89,7 @@ export function AuthGate({
   // Someone already signed in (another tab): resume the client's request.
   // If it still needs a fresh sign-in or a new account, the server sends the
   // browser back here, where reauth/wantsCreate show the form instead.
-  const resumeOAuth = !!data && !!oauth && !isConsent && !reauth && !wantsCreate;
+  const resumeOAuth = !!data && !!oauth && signInPage && !reauth && !wantsCreate;
   useEffect(() => {
     if (resumeOAuth) window.location.replace(resumeURL());
   }, [resumeOAuth]);
@@ -87,7 +99,7 @@ export function AuthGate({
   // Links between the auth pages keep the OAuth request with them. It is
   // only page state: no auth request sends it, so it never blocks sign-in
   // or password recovery, even once expired.
-  const continueHash = oauth ? window.location.search : invite;
+  const continueHash = oauth ? oauthSearch(oauth) : invite;
   // The magic-link verifier redirects here with ?error= when a link is stale.
   const linkError =
     mode === "login" && params.has("error")
@@ -124,6 +136,17 @@ export function AuthGate({
       </main>
     );
   if (data && isConsent) return <ConsentGate user={data.user} />;
+  // Signed in by the time the request turned out to be expired: say so
+  // instead of silently opening the workspace.
+  if (data && path === "login" && params.has("oauth_expired"))
+    return (
+      <main className="grid h-dvh place-content-center gap-4 bg-surface px-6 text-center text-ink-2">
+        <p role="alert">That connection request expired. Start again from the app you were connecting.</p>
+        <Button variant="primary" onClick={() => window.location.replace("/")}>
+          Open Spectron
+        </Button>
+      </main>
+    );
   if (data && mode !== "reset-password" && !oauth)
     return children(data.user, data.session.id);
 
@@ -134,7 +157,8 @@ export function AuthGate({
         : mode === "forgot-password"
           ? await authClient.requestPasswordReset({
               email: fields.email,
-              redirectTo: `${window.location.origin}/reset-password`,
+              // Better Auth adds ?token= to this, keeping the OAuth request.
+              redirectTo: `${window.location.origin}/reset-password${oauth ? oauthSearch(oauth) : ""}`,
             })
           : mode === "reset-password"
             ? await authClient.resetPassword({

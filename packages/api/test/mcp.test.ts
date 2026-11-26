@@ -264,6 +264,26 @@ test("MCP server: OAuth discovery, sign-in, consent, tools and disconnect", asyn
   const afterFresh = resumeTarget(await resume(loginPage.search.slice(1), freshCookie));
   assert.equal(afterFresh.pathname, "/api/auth/oauth2/authorize");
   assert.equal(afterFresh.searchParams.get("prompt"), null);
+  // max_age: a positive limit is met by a young enough session; 0 needs a
+  // sign-in after the request.
+  const maxAgePage = async (value: string, cookie: string | null = owner.cookie) =>
+    new URL((await authorize(cookie ? { cookie } : null, { max_age: value }).response).headers.get("location")!, origin);
+  const withinHour = resumeTarget(await resume((await maxAgePage("3600", null)).search.slice(1), owner.cookie));
+  assert.equal(withinHour.pathname, "/api/auth/oauth2/authorize");
+  assert.equal(withinHour.searchParams.get("max_age"), null);
+  const zeroPage = (await maxAgePage("0")).search.slice(1);
+  assert.equal(resumeTarget(await resume(zeroPage, owner.cookie)).pathname, "/login");
+  const zeroFresh = await request("/api/auth/sign-in/email", {
+    method: "POST",
+    headers: { origin, "content-type": "application/json" },
+    body: JSON.stringify({ email: owner.email, password: "a long mcp test password" }),
+  });
+  const zeroCookie = zeroFresh.headers.getSetCookie().map((c) => c.split(";")[0]).join("; ");
+  assert.equal(resumeTarget(await resume(zeroPage, zeroCookie)).pathname, "/api/auth/oauth2/authorize");
+  // Prompt tokens are trimmed the way Better Auth reads them.
+  const paddedPage = new URL((await authorize(owner, { prompt: " login " }).response).headers.get("location")!, origin);
+  assert.equal(paddedPage.pathname, "/login");
+  assert.equal(resumeTarget(await resume(paddedPage.search.slice(1), owner.cookie)).pathname, "/login");
   // prompt=create: a session from a sign-up after the request satisfies it.
   const createPage = new URL((await authorize(null, { prompt: "create" }).response).headers.get("location")!, origin);
   const newcomer = await register("newcomer@example.test");
@@ -503,8 +523,14 @@ test("MCP server: OAuth discovery, sign-in, consent, tools and disconnect", asyn
   // A code issued before disconnecting must not be redeemable afterwards.
   const pending = authorize(owner);
   const pendingCode = new URL((await pending.response).headers.get("location")!).searchParams.get("code")!;
+  // A verification value Postgres' jsonb would reject must not break this.
+  await pool.query(
+    `INSERT INTO verifications (id, identifier, value, expires_at, created_at, updated_at)
+     VALUES ('odd-row', 'odd', '{"type":"authorization_code","note":"\\u0000"}', now() + interval '1 hour', now(), now())`,
+  );
   await trpc("oauthApps.disconnect", owner, { clientId });
   assert.deepEqual(await trpc("oauthApps.list", owner, undefined, false), []);
+  assert.equal((await pool.query("SELECT 1 FROM verifications WHERE id = 'odd-row'")).rowCount, 1);
   const cutOff = await mcp(refreshed.body.access_token!, "tools/list");
   assert.equal(cutOff.status, 401);
   const afterDisconnect = await exchange({
