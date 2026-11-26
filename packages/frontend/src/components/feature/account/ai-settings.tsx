@@ -15,6 +15,7 @@ import { Button } from "../../ui/button";
 import { Dialog } from "../../ui/dialog";
 import { Avatar } from "../../ui/avatar";
 import { localAppName, type LocalApp } from "@spectron/shared";
+import { ApiTokens, type ApiTokenActions } from "./api-tokens";
 
 type Revision = { id: string; revision: number };
 export type AISettingsActions = {
@@ -85,11 +86,13 @@ export function AISettingsPage({
   actions,
   projects,
   ownerId,
+  tokenActions,
   onClose,
 }: {
   actions: AISettingsActions;
   projects: ProjectSummary[];
   ownerId: string;
+  tokenActions?: ApiTokenActions | undefined;
   onClose: () => void;
 }) {
   const [tab, setTab] = useState("agents");
@@ -162,6 +165,7 @@ export function AISettingsPage({
           ["agents", "My agents"],
           ["connections", "Connections"],
           ["project", "Project agents"],
+          ...(tokenActions ? [["tokens", "API tokens"]] : []),
         ].map(([id, name]) => (
           <Button
             key={id}
@@ -188,7 +192,9 @@ export function AISettingsPage({
           </Button>
         </p>
       )}
-      {loading ? (
+      {tab === "tokens" && tokenActions ? (
+        <ApiTokens actions={tokenActions} />
+      ) : loading ? (
         <p role="status">Loading AI settings…</p>
       ) : loadError ? null : tab === "connections" ? (
         <section aria-label="AI connections">

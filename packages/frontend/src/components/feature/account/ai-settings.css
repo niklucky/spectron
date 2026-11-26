@@ -158,3 +158,17 @@
     grid-template-columns: 1fr;
   }
 }
+.api-token-example {
+  margin: 0;
+  overflow-x: auto;
+  border-radius: 8px;
+  background: var(--color-sidebar);
+  padding: 10px 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  white-space: pre;
+}
+.ai-dialog input[aria-label="API token"] {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}

@@ -634,7 +634,8 @@ export function createIssueService(db: Database) {
       input: {
         projectId: string;
         id: string;
-        expectedUpdatedAt: string;
+        /** Omit to apply only the given fields to whatever is current. */
+        expectedUpdatedAt?: string | undefined;
       } & OptionalFields,
     ) {
       return db.transaction(async (tx) => {
@@ -646,7 +647,10 @@ export function createIssueService(db: Database) {
         if (!row) throw new ProjectAccessError("Issue not found.");
         if (row.deletedAt)
           throw new IssueInputError("Restore the issue before editing it.");
-        if (row.updatedAt.toISOString() !== input.expectedUpdatedAt)
+        if (
+          input.expectedUpdatedAt !== undefined &&
+          row.updatedAt.toISOString() !== input.expectedUpdatedAt
+        )
           throw new IssueConflictError(
             "This issue changed. Reload it before saving your edits.",
           );

@@ -115,6 +115,31 @@ export const rateLimit = pgTable("rate_limits", {
   lastRequest: bigint("last_request", { mode: "number" }).notNull(),
 });
 
+/**
+ * Personal access tokens for the public API (/api/v1). Only a SHA-256 hash of
+ * the secret is stored; `prefix` is the first characters shown in settings so
+ * people can tell their tokens apart.
+ */
+export const apiToken = pgTable(
+  "api_tokens",
+  {
+    id: text("id").$defaultFn(createId).primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    prefix: text("prefix").notNull(),
+    tokenHash: text("token_hash").notNull().unique(),
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => [index("api_tokens_user_idx").on(t.userId)],
+);
+
 export type User = typeof user.$inferSelect;
 export type Session = typeof session.$inferSelect;
 export type Account = typeof account.$inferSelect;

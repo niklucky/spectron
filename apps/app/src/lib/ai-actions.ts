@@ -1,4 +1,4 @@
-import type { AISettingsActions } from "@spectron/frontend/components/feature/account";
+import type { AISettingsActions, ApiTokenActions } from "@spectron/frontend/components/feature/account";
 import { trpc } from "./trpc";
 
 export const aiActions: AISettingsActions = {
@@ -16,4 +16,10 @@ export const aiActions: AISettingsActions = {
   setSharing: (input) => trpc.ai.setSharing.mutate(input),
   available: (projectId) => trpc.ai.available.query({ projectId }),
   members: (id) => trpc.projects.members.query({ id }),
+};
+
+export const apiTokenActions: ApiTokenActions = {
+  list: () => trpc.apiTokens.list.query(),
+  create: (input) => trpc.apiTokens.create.mutate(input),
+  revoke: (id) => trpc.apiTokens.revoke.mutate({ id }),
 };
