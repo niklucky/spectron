@@ -178,8 +178,9 @@ export function createPublicApiService(db: Database, appURL: string) {
     return { ...row, projectKey: p.key, key: `${p.key}-${row.number}` };
   }
 
-  async function members(projectId: string) {
-    return db
+  type Executor = Database | Parameters<Parameters<Database["transaction"]>[0]>[0];
+  async function members(projectId: string, exec: Executor = db) {
+    return exec
       .select({ id: user.id, name: user.name, email: user.email, role: projectMember.role })
       .from(projectMember)
       .innerJoin(user, eq(user.id, projectMember.userId))
@@ -212,13 +213,13 @@ export function createPublicApiService(db: Database, appURL: string) {
     return person;
   }
 
-  async function options(projectId: string) {
+  async function options(projectId: string, exec: Executor = db) {
     const [states, priorities, types, tags, fields] = await Promise.all([
-      db.select().from(issueState).where(eq(issueState.projectId, projectId)).orderBy(asc(issueState.position)),
-      db.select().from(issuePriority).where(eq(issuePriority.projectId, projectId)).orderBy(asc(issuePriority.position)),
-      db.select().from(issueType).where(eq(issueType.projectId, projectId)).orderBy(asc(issueType.position)),
-      db.select().from(tag).where(eq(tag.projectId, projectId)).orderBy(asc(tag.name)),
-      db
+      exec.select().from(issueState).where(eq(issueState.projectId, projectId)).orderBy(asc(issueState.position)),
+      exec.select().from(issuePriority).where(eq(issuePriority.projectId, projectId)).orderBy(asc(issuePriority.position)),
+      exec.select().from(issueType).where(eq(issueType.projectId, projectId)).orderBy(asc(issueType.position)),
+      exec.select().from(tag).where(eq(tag.projectId, projectId)).orderBy(asc(tag.name)),
+      exec
         .select()
         .from(projectField)
         .where(and(eq(projectField.projectId, projectId), isNull(projectField.deletedAt)))
@@ -262,10 +263,17 @@ export function createPublicApiService(db: Database, appURL: string) {
 
     async projectDetail(userId: string, ref: string) {
       const p = await resolveProject(userId, ref);
-      const [{ states, priorities, types, tags, fields }, people] = await Promise.all([
-        options(p.id),
-        members(p.id),
-      ]);
+      // Hold the caller's membership for the reads so a concurrent removal
+      // cannot race them; a removal already committed leaves no row.
+      const { states, priorities, types, tags, fields, people } = await db.transaction(async (tx) => {
+        const [membership] = await tx
+          .select({ userId: projectMember.userId })
+          .from(projectMember)
+          .where(and(eq(projectMember.projectId, p.id), eq(projectMember.userId, userId)))
+          .for("share");
+        if (!membership) throw new ProjectAccessError(`Project ${ref} not found.`);
+        return { ...(await options(p.id, tx)), people: await members(p.id, tx) };
+      });
       const active = <T extends { deletedAt: Date | null }>(rows: T[]) => rows.filter((r) => !r.deletedAt);
       return {
         ...p,
@@ -349,8 +357,12 @@ export function createPublicApiService(db: Database, appURL: string) {
           .select({ id: user.id })
           .from(user)
           .where(or(eq(user.id, input.assignee), sql`lower(${user.email}) = ${lower(input.assignee)}`));
-        // An unknown person simply matches nothing; it must not widen the search.
-        where.push(sql`${assigned} = ${person?.id ?? ""}`);
+        // Imported people without a Spectron account are returned with their
+        // external identity id, so that id must filter too. An unknown
+        // reference simply matches nothing; it must not widen the search.
+        where.push(
+          or(sql`${assigned} = ${person?.id ?? ""}`, eq(issue.externalAssigneeId, input.assignee)),
+        );
       }
       if (input.q?.trim()) where.push(ilike(issue.title, `%${escapeLike(input.q.trim())}%`));
       const range = (column: Parameters<typeof gte>[0], after?: Date, before?: Date, text = false) => {
@@ -370,14 +382,20 @@ export function createPublicApiService(db: Database, appURL: string) {
         key: issue.number,
       }[input.sort];
       const direction = input.order === "asc" ? asc : desc;
-      const keyPrefix = input.sort === "key" ? [direction(project.key), direction(project.id)] : [];
+      const keyPrefix = input.sort === "key" ? [direction(project.key)] : [];
       const rows = await baseQuery()
+        // Membership is re-checked in the read itself, not only when scoping.
+        .innerJoin(
+          projectMember,
+          and(eq(projectMember.projectId, issue.projectId), eq(projectMember.userId, userId)),
+        )
         .where(and(...where))
         .orderBy(
           // Undated issues go last whichever way dates are sorted.
           ...(input.sort === "due" || input.sort === "start" ? [sql`${column} IS NULL`] : []),
           ...keyPrefix,
           direction(column),
+          direction(project.id),
           direction(issue.id),
         )
         .limit(input.limit + 1)

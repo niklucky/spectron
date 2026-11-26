@@ -418,6 +418,43 @@ test("Public API: tokens, issues, filters, comments, mentions and files", async 
   await error(await call("POST", `/issues/${otIssue.id}/comments`, token, { body: "Too late" }), 422);
   assert.equal((await ok<Issue>(await call("GET", `/issues/${otIssue.id}`, token))).title, "Elsewhere");
 
+  // Shared prefixes sort by number first; project id only breaks ties.
+  assert.deepEqual(
+    (await search(`project=${p.id},${twin.id}&sort=key`)).issues.map((i) => i.key),
+    ["SP-1", "SP-1", "SP-2", "SP-2", "SP-3", "SP-900"],
+  );
+  assert.deepEqual(
+    (await search(`project=${p.id},${twin.id}&sort=-key`)).issues.map((i) => i.key),
+    ["SP-900", "SP-3", "SP-2", "SP-2", "SP-1", "SP-1"],
+  );
+
+  // Imported assignees without an account filter by the id the API returns.
+  await pool.query(
+    "INSERT INTO jira_integrations (id, project_id, base_url, project_key, email, encrypted_token, issue_type_id) VALUES ('jira_fixture_000000001', $1, 'https://jira.example.test', 'OLD', 'bot@example.test', 'x', '1')",
+    [p.id],
+  );
+  await pool.query(
+    "INSERT INTO external_identities (id, project_id, integration_id, external_id, display_name) VALUES ('extIdentityFixture001', $1, 'jira_fixture_000000001', 'acc-1', 'Imported Ivan')",
+    [p.id],
+  );
+  await pool.query("UPDATE issues SET assignee_id = NULL, external_assignee_id = 'extIdentityFixture001' WHERE id = $1", [second.id]);
+  const imported = await ok<Issue>(await call("GET", `/issues/${second.id}`, token));
+  assert.deepEqual(imported.assignee, { id: "extIdentityFixture001", name: "Imported Ivan", email: null });
+  assert.deepEqual((await search(`project=${p.id}&assignee=extIdentityFixture001`)).issues.map((i) => i.id), [second.id]);
+  assert.deepEqual((await search(`project=${p.id}&assignee=none`)).issues.map((i) => i.id).includes(second.id), false);
+  await pool.query("UPDATE issues SET external_assignee_id = NULL WHERE id = $1", [second.id]);
+  await pool.query("DELETE FROM external_identities WHERE id = 'extIdentityFixture001'");
+  await pool.query("DELETE FROM jira_integrations WHERE id = 'jira_fixture_000000001'");
+
+  // Zero in any spelling is an empty upload, not an oversized one.
+  await error(await call("POST", `/issues/${first.id}/attachments?filename=empty.txt`, token, new Uint8Array(0), { "content-length": "00" }), 422);
+
+  // Removed members lose search, detail and issue reads at once.
+  await pool.query("DELETE FROM project_members WHERE project_id = $1 AND user_id = $2", [p.id, member.id]);
+  assert.deepEqual((await search("", memberToken)).issues, []);
+  await error(await call("GET", `/projects/${p.id}`, memberToken), 404);
+  await error(await call("GET", `/issues/${first.id}`, memberToken), 404);
+
   // Unknown routes, revocation and expiry.
   assert.equal((await error(await call("GET", "/nope", token), 404)).code, "not_found");
   await trpc("apiTokens.revoke", owner, { id: created.summary.id });

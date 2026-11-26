@@ -112,6 +112,10 @@ type AttachInput = {
   projectFileId: string;
 };
 /** Attaches a project file to an issue inside the caller's transaction and records history. */
+const attachedFile = (
+  row: typeof file.$inferSelect,
+  association: typeof projectFile.$inferSelect,
+) => ({ ...fileSummary(row), projectFileId: association.id, projectId: association.projectId });
 async function attachInTx(tx: Tx, userId: string, input: AttachInput) {
   await editableIssue(tx, input.projectId, input.issueId);
   const [source] = await tx
@@ -170,7 +174,7 @@ async function attachInTx(tx: Tx, userId: string, input: AttachInput) {
         eq(issueAttachment.projectFileId, target!.id),
       ),
     );
-  if (existing && !existing.deletedAt) return { id: existing.id };
+  if (existing && !existing.deletedAt) return { id: existing.id, file: attachedFile(source.file, target!) };
   const [last] = await tx
     .select({ position: issueAttachment.position })
     .from(issueAttachment)
@@ -207,7 +211,7 @@ async function attachInTx(tx: Tx, userId: string, input: AttachInput) {
       },
     },
   });
-  return { id: attachment!.id };
+  return { id: attachment!.id, file: attachedFile(source.file, target!) };
 }
 export function createFileService(db: Database, config?: FileStorageConfig) {
   const maxBytes = config?.maxBytes ?? defaultMaxFileBytes;

@@ -213,7 +213,8 @@ export function createV1Routes({
     const length = c.req.header("content-length");
     if (length !== undefined && !/^\d+$/.test(length))
       throw new ApiError(400, "invalid_request", "Content-Length must be a whole number of bytes.");
-    if (length === "0") throw new FileInputError("Empty files cannot be uploaded.");
+    if (length !== undefined && Number(length) === 0)
+      throw new FileInputError("Empty files cannot be uploaded.");
     return files.upload(
       me(c),
       projectId,
@@ -411,24 +412,20 @@ export function createV1Routes({
     const target = await publicApi.resolveIssue(me(c), c.req.param("issue"));
     // ?filename=… uploads the request body; otherwise JSON {fileId} links an
     // already uploaded project file.
-    let projectFileId: string;
+    // The response comes from the write itself, so a concurrent unlink cannot
+    // turn a committed upload into a 404 that invites a duplicate retry.
     if (c.req.query("filename") !== undefined)
       // Uploaded and attached in one transaction: nothing is published if the
       // issue cannot take attachments.
-      projectFileId = (await upload(c, target.projectId, target.id)).projectFileId;
-    else {
-      projectFileId = (await json(c, linkAttachment)).fileId;
-      await files.link(me(c), {
-        projectId: target.projectId,
-        issueId: target.id,
-        sourceProjectId: target.projectId,
-        projectFileId,
-      });
-    }
-    const rows = await files.attachments(me(c), target.projectId, target.id);
-    const attached = rows.find((row) => row.projectFileId === projectFileId);
-    if (!attached) throw new ApiError(404, "not_found", "Attachment not found.");
-    return c.json(presentFile(attached), 201);
+      return c.json(presentFile(await upload(c, target.projectId, target.id)), 201);
+    const { fileId } = await json(c, linkAttachment);
+    const linked = await files.link(me(c), {
+      projectId: target.projectId,
+      issueId: target.id,
+      sourceProjectId: target.projectId,
+      projectFileId: fileId,
+    });
+    return c.json(presentFile(linked.file), 201);
   });
 
   // Registered last: a mounted app's notFound handler is not consulted by the parent.
