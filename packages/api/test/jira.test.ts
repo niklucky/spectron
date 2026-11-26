@@ -178,6 +178,7 @@ test("Jira project fields, import, publishing, conflicts and retry safety", asyn
   let countUnavailable = false;
   let paginateSearch = false;
   const writes: Record<string, unknown>[] = [];
+  let lockedField: string | undefined;
   let hangNext = false;
   let requestStarted: () => void = () => {};
   const fetchBefore = globalThis.fetch;
@@ -214,7 +215,7 @@ test("Jira project fields, import, publishing, conflicts and retry safety", asyn
         },
       ]);
     const writable = [1, 2, 3, 4, 5, 6].map(i => ({ fieldId: `customfield_${i}`, operations: ["set"] }));
-    if (path.endsWith("/editmeta")) return json({ fields: Object.fromEntries(writable.map(f => [f.fieldId, f])) });
+    if (path.endsWith("/editmeta")) return json({ fields: Object.fromEntries(writable.filter(f => f.fieldId !== lockedField).map(f => [f.fieldId, f])) });
     if (path.includes("/issue/createmeta/")) return json({ fields: writable, total: writable.length });
     if (path.endsWith("/priority")) return json([{ id: "2", name: "Medium" }]);
     if (path.endsWith("/field"))
@@ -440,11 +441,18 @@ test("Jira project fields, import, publishing, conflicts and retry safety", asyn
     projectId: p.id, id: initialIssue.id, expectedUpdatedAt: initialIssue.updatedAt,
     fieldValues: { ...importedValues, [datetimeId]: "2026-09-02T04:05:06.123+03:00", [jsonId]: { enabled: false, nested: [1, null] } },
   });
+  await jira.mappings("owner", p.id, createdMappings);
+  lockedField = "customfield_6";
+  const writesBeforeRejection = writes.length;
+  for (const overwrite of [false, true]) {
+    await assert.rejects(jira.pushIssue("owner", p.id, initialIssue.id, overwrite), /Details.*customfield_6.*still pending/);
+  }
+  assert.equal(writes.length, writesBeforeRejection, "a rejected field leaves other changes unsent");
+  lockedField = undefined;
   await jira.pushIssue("owner", p.id, initialIssue.id);
   assert.equal(writes.at(-1)!.customfield_5, "2026-09-02T01:05:06.123+0000");
   assert.deepEqual(writes.at(-1)!.customfield_6, { enabled: false, nested: [1, null] });
   assert.deepEqual(importedValues[createdMappings.fields.votes!], { votes: 7 });
-  await jira.mappings("owner", p.id, createdMappings);
   await jira.pushIssue("owner", p.id, initialIssue.id, true);
   assert.equal("votes" in writes.at(-1)!, false);
   await jira.mappings("owner", p.id, { ...createdMappings, fields: {

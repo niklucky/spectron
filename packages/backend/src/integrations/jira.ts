@@ -1522,21 +1522,22 @@ export function createJiraService(
               );
             continue;
           }
-          if (
-            !localId ||
-            (!overwriteRemote &&
-              stable(previousValues[localId] ?? null) ===
-                stable(row.fieldValues[localId] ?? null))
-          )
-            continue;
+          if (!localId) continue;
+          const value = row.fieldValues[localId] ?? null;
+          const locallyChanged = stable(previousValues[localId] ?? null) !== stable(value);
+          if (!locallyChanged && !overwriteRemote) continue;
           const field = definitions.find((f) => f.id === localId);
           if (!field)
             throw new IssueInputError("A mapped field no longer exists.");
           writableFields ??= remote
             ? await api.getEditableFields(remote.id)
             : await api.getCreatableFields(c.projectKey, createType);
-          if (!writableFields.has(external)) continue;
-          const value = row.fieldValues[localId] ?? null;
+          if (!writableFields.has(external)) {
+            if (locallyChanged) throw new IssueInputError(
+              `Jira does not allow setting “${field.name}” (${external}) on this issue. Your local edit is still pending.`,
+            );
+            continue;
+          }
           const remoteField = remoteFields.find((f) => f.id === external);
           if (field.type === "datetime" && value !== null) {
             fields[external] = formatJiraDate(new Date(String(value)));
