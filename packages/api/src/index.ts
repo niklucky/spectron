@@ -28,6 +28,7 @@ import {
   type Auth,
   createApiTokenService,
   createPublicApiService,
+  createOAuthAppService,
 } from "@spectron/backend";
 import type { Database } from "@spectron/db";
 import { fetchRequestHandler } from "@trpc/server/adapters/fetch";
@@ -35,6 +36,8 @@ import { appRouter } from "./trpc/router";
 import { createFileRoutes } from "./files";
 import { createContext } from "./trpc/context";
 import { createV1Routes } from "./v1";
+import { createOperations } from "./operations";
+import { createMcpRoute, MCP_MAX_BODY_BYTES } from "./mcp";
 
 export function createAPI(
   auth: Auth,
@@ -90,7 +93,9 @@ export function createAPI(
     sendInvitationEmail,
   });
   const apiTokens = createApiTokenService(db);
+  const oauthApps = createOAuthAppService(db);
   const publicApi = createPublicApiService(db, appURL);
+  const operations = createOperations({ publicApi, issues, comments, files, appURL });
   const api = new Hono<{ Bindings: HttpBindings }>();
   // File uploads stream to disk and enforce FILES_MAX_BYTES themselves. On
   // the issue attachments route only ?filename= requests carry file bytes; a
@@ -104,15 +109,16 @@ export function createAPI(
       ? next()
       : bodyLimit({
           maxSize:
-            c.req.path.startsWith("/api/trpc/") || c.req.path.startsWith("/api/v1/")
+            c.req.path === "/api/mcp"
+              ? MCP_MAX_BODY_BYTES
+              : c.req.path.startsWith("/api/trpc/") || c.req.path.startsWith("/api/v1/")
               ? 3 * 1024 * 1024
               : c.req.path.startsWith("/api/git/webhooks/") ? 1024 * 1024 : 16 * 1024,
-          ...(c.req.path.startsWith("/api/v1/")
-            ? {
-                onError: (c: Context) =>
-                  c.json({ error: { code: "body_too_large", message: "Request bodies are limited to 3 MB." } }, 413),
-              }
-            : {}),
+          // Hono's default throws, which the error handler below would turn into a 500.
+          onError: (c: Context) =>
+            c.req.path.startsWith("/api/v1/")
+              ? c.json({ error: { code: "body_too_large", message: "Request bodies are limited to 3 MB." } }, 413)
+              : c.json({ error: "Request body is too large." }, 413),
         })(c, next),
   );
   api.use("/api/*", async (c, next) => {
@@ -122,9 +128,22 @@ export function createAPI(
     c.header("Referrer-Policy", "no-referrer");
   });
   api.route("/api/files", createFileRoutes(auth, files, appURL, handoffs));
+  // OAuth discovery for MCP clients. Better Auth answers these root paths
+  // itself (RFC 8414 / RFC 9728 path-inserted forms); only they are routed.
+  api.get("/.well-known/*", async (c, next) => {
+    if (!/^\/\.well-known\/(oauth-authorization-server|oauth-protected-resource|openid-configuration)(\/|$)/.test(c.req.path))
+      return next();
+    const response = await auth.handler(c.req.raw);
+    const headers = new Headers(response.headers);
+    // Public metadata; browser-based MCP clients read it cross-origin.
+    headers.set("Access-Control-Allow-Origin", "*");
+    return new Response(response.body, { status: response.status, headers });
+  });
+  const mcp = createMcpRoute({ auth, tokens: apiTokens, apps: oauthApps, operations, appURL });
+  api.on(["GET", "POST", "DELETE"], "/api/mcp", (c) => mcp(c.req.raw));
   api.route(
     "/api/v1",
-    createV1Routes({ tokens: apiTokens, publicApi, issues, comments, files, appURL }),
+    createV1Routes({ tokens: apiTokens, operations, files }),
   );
   api.post("/api/git/webhooks/:connectionId", async c => {
     try { await gitWorkflow.webhook(c.req.param("connectionId"), c.req.raw.headers, await c.req.text()); return c.json({ accepted: true }); }
@@ -171,6 +190,7 @@ export function createAPI(
           gitWorkflow,
           handoffs,
           apiTokens,
+          oauthApps,
         ),
     });
   });

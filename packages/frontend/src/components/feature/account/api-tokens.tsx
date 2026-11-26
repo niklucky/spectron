@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { apiTokenLifetimes, type ApiTokenSummary } from "@spectron/shared";
+import { apiTokenLifetimes, type ApiTokenSummary, type OAuthAppSummary } from "@spectron/shared";
 import { Button } from "../../ui/button";
 import { Dialog } from "../../ui/dialog";
 
@@ -10,6 +10,9 @@ export type ApiTokenActions = {
     expiresInDays: number | null;
   }) => Promise<{ token: string; summary: ApiTokenSummary }>;
   revoke: (id: string) => Promise<unknown>;
+  /** Apps connected through MCP sign-in (OAuth). */
+  apps?: (() => Promise<OAuthAppSummary[]>) | undefined;
+  disconnectApp?: ((clientId: string) => Promise<unknown>) | undefined;
 };
 
 const message = (cause: unknown, fallback: string) =>
@@ -77,6 +80,9 @@ export function ApiTokens({ actions }: { actions: ApiTokenActions }) {
           </article>
         ))}
       </div>
+      {actions.apps && actions.disconnectApp && (
+        <ConnectedApps list={actions.apps} disconnect={actions.disconnectApp} />
+      )}
       {creating && (
         <CreateTokenDialog
           actions={actions}
@@ -251,5 +257,73 @@ function RevokeDialog({
         </Button>
       </div>
     </Dialog>
+  );
+}
+
+/** Apps that connected through MCP sign-in rather than a pasted token. */
+function ConnectedApps({
+  list,
+  disconnect,
+}: {
+  list: () => Promise<OAuthAppSummary[]>;
+  disconnect: (clientId: string) => Promise<unknown>;
+}) {
+  const [apps, setApps] = useState<OAuthAppSummary[] | null>(null);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState<string | null>(null);
+  const [reload, setReload] = useState(0);
+  useEffect(() => {
+    let current = true;
+    list()
+      .then((rows) => current && setApps(rows))
+      .catch((cause: unknown) => current && setError(message(cause, "Could not load connected apps.")));
+    return () => {
+      current = false;
+    };
+  }, [list, reload]);
+  return (
+    <>
+      <div className="ai-section-heading">
+        <h2>Connected apps</h2>
+      </div>
+      <p>
+        Agents such as Claude or Codex can connect to <code>{window.location.origin}/api/mcp</code> by signing
+        in with your account. Disconnecting one cuts off its access immediately.
+      </p>
+      {error && (
+        <p className="ai-error" role="alert">
+          {error}
+        </p>
+      )}
+      {apps === null && !error && <p role="status">Loading connected apps…</p>}
+      {apps?.length === 0 && <p className="ai-empty">No apps connected yet.</p>}
+      <div className="ai-cards">
+        {apps?.map((app) => (
+          <article className="ai-card" key={app.clientId}>
+            <h3>{app.name || "Unnamed app"}</h3>
+            <p>
+              Connected {day(app.connectedAt)}
+              {app.uri && ` · ${new URL(app.uri).host}`}
+            </p>
+            <div className="ai-actions">
+              <Button
+                variant="ghost"
+                disabled={busy === app.clientId}
+                onClick={() => {
+                  setBusy(app.clientId);
+                  setError("");
+                  disconnect(app.clientId)
+                    .then(() => setReload((v) => v + 1))
+                    .catch((cause: unknown) => setError(message(cause, "Could not disconnect the app.")))
+                    .finally(() => setBusy(null));
+                }}
+              >
+                {busy === app.clientId ? "Disconnecting…" : "Disconnect"}
+              </Button>
+            </div>
+          </article>
+        ))}
+      </div>
+    </>
   );
 }

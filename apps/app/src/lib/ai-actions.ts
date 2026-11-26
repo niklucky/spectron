@@ -22,4 +22,6 @@ export const apiTokenActions: ApiTokenActions = {
   list: () => trpc.apiTokens.list.query(),
   create: (input) => trpc.apiTokens.create.mutate(input),
   revoke: (id) => trpc.apiTokens.revoke.mutate({ id }),
+  apps: () => trpc.oauthApps.list.query(),
+  disconnectApp: (clientId) => trpc.oauthApps.disconnect.mutate({ clientId }),
 };

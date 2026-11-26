@@ -10,9 +10,12 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@better-auth/cimd": "1.7.20",
+    "@better-auth/mcp": "1.7.20",
+    "@better-auth/oauth-provider": "1.7.20",
     "@spectron/db": "workspace:*",
     "@spectron/shared": "workspace:*",
-    "better-auth": "1.7.3",
+    "better-auth": "1.7.20",
     "cheerio": "1.2.0",
     "drizzle-orm": "0.45.2",
     "file-type": "21.0.0",

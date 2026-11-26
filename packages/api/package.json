@@ -25,10 +25,12 @@
     "test:exports": "node --import tsx --test test/export-sync.test.ts",
     "test:git": "tsx --test test/git.test.ts",
     "test:agent-runs": "tsx --test test/agent-runs.test.ts test/agent-runtime.test.ts test/agent-proxy.test.ts test/agent-implementation.test.ts test/agent-reviews.test.ts test/git-workflow.test.ts test/git-activity-provider.test.ts",
-    "test:public-api": "tsx --test test/public-api.test.ts"
+    "test:public-api": "tsx --test test/public-api.test.ts",
+    "test:mcp": "tsx --test test/mcp.test.ts"
   },
   "dependencies": {
     "@hono/node-server": "2.1.1",
+    "@modelcontextprotocol/server": "2.4.0",
     "@spectron/backend": "workspace:*",
     "@spectron/db": "workspace:*",
     "@spectron/shared": "workspace:*",
