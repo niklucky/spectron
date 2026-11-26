@@ -214,17 +214,17 @@ export function createPublicApiService(db: Database, appURL: string) {
   }
 
   async function options(projectId: string, exec: Executor = db) {
-    const [states, priorities, types, tags, fields] = await Promise.all([
-      exec.select().from(issueState).where(eq(issueState.projectId, projectId)).orderBy(asc(issueState.position)),
-      exec.select().from(issuePriority).where(eq(issuePriority.projectId, projectId)).orderBy(asc(issuePriority.position)),
-      exec.select().from(issueType).where(eq(issueType.projectId, projectId)).orderBy(asc(issueType.position)),
-      exec.select().from(tag).where(eq(tag.projectId, projectId)).orderBy(asc(tag.name)),
-      exec
-        .select()
-        .from(projectField)
-        .where(and(eq(projectField.projectId, projectId), isNull(projectField.deletedAt)))
-        .orderBy(asc(projectField.createdAt)),
-    ]);
+    // Sequential on purpose: inside a transaction every query shares one
+    // connection, where concurrent client.query() calls are deprecated in pg.
+    const states = await exec.select().from(issueState).where(eq(issueState.projectId, projectId)).orderBy(asc(issueState.position));
+    const priorities = await exec.select().from(issuePriority).where(eq(issuePriority.projectId, projectId)).orderBy(asc(issuePriority.position));
+    const types = await exec.select().from(issueType).where(eq(issueType.projectId, projectId)).orderBy(asc(issueType.position));
+    const tags = await exec.select().from(tag).where(eq(tag.projectId, projectId)).orderBy(asc(tag.name));
+    const fields = await exec
+      .select()
+      .from(projectField)
+      .where(and(eq(projectField.projectId, projectId), isNull(projectField.deletedAt)))
+      .orderBy(asc(projectField.createdAt));
     return { states, priorities, types, tags, fields };
   }
 
