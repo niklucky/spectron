@@ -11,6 +11,7 @@ import {
   IssueConflictError,
   InvitationError,
   LogoError,
+  ApiTokenInputError,
   discoverProjectLogo,
 } from "@spectron/backend";
 import {
@@ -24,6 +25,7 @@ import {
   issueTriggers,
   projectFieldTypes,
   normalizeProjectURL,
+  apiTokenLifetimes,
 } from "@spectron/shared";
 import type { Context } from "./context";
 
@@ -60,6 +62,7 @@ const authenticated = t.procedure.use(async ({ ctx, next }) => {
       result.error.cause instanceof FileInputError ||
       result.error.cause instanceof IssueInputError ||
       result.error.cause instanceof LogoError ||
+      result.error.cause instanceof ApiTokenInputError ||
       result.error.cause instanceof InvitationError)
   )
     throw new TRPCError({
@@ -219,6 +222,26 @@ const runScope = z.object({ projectId: applicationId, issueId: applicationId }).
 const runRef = runScope.extend({ id: applicationId });
 const workspaceRef = runScope.extend({ workspaceId: applicationId });
 export const appRouter = t.router({
+  apiTokens: t.router({
+    list: authenticated.query(({ ctx }) => ctx.apiTokens.list(ctx.userId)),
+    create: authenticated
+      .input(
+        z
+          .object({
+            name: z.string().trim().min(1, "Enter a token name.").max(80),
+            expiresInDays: z
+              .number()
+              .int()
+              .refine((days) => (apiTokenLifetimes as readonly (number | null)[]).includes(days))
+              .nullable(),
+          })
+          .strict(),
+      )
+      .mutation(({ ctx, input }) => ctx.apiTokens.create(ctx.userId, input)),
+    revoke: authenticated
+      .input(z.object({ id: applicationId }).strict())
+      .mutation(({ ctx, input }) => ctx.apiTokens.revoke(ctx.userId, input.id)),
+  }),
   handoffs: t.router({
     create: authenticated.input(runScope.extend({ requestId: applicationId, agentId: applicationId, command: z.enum(agentCommands), repositoryId: applicationId.nullable(), message: z.string().trim().min(1).max(100000), fileIds: z.array(applicationId).max(20) })).mutation(({ ctx, input }) => ctx.handoffs.create(ctx.userId, input)),
     list: authenticated.input(runScope).query(({ ctx, input }) => ctx.handoffs.list(ctx.userId, input)),

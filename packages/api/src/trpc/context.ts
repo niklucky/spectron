@@ -14,10 +14,12 @@ import type {
   FileService,
   ProjectService,
   InvitationService,
+  ApiTokenService,
 } from "@spectron/backend";
 
 export type Context = {
   userId: string | null;
+  apiTokens: ApiTokenService;
   runs: AgentRunService;
   gitWorkflow: ReturnType<typeof import("@spectron/backend").createGitWorkflow>;
   ai: AIService;
@@ -54,10 +56,12 @@ export async function createContext(
   runs: AgentRunService,
   gitWorkflow: Context["gitWorkflow"],
   handoffs: Context["handoffs"],
+  apiTokens: ApiTokenService,
 ): Promise<Context> {
   const session = await auth.api.getSession({ headers: request.headers });
   return {
     userId: session?.user.id || null,
+    apiTokens,
     ai,
     handoffs,
     runs,

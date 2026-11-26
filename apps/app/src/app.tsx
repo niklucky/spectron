@@ -14,7 +14,7 @@ import type {
 } from "@spectron/shared";
 import { useEffect, useMemo, useState } from "react";
 import { AccountMenu, AISettingsPage } from "@spectron/frontend/components/feature/account";
-import { aiActions } from "./lib/ai-actions";
+import { aiActions, apiTokenActions } from "./lib/ai-actions";
 import {
   TaskList,
   NewIssueChat,
@@ -645,7 +645,7 @@ function Workspace({
         }
       />
       {aiSettings ? (
-        <AISettingsPage actions={aiActions} projects={projects} ownerId={user.id} onClose={() => setAISettings(false)} />
+        <AISettingsPage actions={aiActions} tokenActions={apiTokenActions} projects={projects} ownerId={user.id} onClose={() => setAISettings(false)} />
       ) : projectState.loading || !projects.length ? (
         <ProjectEmptyState
           hasArchived={projectState.projects.some(

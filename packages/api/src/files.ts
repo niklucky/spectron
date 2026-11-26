@@ -21,6 +21,73 @@ function disposition(filename: string, inline: boolean) {
   );
   return `${inline ? "inline" : "attachment"}; filename="${fallback}"; filename*=UTF-8''${encoded}`;
 }
+type StoredFile = Awaited<ReturnType<FileService["download"]>>;
+/** Streams a stored file with range/ETag support, or hands it to Nginx in production. */
+export function storedFileResponse(
+  request: Request,
+  file: StoredFile,
+  delivery: FileService["delivery"],
+  { inline, cacheControl }: { inline: boolean; cacheControl: string },
+) {
+  const header = (name: string) => request.headers.get(name) ?? undefined;
+  const headers = new Headers({
+    "Content-Type": file.contentType,
+    "Content-Disposition": disposition(file.filename, inline),
+    "Cache-Control": cacheControl,
+    "X-Content-Type-Options": "nosniff",
+    "Content-Security-Policy": "sandbox",
+    "Referrer-Policy": "no-referrer",
+  });
+  if (delivery === "nginx") {
+    headers.set("X-Accel-Redirect", `/_protected_files/${file.storageKey}`);
+    return new Response(null, { headers });
+  }
+  const etag = `"${file.id}"`;
+  headers.set("ETag", etag);
+  headers.set("Accept-Ranges", "bytes");
+  const matches = header("if-none-match")
+    ?.split(",")
+    .map((v) => v.trim().replace(/^W\//, ""));
+  if (matches?.includes(etag) || matches?.includes("*"))
+    return new Response(null, { status: 304, headers });
+  let start = 0,
+    end = file.sizeBytes - 1,
+    status = 200;
+  const range = header("range"),
+    ifRange = header("if-range");
+  if (range && request.method !== "HEAD" && (!ifRange || ifRange === etag)) {
+    const parsed = /^bytes=(\d*)-(\d*)$/.exec(range);
+    if (!parsed || (!parsed[1] && !parsed[2])) {
+      headers.set("Content-Range", `bytes */${file.sizeBytes}`);
+      return new Response(null, { status: 416, headers });
+    }
+    if (!parsed[1]) start = Math.max(0, file.sizeBytes - Number(parsed[2]));
+    else {
+      start = Number(parsed[1]);
+      if (parsed[2]) end = Math.min(end, Number(parsed[2]));
+    }
+    if (
+      !Number.isSafeInteger(start) ||
+      !Number.isSafeInteger(end) ||
+      start > end ||
+      start >= file.sizeBytes
+    ) {
+      headers.set("Content-Range", `bytes */${file.sizeBytes}`);
+      return new Response(null, { status: 416, headers });
+    }
+    headers.set("Content-Range", `bytes ${start}-${end}/${file.sizeBytes}`);
+    status = 206;
+  }
+  headers.set("Content-Length", String(end - start + 1));
+  return new Response(
+    request.method === "HEAD"
+      ? null
+      : (Readable.toWeb(
+          createReadStream(file.path, { start, end }),
+        ) as ReadableStream<Uint8Array>),
+    { status, headers },
+  );
+}
 export function createFileRoutes(
   auth: Auth,
   files: FileService,
@@ -86,68 +153,12 @@ export function createFileRoutes(
       projectId,
       projectFileId,
     );
-    const headers = new Headers({
-      "Content-Type": file.contentType,
-      "Content-Disposition": disposition(
-        file.filename,
+    return storedFileResponse(c.req.raw, file, files.delivery, {
+      inline:
         filePreviewKind(file.contentType) !== null &&
-          c.req.query("download") !== "1",
-      ),
-      "Cache-Control": token ? "no-store" : "private, no-cache",
-      "X-Content-Type-Options": "nosniff",
-      "Content-Security-Policy": "sandbox",
-      "Referrer-Policy": "no-referrer",
+        c.req.query("download") !== "1",
+      cacheControl: token ? "no-store" : "private, no-cache",
     });
-    if (files.delivery === "nginx") {
-      headers.set("X-Accel-Redirect", `/_protected_files/${file.storageKey}`);
-      return new Response(null, { headers });
-    }
-    const etag = `"${file.id}"`;
-    headers.set("ETag", etag);
-    headers.set("Accept-Ranges", "bytes");
-    const matches = c.req
-      .header("if-none-match")
-      ?.split(",")
-      .map((v) => v.trim().replace(/^W\//, ""));
-    if (matches?.includes(etag) || matches?.includes("*"))
-      return new Response(null, { status: 304, headers });
-    let start = 0,
-      end = file.sizeBytes - 1,
-      status = 200;
-    const range = c.req.header("range"),
-      ifRange = c.req.header("if-range");
-    if (range && c.req.method !== "HEAD" && (!ifRange || ifRange === etag)) {
-      const parsed = /^bytes=(\d*)-(\d*)$/.exec(range);
-      if (!parsed || (!parsed[1] && !parsed[2])) {
-        headers.set("Content-Range", `bytes */${file.sizeBytes}`);
-        return new Response(null, { status: 416, headers });
-      }
-      if (!parsed[1]) start = Math.max(0, file.sizeBytes - Number(parsed[2]));
-      else {
-        start = Number(parsed[1]);
-        if (parsed[2]) end = Math.min(end, Number(parsed[2]));
-      }
-      if (
-        !Number.isSafeInteger(start) ||
-        !Number.isSafeInteger(end) ||
-        start > end ||
-        start >= file.sizeBytes
-      ) {
-        headers.set("Content-Range", `bytes */${file.sizeBytes}`);
-        return new Response(null, { status: 416, headers });
-      }
-      headers.set("Content-Range", `bytes ${start}-${end}/${file.sizeBytes}`);
-      status = 206;
-    }
-    headers.set("Content-Length", String(end - start + 1));
-    return new Response(
-      c.req.method === "HEAD"
-        ? null
-        : (Readable.toWeb(
-            createReadStream(file.path, { start, end }),
-          ) as ReadableStream<Uint8Array>),
-      { status, headers },
-    );
   });
   return routes;
 }

@@ -59,3 +59,13 @@ export * from './agent-runs/runtime';
 export * from './agent-runs/worker';
 
 export { createGitWorkflow } from './git/workflow';
+
+export { createApiTokenService, ApiTokenInputError, API_TOKEN_PREFIX, type ApiTokenService } from "./api-tokens";
+export {
+  createPublicApiService,
+  issueSortFields,
+  type PublicApiService,
+  type PublicIssue,
+  type PublicIssueInput,
+  type IssueSortField,
+} from "./public-api";
