@@ -288,6 +288,8 @@ The client is adapted from `../spectron-prototype/packages/api/src/integrations/
 
 Issue rows show a key badge, a single-line title and description, the latest activity date, and the actor and update preview. Dates use local time today, “yesterday”, a weekday within the last seven days, and DD.MM.YYYY for older activity.
 
+At rollout, Flow marks the existing backlog as read for current project members and preserves earlier visits. New issues and later activity appear in bold. An unread personal mention in a Spectron comment or reply adds an **@** badge.
+
 Use **Filter issues** to select multiple shared triggers or project-specific states. Selected values are combined with OR; Flow groups states by project. Filters are saved in this browser per account and per project/Flow view, and survive reload. **Only deleted issues** switches the list to deleted records.
 
 **New task** opens an inline chat composer. Send a first message to create the issue, then continue in Chat. Its first nonempty line becomes the plain-text title (up to 140 characters); longer or formatted messages are preserved in full in the description. The composer previews typed Markdown (bold, italic, lists and inline code) without a formatting toolbar. Use Shift+Enter for new lines. In Flow, choose the destination project in the composer.

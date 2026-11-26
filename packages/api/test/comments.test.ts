@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { test } from "node:test";
 import { createDatabase, migrateDatabase } from "@spectron/db";
@@ -361,6 +362,39 @@ test("Threaded comments, mentions, files and history", async (t) => {
     await editReply(body("Removed before opening"));
     assert.equal(issueAttention(await state()), "unread");
   });
+  await t.test("rollout marks the existing backlog read and preserves previous visits", async () => {
+    const projectId = p.id;
+    const state = async (id: string) => {
+      const issues = await data<IssueSummary[]>(await call("issues.list", member, { projectId }));
+      const result = issues.find(i => i.id === id)?.readState;
+      assert.ok(result);
+      return result;
+    };
+    const makeIssue = async () => data<IssueSummary>(
+      await call("issues.create", owner, { projectId, title: "Rollout fixture" }, true),
+    );
+    const old = await makeIssue();
+    const mention = [{ type: "mention", userId: member.id, label: "member" }];
+    await create("", null, owner, { issueId: old.id, body: mention });
+    const before = await state(old.id);
+    assert.equal(issueAttention(before), "mention");
+    const visited = await state(second.id);
+    assert.ok(visited.seenThrough);
+
+    await pool.query(await readFile(new URL("../../db/migrations/0032_baseline_existing_issue_reads.sql", import.meta.url), "utf8"));
+    const baseline = await state(old.id);
+    assert.equal(baseline.seenThrough, before.activityAt);
+    assert.equal(issueAttention(baseline), "read");
+    assert.deepEqual(await state(second.id), visited);
+    assert.equal((await pool.query("SELECT 1 FROM issue_read_receipts WHERE user_id = $1 OR (user_id = $2 AND issue_id = $3)", [outsider.id, member.id, foreign.id])).rowCount, 0);
+
+    await create("Change after rollout", null, owner, { issueId: old.id });
+    assert.equal(issueAttention(await state(old.id)), "unread");
+    await create("", null, owner, { issueId: old.id, body: mention });
+    assert.equal(issueAttention(await state(old.id)), "mention");
+    assert.equal(issueAttention(await state((await makeIssue()).id)), "unread");
+  });
+
   const f = createId(),
     source = createId();
   await t.test(

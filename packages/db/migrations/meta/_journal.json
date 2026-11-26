@@ -225,6 +225,13 @@
       "when": 1795698747853,
       "tag": "0031_issue_read_receipts",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1795700750531,
+      "tag": "0032_baseline_existing_issue_reads",
+      "breakpoints": true
     }
   ]
 }
