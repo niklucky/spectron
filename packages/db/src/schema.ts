@@ -322,6 +322,22 @@ export const oauthConsent = pgTable(
     index("oauth_consents_user_id_idx").on(t.userId),
   ],
 );
+/**
+ * When a person last disconnected an app. Access tokens issued in or before
+ * that second stay refused even if they reconnect within it; JWT `iat` and
+ * the provider's timestamps only have one-second precision.
+ */
+export const oauthDisconnect = pgTable(
+  "oauth_disconnects",
+  {
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    clientId: text("client_id").notNull(),
+    disconnectedAt: authTime("disconnected_at").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.userId, t.clientId] })],
+);
 export const oauthClientAssertion = pgTable("oauth_client_assertions", {
   id: text("id").primaryKey(),
   expiresAt: authTime("expires_at").notNull(),

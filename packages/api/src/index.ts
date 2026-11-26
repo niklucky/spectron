@@ -29,6 +29,7 @@ import {
   createApiTokenService,
   createPublicApiService,
   createOAuthAppService,
+  createOAuthResume,
 } from "@spectron/backend";
 import type { Database } from "@spectron/db";
 import { fetchRequestHandler } from "@trpc/server/adapters/fetch";
@@ -139,6 +140,9 @@ export function createAPI(
     headers.set("Access-Control-Allow-Origin", "*");
     return new Response(response.body, { status: response.status, headers });
   });
+  // Login links land here to resume an MCP client's authorization.
+  const resumeOAuth = createOAuthResume(auth);
+  api.get("/api/oauth/resume", (c) => resumeOAuth(c.req.raw));
   const mcp = createMcpRoute({ auth, tokens: apiTokens, apps: oauthApps, files, operations, appURL });
   api.on(["GET", "POST", "DELETE"], "/api/mcp", (c) => mcp(c.req.raw));
   api.route(

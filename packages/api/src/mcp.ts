@@ -363,8 +363,7 @@ export function createMcpRoute({
         // The token must belong to the person's current connection with this
         // app: disconnecting deletes it, and reconnecting starts a new one, so
         // tokens from before either are refused immediately.
-        const since = clientId ? await apps.connectedSince(person.id, clientId) : null;
-        if (!since || claims.iat < Math.floor(since.getTime() / 1000))
+        if (!clientId || !(await apps.acceptsToken(person.id, clientId, claims.iat)))
           return reply(401, "This app was disconnected from Spectron. Connect it again.", challenge("Bearer", "invalid_token"));
         return serve(request, {
           token: "",

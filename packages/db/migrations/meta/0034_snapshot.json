@@ -1,5 +1,5 @@
 {
-  "id": "0f96c8f3-76a3-44d6-93d0-8af7975908b7",
+  "id": "ecddca2a-41a5-4777-929d-21e0190196c9",
   "prevId": "39b31912-63e1-449f-af88-abb845c7db6e",
   "version": "7",
   "dialect": "postgresql",
@@ -6179,6 +6179,59 @@
         }
       },
       "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.oauth_disconnects": {
+      "name": "oauth_disconnects",
+      "schema": "",
+      "columns": {
+        "user_id": {
+          "name": "user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "client_id": {
+          "name": "client_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "disconnected_at": {
+          "name": "disconnected_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "oauth_disconnects_user_id_users_id_fk": {
+          "name": "oauth_disconnects_user_id_users_id_fk",
+          "tableFrom": "oauth_disconnects",
+          "tableTo": "users",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "oauth_disconnects_user_id_client_id_pk": {
+          "name": "oauth_disconnects_user_id_client_id_pk",
+          "columns": [
+            "user_id",
+            "client_id"
+          ]
+        }
+      },
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},

@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { createDatabase, migrateDatabase } from "@spectron/db";
-import { createAuth } from "@spectron/backend";
+import { createAuth, createOAuthAppService } from "@spectron/backend";
 import type { ProjectSummary } from "@spectron/shared";
 import { createAPI } from "../src/index";
 
@@ -209,6 +209,9 @@ test("MCP server: OAuth discovery, sign-in, consent, tools and disconnect", asyn
   });
   assert.equal(unverifiedConsent.status, 403);
   assert.match(((await unverifiedConsent.json()) as { message: string }).message, /Verify your email/);
+  // Cancelling still works, so the client hears access_denied.
+  const unverifiedCancel = await decide(member, (await consentFor(member)).query, false);
+  assert.equal(unverifiedCancel.searchParams.get("error"), "access_denied");
   await pool.query("UPDATE users SET email_verified = true WHERE id = $1", [member.id]);
   // The SPA resumes a signed request for an existing session via /continue,
   // and the server re-verifies the signature.
@@ -234,6 +237,33 @@ test("MCP server: OAuth discovery, sign-in, consent, tools and disconnect", asyn
   });
   assert.equal(signIn.status, 200);
   assert.match(((await signIn.json()) as { url: string }).url, /^\/oauth\/consent\?/);
+
+  // Login links resume through /api/oauth/resume, which verifies the signed
+  // request and the session's freshness itself.
+  const resume = (query: string, cookie?: string) =>
+    request(`/api/oauth/resume?${query}`, { headers: cookie ? { cookie } : {} });
+  const resumeTarget = (response: Response) => new URL(response.headers.get("location")!, origin);
+  assert.equal(resumeTarget(await resume("client_id=x")).search, "?oauth_expired=1");
+  assert.equal(resumeTarget(await resume(signedLogin.replace("state=s1", "state=s9"), owner.cookie)).search, "?oauth_expired=1");
+  assert.equal(resumeTarget(await resume(signedLogin)).pathname, "/login");
+  const resumed2 = resumeTarget(await resume(signedLogin, owner.cookie));
+  assert.equal(resumed2.pathname, "/api/auth/oauth2/authorize");
+  assert.equal(resumed2.searchParams.get("sig"), null);
+  assert.equal(resumed2.searchParams.get("state"), "s1");
+  // prompt=login needs a session created after the request was issued.
+  const loginPrompt = authorize(owner, { prompt: "login" });
+  const loginPage = new URL((await loginPrompt.response).headers.get("location")!, origin);
+  assert.equal(loginPage.pathname, "/login");
+  assert.equal(resumeTarget(await resume(loginPage.search.slice(1), owner.cookie)).pathname, "/login");
+  const freshSignIn = await request("/api/auth/sign-in/email", {
+    method: "POST",
+    headers: { origin, "content-type": "application/json" },
+    body: JSON.stringify({ email: owner.email, password: "a long mcp test password" }),
+  });
+  const freshCookie = freshSignIn.headers.getSetCookie().map((c) => c.split(";")[0]).join("; ");
+  const afterFresh = resumeTarget(await resume(loginPage.search.slice(1), freshCookie));
+  assert.equal(afterFresh.pathname, "/api/auth/oauth2/authorize");
+  assert.equal(afterFresh.searchParams.get("prompt"), null);
 
   const exchange = async (body: Record<string, string>, headers: Record<string, string> = {}) => {
     const r = await request("/api/auth/oauth2/token", {
@@ -464,6 +494,9 @@ test("MCP server: OAuth discovery, sign-in, consent, tools and disconnect", asyn
   assert.equal((await mcp(refreshed.body.access_token!, "tools/list")).status, 200);
   const apps = await trpc<{ clientId: string; name: string }[]>("oauthApps.list", owner, undefined, false);
   assert.deepEqual(apps.map((app) => [app.clientId, app.name]), [[clientId, "Test Agent"]]);
+  // A code issued before disconnecting must not be redeemable afterwards.
+  const pending = authorize(owner);
+  const pendingCode = new URL((await pending.response).headers.get("location")!).searchParams.get("code")!;
   await trpc("oauthApps.disconnect", owner, { clientId });
   assert.deepEqual(await trpc("oauthApps.list", owner, undefined, false), []);
   const cutOff = await mcp(refreshed.body.access_token!, "tools/list");
@@ -498,6 +531,43 @@ test("MCP server: OAuth discovery, sign-in, consent, tools and disconnect", asyn
   assert.equal((await mcp(refreshed.body.access_token!, "tools/list")).status, 401);
   assert.equal((await mcp(access, "tools/list")).status, 401);
   assert.equal((await mcp(reconnected.access_token, "tools/list")).status, 200);
+  const stalePending = await exchange({
+    grant_type: "authorization_code",
+    code: pendingCode,
+    redirect_uri: redirectURI,
+    client_id: clientId,
+    code_verifier: pending.verifier,
+    resource,
+  });
+  assert.notEqual(stalePending.status, 200, JSON.stringify(stalePending.body));
+  // A late retry with a refresh token from the old connection must not wipe
+  // the new connection's tokens.
+  assert.notEqual(
+    (await exchange({ grant_type: "refresh_token", refresh_token: ownerTokens.refresh_token, client_id: clientId, resource })).status,
+    200,
+  );
+  const stillWorks = await exchange({
+    grant_type: "refresh_token",
+    refresh_token: reconnected.refresh_token,
+    client_id: clientId,
+    resource,
+  });
+  assert.equal(stillWorks.status, 200, JSON.stringify(stillWorks.body));
+  // Tokens from the second of a disconnect are refused even if a reconnect
+  // lands in that same second.
+  const apps2 = createOAuthAppService(db);
+  const { rows: [mark] } = await pool.query<{ at: Date }>(
+    "SELECT disconnected_at AS at FROM oauth_disconnects WHERE user_id = $1 AND client_id = $2",
+    [owner.id, clientId],
+  );
+  const second = Math.floor(mark!.at.getTime() / 1000);
+  await pool.query("UPDATE oauth_consents SET created_at = $3 WHERE user_id = $1 AND client_id = $2", [
+    owner.id,
+    clientId,
+    new Date(second * 1000),
+  ]);
+  assert.equal(await apps2.acceptsToken(owner.id, clientId, second), false);
+  assert.equal(await apps2.acceptsToken(owner.id, clientId, second + 1), true);
   // The outsider's connection to the same client is untouched.
   assert.equal((await mcp(outsiderTokens.access_token, "tools/list")).status, 200);
   // Disconnecting someone else's app is a no-op.

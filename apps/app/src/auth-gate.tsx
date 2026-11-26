@@ -57,16 +57,27 @@ export function AuthGate({
   const isConsent = path === "oauth/consent";
   const oauth =
     path === "login" || path === "register" || isConsent ? signedOAuthRequest(window.location.search) : null;
+  const prompts = oauth?.get("prompt")?.split(" ") ?? [];
   // The client asked for a fresh sign-in (prompt=login, or max_age that the
   // current session is too old for): an existing session must not satisfy it.
-  const reauth = !!oauth && !isConsent && (oauth.get("prompt")?.split(" ").includes("login") || oauth.has("max_age"));
-  // Someone already signed in (another tab, or back from a login link):
-  // resume the client's request; the server re-verifies its signature.
-  const resumeOAuth = !!data && !!oauth && !isConsent && !reauth;
+  const reauth = !!oauth && !isConsent && (prompts.includes("login") || oauth.has("max_age"));
+  // The client asked for a new account (prompt=create): show sign-up.
+  const wantsCreate = !!oauth && !isConsent && prompts.includes("create");
+  useEffect(() => {
+    if (wantsCreate && path === "login") window.location.replace(`/register${window.location.search}`);
+  }, [wantsCreate, path]);
+  // Signed out on any other page: go to the sign-in URL, which is protected
+  // against framing, keeping the deep link.
+  const toLogin = !isPending && !error && !data && mode === "login" && path !== "login" && !isConsent;
+  useEffect(() => {
+    if (toLogin) window.location.replace(`/login${window.location.search}${window.location.hash}`);
+  }, [toLogin]);
+  // Someone already signed in (another tab): resume the client's request;
+  // the server re-verifies its signature.
+  const resumeOAuth = !!data && !!oauth && !isConsent && !reauth && !wantsCreate;
   const [resumeFailed, setResumeFailed] = useState("");
   useEffect(() => {
     if (!resumeOAuth) return;
-    // created:true also clears prompt=create, which signing up just satisfied.
     postOAuth("continue", { created: true })
       .then((url) => {
         // A request that still needs a sign-in comes back here; show the form.
@@ -85,7 +96,14 @@ export function AuthGate({
   const linkError =
     mode === "login" && params.has("error")
       ? "That login link has expired or was already used. Request a new one."
-      : resumeFailed || (reauth ? "The app you are connecting asked you to sign in again." : "");
+      : params.has("oauth_expired")
+        ? "That connection request expired. Start again from the app you were connecting."
+        : resumeFailed ||
+          (reauth
+            ? "The app you are connecting asked you to sign in again."
+            : wantsCreate
+              ? "The app you are connecting asked you to create an account."
+              : "");
   if (isPending)
     return (
       <main
@@ -104,7 +122,7 @@ export function AuthGate({
         </Button>
       </main>
     );
-  if (resumeOAuth && !resumeFailed)
+  if ((resumeOAuth && !resumeFailed) || toLogin || (wantsCreate && path === "login"))
     return (
       <main className="grid h-dvh place-content-center bg-surface text-ink-2" role="status">
         Continuing to the app…
@@ -145,12 +163,14 @@ export function AuthGate({
         result.error.message || "The request couldn’t be completed.",
       );
     }
-    if (mode === "login" || mode === "register") {
+    if ((mode === "login" || mode === "register") && oauth) {
       // With a signed OAuth request in the page, the server resumes the
-      // authorization as part of sign-in and returns where to go next.
-      const next = oauth ? (result.data as { url?: string } | null)?.url : undefined;
-      window.location.replace(next ?? (oauth ? window.location.href : `/${invite}`));
-    }
+      // authorization as part of sign-in and returns where to go next. After
+      // sign-up, /continue also clears prompt=create, now satisfied.
+      const next =
+        mode === "register" ? await postOAuth("continue", { created: true }) : (result.data as { url?: string } | null)?.url;
+      window.location.replace(next ?? window.location.href);
+    } else if (mode === "login" || mode === "register") window.location.replace(`/${window.location.hash}`);
     if (mode === "reset-password")
       window.history.replaceState(null, "", "/reset-password");
   }
@@ -159,8 +179,9 @@ export function AuthGate({
       email,
       // Only used when the address is new: a readable name until they edit it.
       name: email.split("@")[0] || email,
-      // Back to this page, signed request intact, to resume once signed in.
-      callbackURL: oauth ? `${window.location.pathname}${window.location.search}` : `/${invite}`,
+      // The server verifies the signed request and the new session's
+      // freshness, then resumes the client's authorization.
+      callbackURL: oauth ? `/api/oauth/resume${window.location.search}` : `/${invite}`,
       errorCallbackURL: "/login",
     });
     if (result.error) {
@@ -178,8 +199,7 @@ export function AuthGate({
       continueHash={continueHash}
       notice={linkError}
       onSubmit={submit}
-      // A login link cannot prove the fresh sign-in the app asked for.
-      onMagicLink={reauth ? undefined : sendMagicLink}
+      onMagicLink={sendMagicLink}
       invalidReset={
         mode === "reset-password" && (!token || params.has("error"))
       }

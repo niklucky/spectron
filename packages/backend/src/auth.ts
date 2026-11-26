@@ -10,6 +10,7 @@ import { APIError, createAuthMiddleware, getSessionFromCtx } from "better-auth/a
 import { jwt, magicLink } from "better-auth/plugins";
 import { mcp } from "@better-auth/mcp";
 import { cimd } from "@better-auth/cimd";
+import { verifyOAuthQueryParams } from "@better-auth/oauth-provider";
 import { fetchClientMetadataResource } from "@better-auth/cimd/node";
 import { schema, type Database } from "@spectron/db";
 
@@ -90,7 +91,8 @@ export function createAuth(db: Database, config: AuthConfig) {
               });
           return;
         }
-        if (ctx.path !== "/oauth2/consent") return;
+        // Cancelling stays possible, so the client gets access_denied.
+        if (ctx.path !== "/oauth2/consent" || (ctx.body as { accept?: unknown })?.accept !== true) return;
         const session = await getSessionFromCtx(ctx);
         if (session && !session.user.emailVerified)
           throw new APIError("FORBIDDEN", {
@@ -246,5 +248,44 @@ export function createMcpCredentialReader(auth: Auth, appURL: string) {
     } catch {
       return { kind: "invalid", scheme: authorization.scheme };
     }
+  };
+}
+
+const OAUTH_INTERNAL_PARAMS = new Set(["sig", "exp", "ba_iat", "ba_param", "ba_pl"]);
+/**
+ * GET handler that resumes an MCP client's authorization after a login link.
+ * Link verification is a plain GET, so Better Auth cannot carry the signed
+ * request through it the way it does for password sign-in. This endpoint
+ * verifies the signed request itself and, as the provider does after a
+ * sign-in, treats `prompt=login`/`prompt=create` and `max_age` as satisfied
+ * only when the session was created after the request was issued.
+ */
+export function createOAuthResume(auth: Auth) {
+  return async (request: Request): Promise<Response> => {
+    const url = new URL(request.url);
+    const params = url.searchParams;
+    const redirect = (location: string) => new Response(null, { status: 302, headers: { location } });
+    const signedNames = new Set(params.getAll("ba_param"));
+    const signed = new URLSearchParams();
+    for (const [key, value] of params)
+      if (key === "sig" || key === "ba_param" || signedNames.has(key)) signed.append(key, value);
+    const { secret } = await auth.$context;
+    if (!params.has("sig") || !(await verifyOAuthQueryParams(signed.toString(), secret)))
+      return redirect("/login?oauth_expired=1");
+    const session = await auth.api.getSession({ headers: request.headers });
+    if (!session) return redirect(`/login?${signed}`);
+    const issuedAt = Number(params.get("ba_iat"));
+    const fresh = Number.isFinite(issuedAt) && new Date(session.session.createdAt).getTime() >= issuedAt;
+    const original = new URLSearchParams();
+    for (const [key, value] of signed) if (!OAUTH_INTERNAL_PARAMS.has(key)) original.append(key, value);
+    const prompts = (original.get("prompt") ?? "").split(" ").filter(Boolean);
+    if (!fresh && (prompts.includes("login") || original.has("max_age"))) return redirect(`/login?${signed}`);
+    if (fresh) {
+      const remaining = prompts.filter((prompt) => prompt !== "login" && prompt !== "create");
+      if (remaining.length) original.set("prompt", remaining.join(" "));
+      else original.delete("prompt");
+      original.delete("max_age");
+    }
+    return redirect(`/api/auth/oauth2/authorize?${original}`);
   };
 }
