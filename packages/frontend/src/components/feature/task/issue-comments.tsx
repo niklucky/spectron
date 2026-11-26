@@ -87,7 +87,7 @@ export function CommentItem({
       ) : (
         <>
           {row.body.some((n) => n.type !== "text" || n.text.trim()) && (
-            <div className="prose-chat max-w-[66ch] text-lg">
+            <div className="prose-chat max-w-[66ch] text-base">
               <AttachmentMarkdown
                 files={attachments}
                 text={row.body
@@ -347,7 +347,7 @@ export function CommentEditor({
         maxLength={100000}
         disabled={busy || voice.listening}
         value={draft.text}
-        className="block w-full resize-y bg-transparent px-1 text-lg text-ink outline-none placeholder:text-ink-3"
+        className="block w-full resize-y bg-transparent px-1 text-base text-ink outline-none placeholder:text-ink-3"
         onChange={(event) => {
           const text = event.target.value;
           setDraft((previous) => ({ text, mentions: moveMentionRanges(previous.text, text, previous.mentions) }));

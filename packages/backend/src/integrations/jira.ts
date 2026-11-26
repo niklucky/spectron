@@ -15,6 +15,10 @@ import {
   validateIssueTiming,
   createId,
   matchJiraStatuses,
+  createJiraFieldOnImport,
+  createJiraJsonOnImport,
+  isPendingJiraField,
+  jiraProjectFieldType,
   commentText,
   type JiraConfigInput,
   type JiraMappings,
@@ -34,6 +38,7 @@ import {
 } from "./jira-client";
 type Tx = Parameters<Parameters<Database["transaction"]>[0]>[0];
 type Connection = typeof s.jiraIntegration.$inferSelect;
+type PendingProjectField = Pick<typeof s.projectField.$inferSelect, "name" | "type"> & { externalId: string };
 type RecordRow = typeof s.integrationRecord.$inferSelect;
 const emptyMappings = (): JiraMappings => ({
   statuses: {},
@@ -89,6 +94,7 @@ const publicConnection = (c: Connection) => ({
   lastScheduleResult: c.lastScheduleResult,
   importRunId: c.importRunId,
   importCancelled: c.importCancelled,
+  importProgress: c.importProgress,
   baseUrl: c.baseUrl,
   projectKey: c.projectKey,
   email: c.email,
@@ -460,6 +466,37 @@ export function createJiraService(
       .where(eq(s.jiraIntegration.id, c.id));
     return id;
   }
+  async function pendingProjectFields(c: Connection, api: JiraClient): Promise<PendingProjectField[]> {
+    const pending = Object.entries(c.mappings.fields).filter(([, target]) => isPendingJiraField(target));
+    if (!pending.length) return [];
+    const metadata = new Map((await api.getFields()).map(field => [field.id, field]));
+    return pending.map(([externalId, target]) => {
+      const field = metadata.get(externalId);
+      const type = target === createJiraJsonOnImport ? "json" : field && jiraProjectFieldType(field);
+      if (!field || !type)
+        throw new IssueInputError(`Cannot create a project field for ${field?.name ?? externalId}. Update its Jira mapping.`);
+      const name = field.name.trim();
+      if (!name || name.length > 80)
+        throw new IssueInputError(`Create a project field with a shorter name and map it to ${externalId}.`);
+      return { externalId, name, type };
+    });
+  }
+
+  async function createPendingFields(
+    tx: Tx, c: Connection, userId: string, fields: PendingProjectField[],
+  ) {
+    if (!fields.length) return;
+    for (const field of fields) {
+      const [created] = await tx.insert(s.projectField).values({ projectId: c.projectId, ...field }).returning();
+      c.mappings.fields[field.externalId] = created!.id;
+      await tx.insert(s.projectHistory).values({
+        projectId: c.projectId, actorUserId: userId, entityType: "field", entityId: created!.id,
+        changes: { name: { before: null, after: field.name }, type: { before: null, after: field.type } },
+      });
+    }
+    await tx.update(s.jiraIntegration).set({ mappings: c.mappings }).where(eq(s.jiraIntegration.id, c.id));
+  }
+
   async function importIssue(
     userId: string,
     c: Connection,
@@ -474,13 +511,15 @@ export function createJiraService(
       throw new IssueInputError(
         "This Jira issue belongs to a different project.",
       );
-    const [comments, worklogs] = await Promise.all([
+    const [comments, worklogs, pendingFields] = await Promise.all([
       api.getComments(remote.id),
       api.getWorklogs(remote.id),
+      pendingProjectFields(c, api),
     ]);
     const local = await db.transaction(async (tx) => {
       await api.checkpoint();
       const project = await issueAccess(tx, userId, c.projectId, true, true);
+      await createPendingFields(tx, c, userId, pendingFields);
       const rec = await record(tx, c.id, "issue", "externalId", remote.id);
       const existing = rec
         ? (
@@ -577,7 +616,7 @@ export function createJiraService(
             );
           fieldValues[localId] =
             typeof value === "string" ? value : adfToText(value);
-        } else fieldValues[localId] = value as string | number;
+        } else fieldValues[localId] = value as FieldValues[string];
       }
       try {
         validateIssueTiming(timing);
@@ -1067,12 +1106,32 @@ export function createJiraService(
       };
     },
     async mappings(userId: string, projectId: string, mappings: JiraMappings) {
-      return locked(userId, projectId, async (c) =>
-        db.transaction(async (tx) => {
+      return locked(userId, projectId, async (c, api) => {
+        // A repeated creation request can reuse the mapped field only if its type matches.
+        const checkTypes = Object.entries(mappings.fields).some(([remote, target]) =>
+          target === createJiraFieldOnImport && c.mappings.fields[remote] && !isPendingJiraField(c.mappings.fields[remote]));
+        const nativeTypes = new Map(checkTypes
+          ? (await api.getFields()).map(field => [field.id, jiraProjectFieldType(field)])
+          : []);
+        return db.transaction(async (tx) => {
           await issueAccess(tx, userId, projectId, true, true);
+          // An import may have fulfilled a creation request while this draft was open.
+          // Re-saving the draft must keep that field instead of creating a duplicate.
+          const fields = { ...mappings.fields };
+          for (const [remote, target] of Object.entries(fields)) {
+            const saved = c.mappings.fields[remote];
+            if (!isPendingJiraField(target) || !saved || isPendingJiraField(saved)) continue;
+            const [existing] = await tx.select({ id: s.projectField.id, type: s.projectField.type }).from(s.projectField).where(and(
+              eq(s.projectField.id, saved), eq(s.projectField.projectId, projectId),
+              eq(s.projectField.externalId, remote), isNull(s.projectField.deletedAt),
+            ));
+            const requestedType = target === createJiraJsonOnImport ? "json" : nativeTypes.get(remote);
+            if (existing && existing.type === requestedType) fields[remote] = existing.id;
+          }
+          mappings = { ...mappings, fields };
           for (const [kind, map] of Object.entries(mappings)) {
             for (const id of Object.values(map ?? {})) {
-              if (id === null && kind === "fields") continue;
+              if (kind === "fields" && (id === null || isPendingJiraField(id))) continue;
               if (typeof id !== "string" || !id)
                 throw new IssueInputError("Invalid mapping.");
               if (kind === "fields" && (builtInIssueField(id) || id === "issue:tags")) continue;
@@ -1114,7 +1173,7 @@ export function createJiraService(
               }
             }
             if (kind !== "users") {
-              const values = Object.values(map ?? {}).filter((v) => v !== null);
+              const values = Object.values(map ?? {}).filter((v) => v !== null && !(kind === "fields" && isPendingJiraField(v)));
               if (new Set(values).size !== values.length)
                 throw new IssueInputError(
                   `Use one-to-one ${kind} mappings so export is unambiguous.`,
@@ -1149,7 +1208,7 @@ export function createJiraService(
               "Map either Original estimate or Time tracking, not both.",
             );
           for (const [externalId, id] of Object.entries(mappings.fields))
-            if (id && id !== "issue:tags" && !builtInIssueField(id))
+            if (id && !isPendingJiraField(id) && id !== "issue:tags" && !builtInIssueField(id))
               await tx
                 .update(s.projectField)
                 .set({ externalId })
@@ -1167,8 +1226,8 @@ export function createJiraService(
             .update(s.jiraIntegration)
             .set({ mappings })
             .where(eq(s.jiraIntegration.id, c.id));
-        }),
-      );
+        });
+      });
     },
     async schedule(userId: string, projectId: string, minutes: number | null) {
       if (minutes !== null && ![15, 60, 1440].includes(minutes))
@@ -1191,6 +1250,22 @@ export function createJiraService(
         return publicConnection(c);
       });
     },
+    async startFullImport(userId: string, projectId: string) {
+      return db.transaction(async tx => {
+        await issueAccess(tx, userId, projectId, true, true);
+        const id = createId();
+        const [queued] = await tx.update(s.jiraIntegration).set({
+          importRunId: id, fullImportUserId: userId, importCancelled: false,
+          importProgress: { id, kind: "full", status: "queued", imported: 0, failed: 0, currentKey: null, errors: [] },
+        }).where(and(
+          eq(s.jiraIntegration.projectId, projectId),
+          isNull(s.jiraIntegration.importRunId),
+          or(isNull(s.jiraIntegration.leaseUntil), lt(s.jiraIntegration.leaseUntil, new Date())),
+        )).returning();
+        if (!queued) throw new IssueConflictError("Wait for the current Jira operation to finish.");
+        return publicConnection(queued);
+      });
+    },
     async startImport(userId: string, projectId: string) {
       return db.transaction(async (tx) => {
         await issueAccess(tx, userId, projectId, true, true);
@@ -1201,6 +1276,7 @@ export function createJiraService(
           .where(
             and(
               eq(s.jiraIntegration.projectId, projectId),
+              isNull(s.jiraIntegration.fullImportUserId),
               or(
                 isNull(s.jiraIntegration.scheduleLeaseUntil),
                 lt(s.jiraIntegration.scheduleLeaseUntil, new Date()),
@@ -1223,7 +1299,12 @@ export function createJiraService(
       await connection(userId, projectId);
       await db
         .update(s.jiraIntegration)
-        .set({ importCancelled: true })
+        .set({
+          importCancelled: true,
+          // A browser-owned retry may have lost its caller. Clearing its ID
+          // also cancels in-flight requests through the existing checkpoint.
+          importRunId: sql`CASE WHEN ${s.jiraIntegration.fullImportUserId} IS NULL AND ${s.jiraIntegration.scheduleLeaseUntil} IS NULL THEN NULL ELSE ${s.jiraIntegration.importRunId} END`,
+        })
         .where(
           and(
             eq(s.jiraIntegration.projectId, projectId),
@@ -1240,6 +1321,8 @@ export function createJiraService(
           and(
             eq(s.jiraIntegration.projectId, projectId),
             eq(s.jiraIntegration.importRunId, runId),
+            isNull(s.jiraIntegration.fullImportUserId),
+            isNull(s.jiraIntegration.scheduleLeaseUntil),
           ),
         );
     },
@@ -1248,13 +1331,15 @@ export function createJiraService(
         userId,
         projectId,
         async (c, api) => {
-          const [groups, priorities] = await Promise.all([
+          const [groups, priorities, pendingFields] = await Promise.all([
             api.getProjectStatuses(c.projectKey),
             api.getPriorities(),
+            pendingProjectFields(c, api),
           ]);
           await db.transaction(async (tx) => {
             await api.checkpoint();
             await issueAccess(tx, userId, projectId, true, true);
+            await createPendingFields(tx, c, userId, pendingFields);
             const localStatuses = await tx
               .select()
               .from(s.issueState)
@@ -1302,7 +1387,13 @@ export function createJiraService(
             throw new IssueInputError(
               "Jira search pagination stalled. Retry the import.",
             );
+          // A one-page result already gives the worker an exact total.
+          // A missing estimate must never prevent importing the issues.
+          const estimatedTotal = runId && !nextPageToken && !page.isLast
+            ? await api.getIssueCount(c.projectKey, updatedAfter).catch(() => undefined)
+            : undefined;
           return {
+            ...(estimatedTotal !== undefined && { estimatedTotal }),
             issues: page.issues.map((i) => ({ id: i.id, key: i.key })),
             nextPageToken: page.isLast ? null : page.nextPageToken!,
           };
@@ -1330,7 +1421,13 @@ export function createJiraService(
           );
           await db
             .update(s.jiraIntegration)
-            .set({ lastImportedAt: new Date() })
+            .set({
+              lastImportedAt: new Date(),
+              ...(c.importProgress?.errors.some(error => error.id === externalId) &&
+                c.importProgress.id !== runId && {
+                  importProgress: { ...c.importProgress, errors: c.importProgress.errors.filter(error => error.id !== externalId) },
+                }),
+            })
             .where(eq(s.jiraIntegration.id, c.id));
           return result;
         },
@@ -1409,7 +1506,7 @@ export function createJiraService(
         const remoteFields = await api.getFields();
         const previousValues = (before.fieldValues ?? {}) as FieldValues;
         for (const [external, localId] of Object.entries(c.mappings.fields)) {
-          if (localId === "issue:tags") continue;
+          if (localId === "issue:tags" || isPendingJiraField(localId)) continue;
           const native = localId ? builtInIssueField(localId) : undefined;
           if (native) {
             const value = local[native.key];
@@ -1443,7 +1540,7 @@ export function createJiraService(
           fields[external] =
             field.type === "user" && value !== null
               ? { accountId: await externalUser(c, String(value)) }
-              : value !== null &&
+              : field.type === "text" && value !== null &&
                   remoteField?.schema?.custom?.endsWith(":textarea")
                 ? textToAdf(String(value))
                 : value;

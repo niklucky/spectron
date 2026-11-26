@@ -1,3 +1,4 @@
+import { jiraImportActivity } from "@spectron/shared";
 import { exportActionsFor } from "./lib/export-actions";
 import { GitSettings } from "./git-settings";
 import { ProjectIntegrationSettings } from "./project-integration-settings";
@@ -118,7 +119,7 @@ function Workspace({
         save: async (input: {
           id?: string;
           name: string;
-          type: "text" | "date" | "number" | "user";
+          type: import("@spectron/shared").ProjectField["type"];
         }) => {
           await trpc.fields.save.mutate({ projectId: settingsId!, ...input });
           await workspace.refresh();
@@ -147,23 +148,13 @@ function Workspace({
         },
         schedule: (minutes: 15 | 60 | 1440 | null) =>
           trpc.jira.schedule.mutate({ projectId: settingsId!, minutes }),
+        startFullImport: () => trpc.jira.startFullImport.mutate({ projectId: settingsId! }),
         startImport: () =>
           trpc.jira.startImport.mutate({ projectId: settingsId! }),
         stopImport: (runId: string) =>
           trpc.jira.stopImport.mutate({ projectId: settingsId!, runId }),
         finishImport: (runId: string) =>
           trpc.jira.finishImport.mutate({ projectId: settingsId!, runId }),
-        prepare: (runId?: string) =>
-          trpc.jira.prepare.mutate({
-            projectId: settingsId!,
-            ...(runId ? { runId } : {}),
-          }),
-        search: (nextPageToken?: string, runId?: string) =>
-          trpc.jira.search.mutate({
-            projectId: settingsId!,
-            ...(nextPageToken ? { nextPageToken } : {}),
-            ...(runId ? { runId } : {}),
-          }),
         import: (externalId: string, overwriteLocal = false, runId?: string) =>
           trpc.jira.import.mutate({
             projectId: settingsId!,
@@ -494,10 +485,12 @@ function Workspace({
         trpc.projects.members.query({ id: projectId }),
       history: (projectId: string, id: string, offset: number) =>
         trpc.issues.history.query({ projectId, id, offset }),
+      markRead: workspace.markRead,
       save: workspace.saveIssue,
       setDeleted: workspace.setDeleted,
     }),
     [
+      workspace.markRead,
       workspace.saveIssue,
       workspace.setDeleted,
       workspace.refresh,
@@ -514,7 +507,7 @@ function Workspace({
     ]);
     return [
       ...git.map(c => ({ id: c.id, provider: c.provider, name: c.name, key: c.provider === "github" ? "GitHub" : "GitLab", url: c.baseURL, account: c.actor?.login ?? "Not verified", connectedAt: c.createdAt, lastSyncAt: null, status: c.checkStatus === "passed" ? "Identity verified" : c.checkStatus === "failed" ? "Check failed" : "Not checked" })),
-      ...(jira ? [{ provider: "jira", name: "Jira Cloud", key: jira.projectKey, url: jira.baseUrl, account: jira.email, connectedAt: jira.createdAt, lastSyncAt: jira.lastImportedAt }] : []),
+      ...(jira ? [{ provider: "jira", name: "Jira Cloud", key: jira.projectKey, url: jira.baseUrl, account: jira.email, connectedAt: jira.createdAt, lastSyncAt: jira.lastImportedAt, activity: jiraImportActivity(jira), importStopping: jira.importCancelled, importProgress: !jira.importRunId || jira.importProgress?.id === jira.importRunId ? jira.importProgress : null }] : []),
       ...(tracker ? [{ provider: "yandex", name: "Yandex Tracker", key: tracker.queue, url: `https://tracker.yandex.ru/${encodeURIComponent(tracker.queue)}`, account: tracker.organizationId, connectedAt: tracker.createdAt, lastSyncAt: null }] : []),
     ];
   }, [settingsId]);

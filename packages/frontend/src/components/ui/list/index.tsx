@@ -28,6 +28,7 @@ export function IssueRow({
   title,
   preview,
   unread = 0,
+  attention,
   active = false,
   onClick,
   ariaCurrent,
@@ -42,10 +43,12 @@ export function IssueRow({
   title: string;
   preview?: ReactNode;
   unread?: number | undefined;
+  attention?: "read" | "unread" | "mention" | undefined;
   active?: boolean | undefined;
   onClick?: (() => void) | undefined;
   ariaCurrent?: boolean | undefined;
 }) {
+  const hasUnread = unread > 0 || attention === "unread" || attention === "mention";
   return (
     <button
       type="button"
@@ -56,7 +59,7 @@ export function IssueRow({
         active
           ? "bg-surface-2"
           : "hover:bg-[color-mix(in_srgb,var(--sp-surface-2)_70%,transparent)]",
-        unread > 0 && "is-unread",
+        hasUnread && "is-unread",
       )}
     >
       <span className="mt-0.5 flex flex-col items-center gap-1.5">
@@ -77,14 +80,20 @@ export function IssueRow({
         <span className="flex h-4 min-w-0 items-center gap-1.5 text-xs text-ink-3">
           <StatusDot trigger={statusTrigger} color={statusColor} />
           <span className="mono text-xs text-ink-2">{issueKey}</span>
+          {attention === "mention" && (
+            <span className="inline-flex size-4 shrink-0 items-center justify-center rounded-full bg-accent-soft text-xs font-bold text-accent-ink" title="Mentioned you">
+              <span aria-hidden="true">@</span><span className="sr-only">Unread mention</span>
+            </span>
+          )}
+          {attention === "unread" && <span className="sr-only">Unread activity</span>}
           <time className="ml-auto shrink-0" title={timeTitle}>
             {time}
           </time>
         </span>
         <span
           className={cn(
-            "clamp-2 text-base leading-[1.3] tracking-[-0.01em] text-ink",
-            unread > 0 ? "font-bold" : "font-medium",
+            "clamp-2 text-base leading-[1.3] tracking-[-0.01em]",
+            attention === "read" ? "font-normal text-ink-2" : hasUnread ? "font-bold text-ink" : "font-medium text-ink",
           )}
         >
           {title}
@@ -94,7 +103,7 @@ export function IssueRow({
             <span
               className={cn(
                 "flex min-w-0 flex-1 items-center gap-1.5 truncate text-sm",
-                unread > 0 ? "text-ink [&_b]:font-semibold [&_b]:text-ink" : "text-ink-2 [&_b]:font-semibold [&_b]:text-ink-2",
+                hasUnread ? "text-ink [&_b]:font-semibold [&_b]:text-ink" : "text-ink-2 [&_b]:font-semibold [&_b]:text-ink-2",
               )}
             >
               {preview}

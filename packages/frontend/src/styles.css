@@ -4,3 +4,4 @@
 @import "./styles/design-tokens.css";
 @import "./components/ui/page/page.css" layer(screens);
 @import "./styles/tailwind.css";
+@import "./components/feature/project/jira-import-progress.css" layer(components);

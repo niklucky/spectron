@@ -23,6 +23,20 @@ export async function validateFieldValues(
     if (!field)
       throw new IssueInputError("Choose an active field from this project.");
     if (value === null) continue;
+    if (field.type === "json") {
+      if (JSON.stringify(value).length > 100000)
+        throw new IssueInputError(`${field.name} exceeds the 100,000-character JSON limit.`);
+      continue;
+    }
+    if (field.type === "datetime") {
+      if (typeof value !== "string" ||
+          !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:?\d{2})$/.test(value) ||
+          !Number.isFinite(Date.parse(value)) ||
+          new Date(value.slice(0, 10)).toISOString().slice(0, 10) !== value.slice(0, 10))
+        throw new IssueInputError(`${field.name} must be a date and time with a time zone.`);
+      values[id] = new Date(value).toISOString();
+      continue;
+    }
     if (field.type === "number") {
       if (typeof value !== "number" || !Number.isFinite(value))
         throw new IssueInputError(`${field.name} must be a number.`);
@@ -60,7 +74,7 @@ export function createFieldService(db: Database) {
         projectId: string;
         id?: string | undefined;
         name: string;
-        type: "text" | "date" | "number" | "user";
+        type: import("@spectron/shared").ProjectField["type"];
       },
     ) {
       return db.transaction(async (tx) => {

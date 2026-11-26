@@ -24,16 +24,27 @@ export const defaultTaskFilters: TaskFilters = {
   typeIds: [],
 };
 
+const defaultFlowFilters: TaskFilters = {
+  ...defaultTaskFilters,
+  values: ["opened", "in_progress", "blocked", "cancelled"],
+};
+
+export function defaultTaskFiltersForView(isFlow: boolean): TaskFilters {
+  return isFlow ? defaultFlowFilters : defaultTaskFilters;
+}
+
 const check = "inline-flex items-center gap-2 rounded-md px-1.5 py-1 text-sm text-ink hover:bg-surface-2 [&_input]:accent-accent";
 const select = "h-7 rounded-md bg-surface px-2 text-sm text-ink hairline focus:outline-none";
 
 export function TaskFiltersSelect({
   value,
+  isFlow,
   onChange,
   projects,
   settings,
 }: {
   value: TaskFilters;
+  isFlow: boolean;
   onChange: (value: TaskFilters) => void;
   projects: Project[];
   settings: Record<string, IssueSettings>;
@@ -91,7 +102,7 @@ export function TaskFiltersSelect({
       >
         <div className="mb-3 flex items-center justify-between">
           <strong className="text-base font-semibold">Filter issues</strong>
-          <Button variant="ghost" size="sm" onClick={() => onChange(defaultTaskFilters)}>Reset</Button>
+          <Button variant="ghost" size="sm" onClick={() => onChange(defaultTaskFiltersForView(isFlow))}>Reset</Button>
         </div>
         {projects.length > 1 && (
           <div className="mb-3" role="group" aria-label="Projects">

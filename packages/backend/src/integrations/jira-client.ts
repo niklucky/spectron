@@ -250,15 +250,15 @@ export class JiraClient {
     ).then((result: any) => result.values ?? result ?? []);
   }
 
-  async getIssueCount(jql: string): Promise<number> {
+  async getIssueCount(projectKey: string, updatedAfter?: Date): Promise<number | undefined> {
     const result = await this.request<{ count: number }>(
       "POST",
       "/rest/api/3/search/approximate-count",
       {
-        jql,
+        jql: issueSearchFilter(projectKey, updatedAfter),
       },
     );
-    return Number(result.count ?? 0);
+    return Number.isSafeInteger(result.count) && result.count >= 0 ? result.count : undefined;
   }
 
   async searchIssues(options: {
@@ -273,15 +273,7 @@ export class JiraClient {
     maxResults: number;
   }> {
     const maxResults = options.maxResults ?? DEFAULT_PAGE_SIZE;
-    let jql = `project = ${quoteJqlValue(options.projectKey)}`;
-    if (options.updatedAfter) {
-      // Unquoted epoch milliseconds avoid the connected Jira user's time zone.
-      const timestamp = options.updatedAfter.getTime();
-      if (!Number.isFinite(timestamp))
-        throw new Error("Invalid Jira search date.");
-      jql += ` AND updated >= ${timestamp}`;
-    }
-    jql += " ORDER BY updated ASC";
+    const jql = issueSearchFilter(options.projectKey, options.updatedAfter) + " ORDER BY updated ASC";
 
     return this.request<{
       issues: JiraIssue[];
@@ -548,6 +540,18 @@ export function minutesToJiraEstimate(minutes: number): string {
 
 function formatJiraDate(value: Date): string {
   return value.toISOString().replace("Z", "+0000");
+}
+
+function issueSearchFilter(projectKey: string, updatedAfter?: Date) {
+  let jql = `project = ${quoteJqlValue(projectKey)}`;
+  if (updatedAfter) {
+    // Unquoted epoch milliseconds avoid the connected Jira user's time zone.
+    const timestamp = updatedAfter.getTime();
+    if (!Number.isFinite(timestamp))
+      throw new Error("Invalid Jira search date.");
+    jql += ` AND updated >= ${timestamp}`;
+  }
+  return jql;
 }
 
 function quoteJqlValue(value: string): string {

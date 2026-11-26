@@ -4,7 +4,7 @@ import {
   historyChanges as changes,
   normalizeHistoryChanges,
 } from "./history-changes";
-import { and, asc, desc, eq, isNull, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, isNull, inArray, getTableColumns, sql } from "drizzle-orm";
 import { schema, type Database } from "@spectron/db";
 import {
   formatWorklogDuration,
@@ -280,11 +280,26 @@ export function createIssueService(db: Database) {
     async list(userId: string, projectId: string): Promise<IssueSummary[]> {
       return db.transaction(async (tx) => {
         const p = await issueAccess(tx, userId, projectId);
+        const { issueReadReceipt, issueComment, commentMention } = schema;
         const rows = await tx
-          .select()
+          .select({ ...getTableColumns(issue), seenThrough: issueReadReceipt.seenThrough })
           .from(issue)
+          .leftJoin(issueReadReceipt, and(eq(issueReadReceipt.issueId, issue.id), eq(issueReadReceipt.userId, userId)))
           .where(eq(issue.projectId, projectId))
           .orderBy(desc(issue.updatedAt), desc(issue.number));
+        const mentions = await tx
+          .selectDistinctOn([issueComment.issueId], { issueId: issueComment.issueId, at: commentMention.updatedAt })
+          .from(commentMention)
+          .innerJoin(issueComment, eq(issueComment.id, commentMention.commentId))
+          .where(and(
+            eq(issueComment.projectId, projectId),
+            eq(commentMention.userId, userId),
+            isNull(commentMention.deletedAt),
+            isNull(issueComment.deletedAt),
+            sql`${issueComment.authorId} IS DISTINCT FROM ${userId}`,
+          ))
+          .orderBy(issueComment.issueId, desc(commentMention.updatedAt));
+        const mentionedAt = new Map(mentions.map(m => [m.issueId, m.at.toISOString()]));
         const external = await tx
           .select()
           .from(schema.externalIdentity)
@@ -386,18 +401,42 @@ export function createIssueService(db: Database) {
           .innerJoin(schema.projectIntegration, eq(schema.projectIntegration.id, schema.integrationEntity.integrationId))
           .where(and(eq(schema.projectIntegration.projectId, projectId), eq(schema.integrationEntity.entityType, "issue")));
         const trackerKeys = new Map(trackerLinks.map(link => [link.localId, link.key]));
-        return rows.map((row) => ({
-          tagIds: links.filter(link => link.issueId === row.id).map(link => link.tagId).sort(),
-          ...summary(row, p.key),
-          authorId: row.authorId ?? external.find(person => person.id === row.externalAuthorId)?.localUserId ?? row.externalAuthorId!,
-          trackerKey: trackerKeys.get(row.id) ?? null,
-          lastActivity: activity.get(row.id) ?? null,
-          author:
-            identities.get(row.authorId ?? row.externalAuthorId ?? "") ?? null,
-          assignee:
-            identities.get(row.assigneeId ?? row.externalAssigneeId ?? "") ??
-            null,
-        }));
+        return rows.map(({ seenThrough, ...row }) => {
+          const lastActivity = activity.get(row.id) ?? null;
+          const mention = mentionedAt.get(row.id) ?? null;
+          let activityAt = row.updatedAt.toISOString();
+          if (lastActivity && lastActivity.createdAt > activityAt) activityAt = lastActivity.createdAt;
+          if (mention && mention > activityAt) activityAt = mention;
+          return {
+            tagIds: links.filter(link => link.issueId === row.id).map(link => link.tagId).sort(),
+            ...summary(row, p.key),
+            authorId: row.authorId ?? external.find(person => person.id === row.externalAuthorId)?.localUserId ?? row.externalAuthorId!,
+            trackerKey: trackerKeys.get(row.id) ?? null,
+            lastActivity,
+            readState: { activityAt, seenThrough: seenThrough?.toISOString() ?? null, mentionedAt: mention },
+            author:
+              identities.get(row.authorId ?? row.externalAuthorId ?? "") ?? null,
+            assignee:
+              identities.get(row.assigneeId ?? row.externalAssigneeId ?? "") ??
+              null,
+          };
+        });
+      });
+    },
+    async markRead(userId: string, projectId: string, id: string, seenThrough: string) {
+      return db.transaction(async (tx) => {
+        await issueAccess(tx, userId, projectId);
+        const [row] = await tx.select({ id: issue.id }).from(issue)
+          .where(and(eq(issue.id, id), eq(issue.projectId, projectId)));
+        if (!row) throw new ProjectAccessError("Issue not found.");
+        const receipt = schema.issueReadReceipt;
+        const [saved] = await tx.insert(receipt).values({ issueId: id, userId, seenThrough: new Date(seenThrough) })
+          .onConflictDoUpdate({
+            target: [receipt.userId, receipt.issueId],
+            set: { seenThrough: sql`greatest(${receipt.seenThrough}, excluded.seen_through)` },
+          })
+          .returning({ seenThrough: receipt.seenThrough });
+        return saved!.seenThrough.toISOString();
       });
     },
     async settings(userId: string, projectId: string): Promise<IssueSettings> {

@@ -1,4 +1,5 @@
-import { ISSUE_DESCRIPTION_MAX_LENGTH } from "@spectron/shared";
+import { officeFileFormat } from "../../../lib/office-file-format";
+import { ISSUE_DESCRIPTION_MAX_LENGTH, textFileFormat } from "@spectron/shared";
 import { ComposerShell, SendButton } from "../../ui/chat";
 import { IconButton } from "../../ui/button";
 import { AttachmentPreview } from "./issue-files";
@@ -57,7 +58,7 @@ export function NewIssueChat({
   const previews = useMemo(() => {
     const map = new Map<File, string>();
     for (const file of files)
-      if (file.type.startsWith("image/") || file.type.startsWith("video/")) map.set(file, URL.createObjectURL(file));
+      if (file.type.startsWith("image/") || file.type.startsWith("video/") || textFileFormat(file.name, file.type) || officeFileFormat(file.name, file.type)) map.set(file, URL.createObjectURL(file));
     return map;
   }, [files]);
   useEffect(() => () => { for (const url of previews.values()) URL.revokeObjectURL(url); }, [previews]);
@@ -199,14 +200,14 @@ export function NewIssueChat({
           }
         >
           {preview ? (
-            <div className="prose-chat max-h-60 min-h-[72px] overflow-y-auto px-3.5 pt-2.5 pb-1 text-lg" aria-label="Message preview">
+            <div className="composer-writing-area prose-chat max-h-60 overflow-y-auto px-3.5 pt-2.5 pb-1 text-base" aria-label="Message preview">
               <MessageMarkdown text={draft || "Your message preview appears here."} />
             </div>
           ) : (
             <textarea
               ref={editor}
               autoFocus
-              rows={3}
+              rows={4}
               aria-label="First message"
               placeholder="Describe the issue…"
               value={draft}
@@ -219,7 +220,7 @@ export function NewIssueChat({
                   void send();
                 }
               }}
-              className="block max-h-[40vh] min-h-[72px] w-full resize-none bg-transparent px-3.5 pt-2.5 pb-1 text-lg text-ink outline-none placeholder:text-ink-3 disabled:opacity-60"
+              className="composer-writing-area block max-h-[40vh] w-full resize-none bg-transparent px-3.5 pt-2.5 pb-1 text-base text-ink outline-none placeholder:text-ink-3 disabled:opacity-60"
             />
           )}
           {voice.listening && <p className="px-3.5 pb-1 text-sm text-ink-2" role="status">{voice.interim || "Listening…"}</p>}

@@ -1,6 +1,6 @@
 import { firstMessageFields } from "@spectron/shared";
 import {
-  defaultTaskFilters,
+  defaultTaskFiltersForView,
   matchesResolvedDatePeriod,
   refreshDateClock,
   resolveDatePeriod,
@@ -59,6 +59,13 @@ const taskHash = (project: string, id: string, flow: boolean) =>
 const sectionHash = (project: string, section: ProjectSection) =>
   section === "overview" ? `#project/${project}` : `#project/${project}/${section}`;
 
+// An older list response or a slower tab must never move a read receipt backwards.
+function withReadReceipt(issue: IssueSummary, seenThrough: string | null | undefined): IssueSummary {
+  const state = issue.readState;
+  if (!state || !seenThrough || (state.seenThrough && state.seenThrough >= seenThrough)) return issue;
+  return { ...issue, readState: { ...state, seenThrough } };
+}
+
 export function useWorkspace(
   initialName: string,
   projects: Project[],
@@ -105,7 +112,7 @@ export function useWorkspace(
     window.addEventListener("focus", refresh);
     return () => { window.clearInterval(timer); window.removeEventListener("focus", refresh); };
   }, []);
-  const filter = resolveDatePeriod(filters[filterScope] ?? defaultTaskFilters, filterClock);
+  const filter = resolveDatePeriod(filters[filterScope] ?? defaultTaskFiltersForView(route.isFlow), filterClock);
   const setFilter = (value: TaskFilters) =>
     setFilters((previous) => ({ ...previous, [filterScope]: value }));
   useEffect(() => {
@@ -143,7 +150,10 @@ export function useWorkspace(
         })),
       );
       if (request !== generation.current) return;
-      setIssues(rows.flatMap((r) => r.issues));
+      setIssues(previous => {
+        const receipts = new Map(previous.map(i => [i.id, i.readState?.seenThrough]));
+        return rows.flatMap(r => r.issues.map(i => withReadReceipt(i, receipts.get(i.id))));
+      });
       setSettings(
         Object.fromEntries(rows.map((r) => [r.projectId, r.settings])),
       );
@@ -165,6 +175,17 @@ export function useWorkspace(
       window.removeEventListener("focus", onFocus);
     };
   }, [refresh]);
+  const wasFlow = useRef(route.isFlow);
+  useEffect(() => {
+    if (route.isFlow && !wasFlow.current) void refresh();
+    wasFlow.current = route.isFlow;
+  }, [route.isFlow, refresh]);
+
+  const markRead = useCallback(async (projectId: string, id: string, seenThrough: string) => {
+    const saved = await trpc.issues.markRead.mutate({ projectId, id, seenThrough });
+    setIssues(previous => previous.map(i => i.id === id ? withReadReceipt(i, saved) : i));
+  }, []);
+
   useEffect(() => {
     const onHashChange = () => {
       const next = readRoute(projects);
@@ -321,6 +342,7 @@ export function useWorkspace(
     loading,
     error,
     refresh,
+    markRead,
     saveIssue,
     setDeleted,
     query,

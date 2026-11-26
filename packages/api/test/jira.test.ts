@@ -1,4 +1,4 @@
-import { ISSUE_DESCRIPTION_MAX_LENGTH } from "@spectron/shared";
+import { jiraImportActivity, createJiraJsonOnImport, createJiraFieldOnImport, ISSUE_DESCRIPTION_MAX_LENGTH } from "@spectron/shared";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -143,6 +143,7 @@ test("Jira project fields, import, publishing, conflicts and retry safety", asyn
       customfield_2: "2026-09-01",
       customfield_3: actor,
       customfield_4: "notes",
+      customfield_6: [{ active: false, values: [0, null, "x"] }],
       timeoriginalestimate: 7200,
       duedate: "2026-09-10",
       customfield_5: "2026-09-01T09:00:00+0300",
@@ -172,6 +173,8 @@ test("Jira project fields, import, publishing, conflicts and retry safety", asyn
     loseCreate = false,
     rejectCreate = false;
   const searchQueries: string[] = [];
+  const countQueries: string[] = [];
+  let countUnavailable = false;
   let paginateSearch = false;
   const writes: Record<string, unknown>[] = [];
   let hangNext = false;
@@ -215,7 +218,9 @@ test("Jira project fields, import, publishing, conflicts and retry safety", asyn
         ...[1, 2, 3, 4].map((id) => ({
           id: `customfield_${id}`,
           name: `Field ${id}`,
+          schema: { type: ["number", "date", "user", "string"][id - 1] },
         })),
+        { id: "customfield_6", name: "Details", schema: { type: "array" } },
         { id: "summary", name: "Summary" },
         {
           id: "timeoriginalestimate",
@@ -230,6 +235,10 @@ test("Jira project fields, import, publishing, conflicts and retry safety", asyn
         },
       ]);
     if (path.endsWith("/user/assignable/search")) return json([actor]);
+    if (path.endsWith("/search/approximate-count")) {
+      countQueries.push(JSON.parse(String(init?.body)).jql);
+      return countUnavailable ? json({}, 503) : json({ count: 9 });
+    }
     if (path.endsWith("/search/jql")) {
       const body = JSON.parse(String(init?.body));
       assert.deepEqual(body.fields, ["*all"]);
@@ -402,7 +411,48 @@ test("Jira project fields, import, publishing, conflicts and retry safety", asyn
   remote.fields.description = textToAdf("D".repeat(ISSUE_DESCRIPTION_MAX_LENGTH + 1));
   await assert.rejects(jira.import("owner", p.id, "100"), /Jira description has 1000001 characters; Spectron allows 1,000,000/);
   remote.fields.description = originalDescription;
+  const createMappings = { ...saved.mappings, fields: {
+    customfield_1: createJiraFieldOnImport, customfield_2: createJiraFieldOnImport,
+    customfield_5: createJiraFieldOnImport, customfield_6: createJiraFieldOnImport, customfield_3: createJiraJsonOnImport,
+  } };
+  await jira.mappings("owner", p.id, createMappings);
   const autoImported = await jira.import("owner", p.id, "100");
+  const createdMappings = (await jira.get("owner", p.id))!.mappings;
+  await jira.mappings("owner", p.id, createMappings);
+  assert.deepEqual((await jira.get("owner", p.id))!.mappings.fields, createdMappings.fields);
+  const createdNumber = createdMappings.fields.customfield_1!;
+  const createdDate = createdMappings.fields.customfield_2!;
+  const importedValues = (await issues.list("owner", p.id))[0]!.fieldValues!;
+  assert.equal(importedValues[createdNumber], 3);
+  assert.equal(importedValues[createdDate], "2026-09-01");
+  const datetimeId = createdMappings.fields.customfield_5!;
+  const jsonId = createdMappings.fields.customfield_6!;
+  assert.equal(importedValues[datetimeId], "2026-09-01T06:00:00.000Z");
+  assert.deepEqual(importedValues[jsonId], remote.fields.customfield_6);
+  assert.deepEqual(importedValues[createdMappings.fields.customfield_3!], actor);
+  const initialIssue = (await issues.list("owner", p.id))[0]!;
+  await issues.update("owner", {
+    projectId: p.id, id: initialIssue.id, expectedUpdatedAt: initialIssue.updatedAt,
+    fieldValues: { ...importedValues, [datetimeId]: "2026-09-02T04:05:06.123+03:00", [jsonId]: { enabled: false, nested: [1, null] } },
+  });
+  await jira.pushIssue("owner", p.id, initialIssue.id);
+  assert.equal(writes.at(-1)!.customfield_5, "2026-09-02T01:05:06.123Z");
+  assert.deepEqual(writes.at(-1)!.customfield_6, { enabled: false, nested: [1, null] });
+  remote.fields.customfield_5 = "2026-09-01T09:00:00+0300";
+  await jira.mappings("owner", p.id, { ...createdMappings, fields: {
+    ...createdMappings.fields, customfield_4: createJiraFieldOnImport, missing: createJiraFieldOnImport,
+  } });
+  await assert.rejects(jira.prepare("owner", p.id), /Cannot create a project field/);
+  await jira.mappings("owner", p.id, { ...createdMappings, fields: {
+    ...createdMappings.fields, customfield_4: createJiraFieldOnImport,
+  } });
+  const fieldPreparation = await jira.prepare("owner", p.id);
+  assert.notEqual(fieldPreparation.mappings.fields.customfield_4, createJiraFieldOnImport);
+  assert.deepEqual((await jira.prepare("owner", p.id)).mappings.fields, fieldPreparation.mappings.fields);
+  const createdFields = (await issues.settings("owner", p.id)).fields!;
+  assert.deepEqual(createdFields.filter(f => f.name.startsWith("Field ")).map(f => [f.name, f.type]).sort(), [
+    ["Field 1", "number"], ["Field 2", "date"], ["Field 3", "json"], ["Field 4", "text"],
+  ]);
   assert.equal((await issues.list("owner", p.id)).find(issue => issue.id === autoImported.id)?.title, remote.fields.summary);
   assert.equal((await issues.list("owner", p.id)).length, 1);
   const identity = (await issues.settings("owner", p.id))
@@ -818,6 +868,7 @@ test("Jira project fields, import, publishing, conflicts and retry safety", asyn
     [incrementalJql, incrementalJql],
     "every page keeps the same lower bound",
   );
+  assert.deepEqual(countQueries, [incrementalJql.replace(" ORDER BY updated ASC", "")]);
   const successfulWatermark = await watermark();
 
   await makeScheduleDue();
@@ -901,6 +952,79 @@ test("Jira project fields, import, publishing, conflicts and retry safety", asyn
   assert.equal(disabled.nextImportAt, null);
   await worker.tick();
   assert.equal(prepared, 2);
+  // The client only queues work. A new reader can reconnect before, during
+  // and after execution without owning or keeping the import alive.
+  await assert.rejects(jira.startFullImport("member", p.id));
+  const queued = await jira.startFullImport("owner", p.id);
+  assert.equal(queued.importProgress?.status, "queued");
+  assert.match(jiraImportActivity(queued)!, /queued/);
+  await assert.rejects(jira.startFullImport("owner", p.id), /current Jira operation/);
+  await assert.rejects(jira.startImport("owner", p.id), /current Jira request/);
+  await jira.finishImport("owner", p.id, queued.importRunId!);
+  const reader = createJiraService(db, files, secret);
+  paginateSearch = true;
+  let seenDuringImport = false;
+  await createJiraScheduler(db, {
+    ...jira,
+    import: async (...args) => {
+      const ongoing = (await reader.get("owner", p.id))!;
+      assert.equal(ongoing.importRunId, queued.importRunId);
+      assert.equal(ongoing.importProgress?.status, "running");
+      assert.equal(ongoing.importProgress.total, 9);
+      assert.equal(ongoing.importProgress.totalIsEstimate, true);
+      assert.match(jiraImportActivity(ongoing)!, /TEAM-1 · 0 imported/);
+      await createJiraScheduler(db, jira).tick();
+      seenDuringImport = true;
+      return jira.import(...args);
+    },
+  }).tick();
+  paginateSearch = false;
+  assert.ok(seenDuringImport);
+  assert.equal(countQueries.at(-1), 'project = "TEAM"');
+  const finished = (await reader.get("owner", p.id))!;
+  assert.equal(finished.importRunId, null);
+  assert.equal(jiraImportActivity(finished), null);
+  assert.equal(finished.importProgress?.id, queued.importRunId);
+  assert.equal(finished.importProgress?.status, "finished");
+  assert.equal(finished.importProgress.imported, 1);
+  assert.equal(finished.importProgress.total, 1);
+  assert.equal(finished.importProgress.totalIsEstimate, false);
+  assert.equal(finished.lastScheduledAt, disabled.lastScheduledAt);
+  assert.equal(await watermark(), beforeManual);
+  assert.equal(searchQueries.at(-1), 'project = "TEAM" ORDER BY updated ASC');
+
+  // Optional count failures leave the import running and the last page
+  // still supplies an exact total, even when it contains no further issues.
+  paginateSearch = true;
+  countUnavailable = true;
+  await jira.startFullImport("owner", p.id);
+  await worker.tick();
+  const unestimated = (await reader.get("owner", p.id))!.importProgress!;
+  assert.equal(unestimated.status, "finished");
+  assert.equal(unestimated.total, 1);
+  assert.equal(unestimated.totalIsEstimate, false);
+  paginateSearch = false;
+  countUnavailable = false;
+
+  const toStop = await jira.startFullImport("owner", p.id);
+  await reader.stopImport("owner", p.id, toStop.importRunId!);
+  assert.match(jiraImportActivity((await reader.get("owner", p.id))!)!, /Stopping/);
+  await worker.tick();
+  assert.equal((await reader.get("owner", p.id))!.importProgress?.status, "stopped");
+  await jira.startFullImport("owner", p.id);
+  await createJiraScheduler(db, {
+    ...jira,
+    import: async () => { throw new Error("Test retry"); },
+  }).tick();
+  const failed = (await reader.get("owner", p.id))!.importProgress!;
+  assert.equal(failed.status, "failed");
+  assert.equal(failed.total, 1);
+  assert.equal(failed.failed, 1);
+  assert.deepEqual(failed.errors, [{ id: "100", key: "TEAM-1", error: "Test retry" }]);
+  const retry = await reader.startImport("owner", p.id);
+  await reader.import("owner", p.id, "100", false, retry.runId);
+  await reader.finishImport("owner", p.id, retry.runId);
+  assert.deepEqual((await reader.get("owner", p.id))!.importProgress?.errors, []);
   await projects.archive("owner", p.id);
   await assert.rejects(
     jira.import("owner", p.id, imported.id),

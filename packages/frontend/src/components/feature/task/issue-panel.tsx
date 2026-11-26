@@ -29,6 +29,7 @@ import type { CommentActions } from "./issue-comments";
 import { commentText, type CommentBody } from "@spectron/shared";
 
 export type IssuePanelActions = {
+  markRead?: (projectId: string, id: string, seenThrough: string) => Promise<void>;
   handoffs?: import('@spectron/shared').LocalHandoffActions;
   runs?: import('@spectron/shared').AgentRunActions;
   gitWorkflow?: import('@spectron/shared').GitWorkflowActions;
@@ -194,6 +195,7 @@ export function IssuePanel({
     if (value == null || value === "") return "None";
     if (field.startsWith("fieldValues.")) {
       const definition = settings.fields?.find((f) => f.id === field.slice(12));
+      if (definition?.type === "json") return JSON.stringify(value);
       return definition?.type === "user"
         ? person(String(value))
         : String(value);
@@ -349,7 +351,7 @@ export function IssuePanel({
             <span className="mx-1 h-[18px] w-px bg-line max-[900px]:hidden" />
             <Segmented label="Conversation detail" size="sm" value={detail} onChange={setDetail} options={[{ value: "simple", label: "Simple", title: "People and agent summaries" }, { value: "dev", label: "Developer", title: "Requests, checks, branches and logs" }]} />
             <IconButton icon="panel" label={drawer ? "Hide issue details" : "Show issue details"} active={drawer} onClick={() => toggleDrawer(!drawer)} />
-            <Menu label="Issue actions" items={menuItems} align="end" />
+            <Menu compact label="Issue actions" items={menuItems} align="end" />
           </div>
         </header>
         {(titleError || jiraFeedback || (error && !drawer)) && (
@@ -448,7 +450,7 @@ export function IssuePanel({
                   {(settings.fields ?? []).map((field) => (
                     <div key={field.id} className="contents">
                       <dt className={dt}>{field.name}</dt>
-                      <dd className="truncate text-ink-2">{field.type === "user" ? person(String(issue.fieldValues?.[field.id] ?? "") || null) : String(issue.fieldValues?.[field.id] ?? "Not set")}</dd>
+                      <dd className="truncate text-ink-2">{field.type === "user" ? person(String(issue.fieldValues?.[field.id] ?? "") || null) : field.type === "json" && issue.fieldValues?.[field.id] != null ? JSON.stringify(issue.fieldValues[field.id]) : String(issue.fieldValues?.[field.id] ?? "Not set")}</dd>
                     </div>
                   ))}
                   {parent && (<><dt className={dt}>Parent</dt><dd className="min-w-0"><button type="button" className="max-w-full truncate text-accent-ink hover:underline" onClick={() => onSelect(parent.id, parent.projectId)}><span className="mono text-xs">{parent.key}</span> {parent.title}</button></dd></>)}
@@ -577,6 +579,7 @@ function IssueEditor({
         : `${i.displayName} (Jira)`,
     })),
   ];
+  const [jsonDrafts, setJsonDrafts] = useState<Record<string, string>>({});
   const baseline = useRef(issue);
   const [fields, setFields] = useState<IssueFields>(() => ({
     estimateTime: issue.estimateTime ?? null,
@@ -619,7 +622,18 @@ function IssueEditor({
         setBusy(true);
         setError("");
         try {
-          await onSave(baseline.current, fields);
+          const fieldValues = { ...fields.fieldValues };
+          for (const [id, draft] of Object.entries(jsonDrafts)) {
+            try {
+              fieldValues[id] = draft.trim() ? JSON.parse(draft, (_, value) => {
+                if (typeof value === "number" && !Number.isFinite(value)) throw new Error();
+                return value;
+              }) : null;
+            } catch {
+              throw new Error(`Enter valid JSON for ${settings.fields?.find(f => f.id === id)?.name ?? "the field"}.`);
+            }
+          }
+          await onSave(baseline.current, { ...fields, fieldValues });
           onClose();
         } catch (cause) {
           setError(cause instanceof Error ? cause.message : "Could not save issue.");
@@ -676,14 +690,21 @@ function IssueEditor({
             <Input type="datetime-local" step="1" min={fields.startAt?.slice(0, 19)} value={fields.finishAt?.slice(0, 19) ?? ""} onChange={(e) => set("finishAt", e.target.value ? new Date(`${e.target.value}Z`).toISOString() : null)} />
           </Field>
           {(settings.fields ?? []).map((field) => (
-            <Field key={field.id} label={field.name}>
+            <Field key={field.id} label={field.type === "datetime" ? `${field.name} (UTC)` : field.name}>
               {field.type === "user" ? (
                 <Select value={String(fields.fieldValues?.[field.id] ?? "")} onChange={(e) => set("fieldValues", { ...fields.fieldValues, [field.id]: e.target.value || null })}>
                   <option value="">Not set</option>
                   {people.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
                 </Select>
+              ) : field.type === "json" ? (
+                <Textarea rows={4} className="font-mono" spellCheck={false}
+                  value={jsonDrafts[field.id] ?? (fields.fieldValues?.[field.id] == null ? "" : JSON.stringify(fields.fieldValues[field.id], null, 2))}
+                  onChange={e => setJsonDrafts({ ...jsonDrafts, [field.id]: e.target.value })} />
+              ) : field.type === "datetime" ? (
+                <Input type="datetime-local" step="0.001" value={String(fields.fieldValues?.[field.id] ?? "").replace(/Z$/, "")}
+                  onChange={e => set("fieldValues", { ...fields.fieldValues, [field.id]: e.target.value ? new Date(`${e.target.value}Z`).toISOString() : null })} />
               ) : (
-                <Input type={field.type === "date" ? "date" : field.type === "number" ? "number" : "text"} step={field.type === "number" ? "any" : undefined} value={fields.fieldValues?.[field.id] ?? ""} onChange={(e) => set("fieldValues", { ...fields.fieldValues, [field.id]: e.target.value === "" ? null : field.type === "number" ? Number(e.target.value) : e.target.value })} />
+                <Input type={field.type === "date" ? "date" : field.type === "number" ? "number" : "text"} step={field.type === "number" ? "any" : undefined} value={String(fields.fieldValues?.[field.id] ?? "")} onChange={(e) => set("fieldValues", { ...fields.fieldValues, [field.id]: e.target.value === "" ? null : field.type === "number" ? Number(e.target.value) : e.target.value })} />
               )}
             </Field>
           ))}

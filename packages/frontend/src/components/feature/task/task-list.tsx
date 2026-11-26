@@ -115,6 +115,7 @@ export function TaskList({
       )}
       <div className={cn("flex items-center gap-1 px-3.5 pb-2.5 pl-4", embedded && !searchOpen && "pt-2.5")}>
         <TaskFiltersSelect
+          isFlow={isFlow}
           value={filter}
           onChange={onFilterChange}
           projects={isFlow ? projects : projects.filter((p) => p.id === project)}
@@ -144,6 +145,7 @@ export function TaskList({
             <div key={item.id}>
               {showGroup && <ListGroup>{group}</ListGroup>}
               <TaskItem
+                isFlow={isFlow}
                 item={item}
                 project={projects.find((p) => p.id === item.project)!}
                 selectedId={selectedId}

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { ProjectField, IssueSettings } from "@spectron/shared";
+import { projectFieldTypes, type ProjectField, type IssueSettings } from "@spectron/shared";
 import { Field, Input, Select } from "../../ui/input";
 import { Button } from "../../ui/button";
 import { Pill } from "../../ui/pill";
@@ -12,7 +12,7 @@ export type FieldActions = {
     type: ProjectField["type"];
   }) => Promise<void>;
 };
-const typeLabel = (type: string) => type[0]!.toUpperCase() + type.slice(1);
+const typeLabel = (type: string) => type === "json" ? "JSON" : type === "datetime" ? "Date and time" : type[0]!.toUpperCase() + type.slice(1);
 export function ProjectFields({
   actions,
   owner,
@@ -101,7 +101,7 @@ export function ProjectFields({
               </Field>
               <Field label="Type">
                 <Select value={type} onChange={(e) => setType(e.target.value as ProjectField["type"])}>
-                  {["text", "date", "number", "user"].map((t) => (
+                  {projectFieldTypes.map((t) => (
                     <option key={t} value={t}>{typeLabel(t)}</option>
                   ))}
                 </Select>

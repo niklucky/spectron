@@ -1,3 +1,5 @@
+import type { JiraImportProgress } from "@spectron/shared";
+import { JiraImportProgressPopover } from "./jira-import-progress";
 import { useEffect, useState } from "react";
 import { Button } from "../../ui/button";
 import { Icon } from "../../ui/icon";
@@ -8,6 +10,9 @@ import { formatDateTime } from "../../../lib/date-format";
 export type IntegrationSummary = {
   id?: string;
   status?: string;
+  activity?: string | null;
+  importStopping?: boolean | undefined;
+  importProgress?: JiraImportProgress | null | undefined;
   provider: string;
   name: string;
   key: string;
@@ -52,10 +57,12 @@ export function IntegrationOverview({ owner, load, onSelect }: {
     let active = true;
     setLoading(true);
     setError("");
-    load().then((result) => { if (active) setConnections(result); })
+    let timer: ReturnType<typeof setTimeout>;
+    const refresh = () => load().then((result) => { if (active) { setConnections(result); setError(""); } })
       .catch((cause) => { if (active) setError(cause instanceof Error ? cause.message : "Could not load integrations."); })
-      .finally(() => { if (active) setLoading(false); });
-    return () => { active = false; };
+      .finally(() => { if (active) { setLoading(false); timer = setTimeout(refresh, 5000); } });
+    void refresh();
+    return () => { active = false; clearTimeout(timer); };
   }, [load, owner, revision]);
   if (!owner) return <p className="text-sm text-ink-2">Only the project owner can manage integrations.</p>;
   const available = integrationProviders.filter((provider) => !connections.some((c) => c.provider === provider.id));
@@ -71,15 +78,15 @@ export function IntegrationOverview({ owner, load, onSelect }: {
             <Button variant="ghost" size="sm" onClick={() => setRevision((v) => v + 1)}>Retry</Button>
           </p>
         ) : connections.length ? (
-          <ul className="overflow-hidden rounded-xl hairline">
+          <ul className="@container overflow-hidden rounded-xl hairline">
             {connections.map((connection) => {
               const meta = [host(connection.url), connection.account, lastSync(connection)].filter(Boolean).join(" · ");
               return (
-                <li key={connection.id ?? connection.provider} className="[&+&]:hairline-t">
+                <li key={connection.id ?? connection.provider} className="flex items-center pr-3 @max-[26rem]:flex-wrap [&+&]:hairline-t">
                   <button
                     type="button"
                     onClick={() => onSelect(connection.provider)}
-                    className="flex w-full items-center gap-3 px-3 py-3 text-left transition-colors hover:bg-surface-2"
+                    className="flex min-w-0 flex-1 items-center gap-3 px-3 py-3 text-left transition-colors hover:bg-surface-2"
                   >
                     <IntegrationLogo provider={connection.provider} />
                     <span className="flex min-w-0 flex-1 flex-col gap-0.5">
@@ -89,10 +96,13 @@ export function IntegrationOverview({ owner, load, onSelect }: {
                       </span>
                       <span className="truncate text-sm text-ink-2">{meta}</span>
                     </span>
-                    <span className="flex shrink-0 items-center gap-1 text-sm text-ink-3">
-                      Manage <Icon name="chevron-right" size={14} />
-                    </span>
+                    {!connection.importProgress && <span className="flex max-w-[45%] items-center gap-1 text-right text-sm text-ink-3">
+                      <span role={connection.activity ? "status" : undefined}>{connection.activity ?? "Manage"}</span> <Icon name="chevron-right" size={14} />
+                    </span>}
                   </button>
+                  {connection.importProgress && <div className="flex max-w-[48%] @max-[26rem]:max-w-full @max-[26rem]:basis-full @max-[26rem]:pb-3 @max-[26rem]:pl-[60px]">
+                    <JiraImportProgressPopover progress={connection.importProgress} stopping={connection.importStopping} />
+                  </div>}
                 </li>
               );
             })}

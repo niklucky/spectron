@@ -5,6 +5,7 @@ import { createDatabase, migrateDatabase } from "@spectron/db";
 import { createAuth } from "@spectron/backend";
 import {
   createId,
+  issueAttention,
   commentText,
   commentDraftText,
   commentBodyFromText,
@@ -314,6 +315,52 @@ test("Threaded comments, mentions, files and history", async (t) => {
       );
     },
   );
+  await t.test("Flow tracks read activity and outstanding mentions independently for each reader", async () => {
+    const id = second.id;
+    const projectId = p.id;
+    const state = async (actor = member) => {
+      const issues = await data<IssueSummary[]>(await call("issues.list", actor, { projectId }));
+      const state = issues.find(row => row.id === id)?.readState;
+      assert.ok(state);
+      return state;
+    };
+    const mark = (seenThrough: string, actor = member, issueId = id) =>
+      call("issues.markRead", actor, { projectId, id: issueId, seenThrough }, true);
+    const initial = await state();
+    assert.equal(issueAttention(initial), "unread");
+    await data(await mark(initial.activityAt));
+    assert.equal(issueAttention(await state()), "read");
+    assert.equal(issueAttention(await state(owner)), "unread");
+    assert.equal((await mark(initial.activityAt, outsider)).status, 404);
+    assert.equal((await mark(initial.activityAt, owner, foreign.id)).status, 404);
+
+    const parent = await create("Question", null, owner, { issueId: id });
+    const mention = { type: "mention", userId: member.id, label: "member" };
+    const reply = await create("", parent.id, owner, { issueId: id, body: [mention] });
+    const editReply = async (body: unknown[]) => {
+      const page = await data<CommentPage>(await call("comments.list", owner, { projectId, issueId: id, parentId: parent.id }));
+      const row = page.comments.find(c => c.id === reply.id)!;
+      await data(await call("comments.update", owner, {
+        projectId, issueId: id, id: row.id, expectedUpdatedAt: row.updatedAt, body, files: [],
+      }, true));
+    };
+    await create("One more detail", null, owner, { issueId: id });
+    await data(await mark(initial.activityAt));
+    const mentioned = await state();
+    assert.equal(issueAttention(mentioned), "mention");
+    assert.equal(issueAttention(await state(owner)), "unread");
+    await data(await mark(mentioned.activityAt));
+    await data(await mark(initial.activityAt));
+    assert.equal(issueAttention(await state()), "read");
+    await editReply([mention, ...body(" revised wording")]);
+    assert.equal(issueAttention(await state()), "unread");
+    await editReply(body("No longer tagged"));
+    assert.equal((await state()).mentionedAt, null);
+    await editReply([mention]);
+    assert.equal(issueAttention(await state()), "mention");
+    await editReply(body("Removed before opening"));
+    assert.equal(issueAttention(await state()), "unread");
+  });
   const f = createId(),
     source = createId();
   await t.test(
