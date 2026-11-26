@@ -89,6 +89,14 @@ test("Public API: tokens, issues, filters, comments, mentions and files", async 
   const member = await register("member@example.test");
   const outsider = await register("outsider@example.test");
 
+  // Unverified accounts cannot mint tokens: a squatter's token would survive
+  // the real owner reclaiming the address with a magic link.
+  await assert.rejects(
+    trpc("apiTokens.create", owner, { name: "Too early", expiresInDays: 30 }),
+    /Verify your email address/,
+  );
+  await pool.query("UPDATE users SET email_verified = true");
+
   // Tokens are created from a signed-in session and shown once.
   const created = await trpc<{ token: string; summary: ApiTokenSummary }>("apiTokens.create", owner, {
     name: "Claude Code",
@@ -454,6 +462,12 @@ test("Public API: tokens, issues, filters, comments, mentions and files", async 
   assert.deepEqual((await search("", memberToken)).issues, []);
   await error(await call("GET", `/projects/${p.id}`, memberToken), 404);
   await error(await call("GET", `/issues/${first.id}`, memberToken), 404);
+
+  // Tokens stop working if their owner is no longer verified.
+  await pool.query("UPDATE users SET email_verified = false WHERE id = $1", [owner.id]);
+  await error(await call("GET", "/me", token), 401);
+  await pool.query("UPDATE users SET email_verified = true WHERE id = $1", [owner.id]);
+  await ok(await call("GET", "/me", token));
 
   // Unknown routes, revocation and expiry.
   assert.equal((await error(await call("GET", "/nope", token), 404)).code, "not_found");

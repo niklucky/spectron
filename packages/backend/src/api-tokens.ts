@@ -46,7 +46,18 @@ export function createApiTokenService(db: Database) {
           : new Date(Date.now() + input.expiresInDays * 86_400_000);
       const row = await db.transaction(async (tx) => {
         // Serialise per user so the active-token limit holds under concurrency.
-        await tx.select({ id: user.id }).from(user).where(eq(user.id, userId)).for("update");
+        const [owner] = await tx
+          .select({ emailVerified: user.emailVerified })
+          .from(user)
+          .where(eq(user.id, userId))
+          .for("update");
+        // An unverified account may belong to a squatter: a magic-link login by
+        // the real mailbox owner keeps the user id but drops the squatter's
+        // password and sessions. A token issued before that would outlive it.
+        if (!owner?.emailVerified)
+          throw new ApiTokenInputError(
+            "Verify your email address before creating API tokens.",
+          );
         const active = await tx
           .select({ id: apiToken.id })
           .from(apiToken)
@@ -85,11 +96,16 @@ export function createApiTokenService(db: Database) {
     async authenticate(token: string) {
       if (!token.startsWith(API_TOKEN_PREFIX) || token.length > 200) return null;
       const [row] = await db
-        .select({ token: apiToken, user: { id: user.id, name: user.name, email: user.email } })
+        .select({
+          token: apiToken,
+          emailVerified: user.emailVerified,
+          user: { id: user.id, name: user.name, email: user.email },
+        })
         .from(apiToken)
         .innerJoin(user, eq(user.id, apiToken.userId))
         .where(eq(apiToken.tokenHash, hash(token)));
-      if (!row || row.token.revokedAt) return null;
+      // Tokens act only for verified owners (see create()).
+      if (!row || row.token.revokedAt || !row.emailVerified) return null;
       const now = Date.now();
       if (row.token.expiresAt && row.token.expiresAt.getTime() <= now) return null;
       if (!row.token.lastUsedAt || now - row.token.lastUsedAt.getTime() > TOUCH_INTERVAL_MS)

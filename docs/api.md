@@ -10,7 +10,7 @@ Create a personal access token in **AI connections & agents → API tokens**. Se
 Authorization: Bearer spk_…
 ```
 
-A token acts as you in every project you belong to. Browser session cookies are not accepted on `/api/v1`. Revoked or expired tokens get `401`.
+A token acts as you in every project you belong to. Only accounts with a verified email can create tokens, and tokens stop working if the account is not verified. Browser session cookies are not accepted on `/api/v1`. Revoked or expired tokens get `401`.
 
 ## Conventions
 
