@@ -211,6 +211,9 @@ export function createV1Routes({
       .parse(c.req.query("filename"));
     if (!c.req.raw.body) throw new FileInputError("Send the file bytes as the request body.");
     const length = c.req.header("content-length");
+    if (length !== undefined && !/^\d+$/.test(length))
+      throw new ApiError(400, "invalid_request", "Content-Length must be a whole number of bytes.");
+    if (length === "0") throw new FileInputError("Empty files cannot be uploaded.");
     return files.upload(
       me(c),
       projectId,

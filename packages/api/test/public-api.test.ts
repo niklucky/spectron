@@ -386,6 +386,38 @@ test("Public API: tokens, issues, filters, comments, mentions and files", async 
   assert.equal(twinChild.parent?.id, twinIssue.id);
   await error(await call("POST", "/issues", token, { project: twin.id, title: "Orphan", parent: "SP-9" }), 422);
 
+  // Ids that happen to look like keys still resolve as ids.
+  const todo = (await pool.query("SELECT id FROM issue_states WHERE project_id = $1 AND is_default", [p.id])).rows[0].id;
+  await pool.query(
+    "INSERT INTO issues (id, project_id, number, title, state_id, author_id) VALUES ('AbCdEfGhIjKlMnOpQr-12', $1, 900, 'Id like a key', $2, $3)",
+    [p.id, todo, owner.id],
+  );
+  assert.equal((await ok<Issue>(await call("GET", "/issues/AbCdEfGhIjKlMnOpQr-12", token))).title, "Id like a key");
+
+  // Content-Length must be a byte count; zero is an empty file.
+  await error(await call("POST", `/issues/${first.id}/attachments?filename=empty.txt`, token, new Uint8Array(0), { "content-length": "0" }), 422);
+  await error(await call("POST", `/issues/${first.id}/attachments?filename=bad.txt`, token, bytes, { "content-length": "12abc" }), 400);
+
+  // A member of both projects still cannot mix their files or comments.
+  const otFile = await ok<{ id: string }>(await call("POST", "/projects/OT/files?filename=ot.txt", token, bytes), 201);
+  await error(await call("POST", "/issues", token, { project: p.id, title: "Borrowed", attachments: [otFile.id] }), 422);
+  await error(await call("POST", `/issues/${first.id}/attachments`, token, { fileId: otFile.id }), 404);
+  await error(await call("POST", `/issues/${first.id}/comments`, token, { body: "see file", attachments: [otFile.id] }), 404);
+  await error(await call("GET", `/projects/${p.id}/files/${otFile.id}`, token), 404);
+  const otIssue = (await search("project=OT")).issues[0]!;
+  const otComment = await ok<Comment>(await call("POST", `/issues/${otIssue.id}/comments`, token, { body: "elsewhere" }), 201);
+  await error(await call("GET", `/issues/${first.id}/comments?parentId=${otComment.id}`, token), 404);
+  await error(await call("POST", `/issues/${first.id}/comments`, token, { body: "reply", parentId: otComment.id }), 404);
+  await error(await call("POST", `/issues/${first.id}/comments`, token, { body: "reply", parentId: comment.id }), 404);
+
+  // Deleted issues are hidden from search; archived projects are read-only.
+  assert.deepEqual((await search(`project=${p.id}&q=Doomed`)).issues, []);
+  await trpc("projects.archive", owner, { id: q.id });
+  await error(await call("POST", "/issues", token, { project: "OT", title: "Too late" }), 422);
+  await error(await call("PATCH", `/issues/${otIssue.id}`, token, { title: "Too late" }), 422);
+  await error(await call("POST", `/issues/${otIssue.id}/comments`, token, { body: "Too late" }), 422);
+  assert.equal((await ok<Issue>(await call("GET", `/issues/${otIssue.id}`, token))).title, "Elsewhere");
+
   // Unknown routes, revocation and expiry.
   assert.equal((await error(await call("GET", "/nope", token), 404)).code, "not_found");
   await trpc("apiTokens.revoke", owner, { id: created.summary.id });
@@ -400,5 +432,11 @@ test("Public API: tokens, issues, filters, comments, mentions and files", async 
   await assert.rejects(
     trpc("apiTokens.create", owner, { name: "Bad lifetime", expiresInDays: 7 }),
   );
+  // At most 50 active tokens per person; revoking frees a slot.
+  for (let index = 2; index < 50; index++)
+    await trpc("apiTokens.create", outsider, { name: `Bulk ${index}`, expiresInDays: 30 });
+  await assert.rejects(trpc("apiTokens.create", outsider, { name: "One too many", expiresInDays: 30 }), /up to 50 tokens/);
+  await trpc("apiTokens.revoke", outsider, { id: other.summary.id });
+  await trpc("apiTokens.create", outsider, { name: "Replacement", expiresInDays: 30 });
   void q;
 });

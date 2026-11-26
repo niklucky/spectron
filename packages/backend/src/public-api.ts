@@ -82,7 +82,9 @@ export type PublicIssueInput = {
   estimateSeconds?: number | null | undefined;
 };
 
-const isId = (value: string) => applicationIdPattern.test(value);
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** Current ids, plus UUIDs retained from before the id migration. */
+const isId = (value: string) => applicationIdPattern.test(value) || UUID.test(value);
 const lower = (value: string) => value.trim().toLowerCase();
 const KEY = /^([A-Za-z][A-Za-z0-9_]*)-(\d{1,9})$/;
 const escapeLike = (value: string) => value.replace(/[\\%_]/g, (c) => `\\${c}`);
@@ -147,8 +149,15 @@ export function createPublicApiService(db: Database, appURL: string) {
     type Match = { id: string; projectId: string; number: number; updatedAt: Date; deletedAt: Date | null };
     let rows: Match[] = [];
     const raw = ref.trim();
+    // Ids first: a 21-character id such as "AbCdEfGhIjKlMnOpQr-12" also
+    // matches the key pattern, while keys are at most 20 characters.
+    if (isId(raw))
+      rows = await db
+        .select(select)
+        .from(issue)
+        .where(and(inArray(issue.projectId, ids), eq(issue.id, raw)));
     const key = KEY.exec(raw);
-    if (key) {
+    if (!rows.length && key) {
       const keyed = projects.filter((p) => p.key.toUpperCase() === key[1]!.toUpperCase());
       if (keyed.length)
         rows = await db
@@ -160,11 +169,6 @@ export function createPublicApiService(db: Database, appURL: string) {
               eq(issue.number, Number(key[2])),
             ),
           );
-    } else if (isId(raw)) {
-      rows = await db
-        .select(select)
-        .from(issue)
-        .where(and(inArray(issue.projectId, ids), eq(issue.id, raw)));
     }
     if (rows.length > 1)
       throw new IssueInputError(`Several issues match ${ref}. Use the issue id instead.`);
@@ -387,7 +391,14 @@ export function createPublicApiService(db: Database, appURL: string) {
 
     async issue(userId: string, ref: string) {
       const target = await resolveIssue(userId, ref);
-      const [row] = await baseQuery().where(eq(issue.id, target.id));
+      // Re-check membership in the same statement as the read.
+      const [row] = await baseQuery()
+        .innerJoin(
+          projectMember,
+          and(eq(projectMember.projectId, issue.projectId), eq(projectMember.userId, userId)),
+        )
+        .where(eq(issue.id, target.id));
+      if (!row) throw new ProjectAccessError(`Issue ${ref} not found.`);
       const [{ fields }, tags] = await Promise.all([
         options(target.projectId),
         db
@@ -397,10 +408,10 @@ export function createPublicApiService(db: Database, appURL: string) {
           .where(eq(issueTag.issueId, target.id))
           .orderBy(asc(tag.name)),
       ]);
-      const values = row!.issue.fieldValues ?? {};
+      const values = row.issue.fieldValues ?? {};
       return {
-        ...present(row!),
-        description: row!.issue.description,
+        ...present(row),
+        description: row.issue.description,
         tags: tags.map((t) => t.name),
         fields: Object.fromEntries(
           fields.filter((f) => f.id in values).map((f) => [f.name, values[f.id]]),
