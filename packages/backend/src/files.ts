@@ -105,6 +105,110 @@ async function detectTextFile(path: string, filename: string) {
   return { mime: format.mime, ext: format.extension.toLowerCase() };
 }
 
+type AttachInput = {
+  projectId: string;
+  issueId: string;
+  sourceProjectId: string;
+  projectFileId: string;
+};
+/** Attaches a project file to an issue inside the caller's transaction and records history. */
+async function attachInTx(tx: Tx, userId: string, input: AttachInput) {
+  await editableIssue(tx, input.projectId, input.issueId);
+  const [source] = await tx
+    .select({ file, association: projectFile })
+    .from(projectFile)
+    .innerJoin(file, eq(file.id, projectFile.fileId))
+    .where(
+      and(
+        eq(projectFile.id, input.projectFileId),
+        eq(projectFile.projectId, input.sourceProjectId),
+        visibleFile,
+      ),
+    );
+  if (!source) throw new ProjectAccessError("File not found.");
+  let [target] = await tx
+    .select()
+    .from(projectFile)
+    .where(
+      and(
+        eq(projectFile.projectId, input.projectId),
+        eq(projectFile.fileId, source.file.id),
+      ),
+    );
+  if (!target || target.deletedAt) {
+    const before = target?.deletedAt?.toISOString() ?? null;
+    [target] = await tx
+      .insert(projectFile)
+      .values({ projectId: input.projectId, fileId: source.file.id })
+      .onConflictDoUpdate({
+        target: [projectFile.projectId, projectFile.fileId],
+        set: { deletedAt: null },
+      })
+      .returning();
+    await tx.insert(projectHistory).values({
+      projectId: input.projectId,
+      actorUserId: userId,
+      entityType: "project_file",
+      entityId: target!.id,
+      changes: {
+        file: {
+          before: before ? { deletedAt: before } : null,
+          after: {
+            fileId: source.file.id,
+            filename: source.file.filename,
+          },
+        },
+      },
+    });
+  }
+  const [existing] = await tx
+    .select()
+    .from(issueAttachment)
+    .where(
+      and(
+        eq(issueAttachment.issueId, input.issueId),
+        eq(issueAttachment.projectFileId, target!.id),
+      ),
+    );
+  if (existing && !existing.deletedAt) return { id: existing.id };
+  const [last] = await tx
+    .select({ position: issueAttachment.position })
+    .from(issueAttachment)
+    .where(eq(issueAttachment.issueId, input.issueId))
+    .orderBy(desc(issueAttachment.position))
+    .limit(1);
+  const [attachment] = await tx
+    .insert(issueAttachment)
+    .values({
+      projectId: input.projectId,
+      issueId: input.issueId,
+      projectFileId: target!.id,
+      position: (last?.position ?? -1) + 1,
+    })
+    .onConflictDoUpdate({
+      target: [issueAttachment.issueId, issueAttachment.projectFileId],
+      set: { deletedAt: null },
+    })
+    .returning();
+  await tx.insert(issueHistory).values({
+    issueId: input.issueId,
+    entityType: "attachment",
+    entityId: attachment!.id,
+    actorUserId: userId,
+    action: existing ? "restored" : "created",
+    changes: {
+      attachment: {
+        before: null,
+        after: {
+          filename: source.file.filename,
+          fileId: source.file.id,
+          projectFileId: target!.id,
+        },
+      },
+    },
+  });
+  return { id: attachment!.id };
+}
 export function createFileService(db: Database, config?: FileStorageConfig) {
   const maxBytes = config?.maxBytes ?? defaultMaxFileBytes;
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 1)
@@ -129,6 +233,7 @@ export function createFileService(db: Database, config?: FileStorageConfig) {
       originalName: string,
       body: ReadableStream<Uint8Array>,
       declaredSize?: number,
+      options?: { attachToIssueId?: string | undefined },
     ) {
       const filename = Buffer.from(originalName, "utf8")
         .toString("utf8")
@@ -150,8 +255,11 @@ export function createFileService(db: Database, config?: FileStorageConfig) {
       const id = createId();
       const pendingKey = `.pending/${id}`;
       const pendingPath = pathFor(pendingKey);
+      const attachTo = options?.attachToIssueId;
       await db.transaction(async (tx) => {
         await member(tx, userId, projectId, true);
+        // Fail before streaming any bytes when the issue cannot take attachments.
+        if (attachTo) await editableIssue(tx, projectId, attachTo);
         await tx
           .insert(file)
           .values({ id, uploadedBy: userId, filename, storageKey: pendingKey });
@@ -220,6 +328,15 @@ export function createFileService(db: Database, config?: FileStorageConfig) {
               file: { before: null, after: { fileId: id, filename } },
             },
           });
+          // Same transaction: if the issue was deleted or archived meanwhile,
+          // the file is never published and the upload is marked failed.
+          if (attachTo)
+            await attachInTx(tx, userId, {
+              projectId,
+              issueId: attachTo,
+              sourceProjectId: projectId,
+              projectFileId: association!.id,
+            });
           return {
             ...fileSummary(ready!),
             projectFileId: association!.id,
@@ -393,101 +510,7 @@ export function createFileService(db: Database, config?: FileStorageConfig) {
           ...new Set([input.projectId, input.sourceProjectId]),
         ].sort())
           await member(tx, userId, projectId, projectId === input.projectId);
-        await editableIssue(tx, input.projectId, input.issueId);
-        const [source] = await tx
-          .select({ file, association: projectFile })
-          .from(projectFile)
-          .innerJoin(file, eq(file.id, projectFile.fileId))
-          .where(
-            and(
-              eq(projectFile.id, input.projectFileId),
-              eq(projectFile.projectId, input.sourceProjectId),
-              visibleFile,
-            ),
-          );
-        if (!source) throw new ProjectAccessError("File not found.");
-        let [target] = await tx
-          .select()
-          .from(projectFile)
-          .where(
-            and(
-              eq(projectFile.projectId, input.projectId),
-              eq(projectFile.fileId, source.file.id),
-            ),
-          );
-        if (!target || target.deletedAt) {
-          const before = target?.deletedAt?.toISOString() ?? null;
-          [target] = await tx
-            .insert(projectFile)
-            .values({ projectId: input.projectId, fileId: source.file.id })
-            .onConflictDoUpdate({
-              target: [projectFile.projectId, projectFile.fileId],
-              set: { deletedAt: null },
-            })
-            .returning();
-          await tx.insert(projectHistory).values({
-            projectId: input.projectId,
-            actorUserId: userId,
-            entityType: "project_file",
-            entityId: target!.id,
-            changes: {
-              file: {
-                before: before ? { deletedAt: before } : null,
-                after: {
-                  fileId: source.file.id,
-                  filename: source.file.filename,
-                },
-              },
-            },
-          });
-        }
-        const [existing] = await tx
-          .select()
-          .from(issueAttachment)
-          .where(
-            and(
-              eq(issueAttachment.issueId, input.issueId),
-              eq(issueAttachment.projectFileId, target!.id),
-            ),
-          );
-        if (existing && !existing.deletedAt) return { id: existing.id };
-        const [last] = await tx
-          .select({ position: issueAttachment.position })
-          .from(issueAttachment)
-          .where(eq(issueAttachment.issueId, input.issueId))
-          .orderBy(desc(issueAttachment.position))
-          .limit(1);
-        const [attachment] = await tx
-          .insert(issueAttachment)
-          .values({
-            projectId: input.projectId,
-            issueId: input.issueId,
-            projectFileId: target!.id,
-            position: (last?.position ?? -1) + 1,
-          })
-          .onConflictDoUpdate({
-            target: [issueAttachment.issueId, issueAttachment.projectFileId],
-            set: { deletedAt: null },
-          })
-          .returning();
-        await tx.insert(issueHistory).values({
-          issueId: input.issueId,
-          entityType: "attachment",
-          entityId: attachment!.id,
-          actorUserId: userId,
-          action: existing ? "restored" : "created",
-          changes: {
-            attachment: {
-              before: null,
-              after: {
-                filename: source.file.filename,
-                fileId: source.file.id,
-                projectFileId: target!.id,
-              },
-            },
-          },
-        });
-        return { id: attachment!.id };
+        return attachInTx(tx, userId, input);
       });
     },
     async unlink(

@@ -1,5 +1,5 @@
 import { createGitWorkflow } from "@spectron/backend";
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { getConnInfo } from "@hono/node-server/conninfo";
 import type { HttpBindings } from "@hono/node-server";
@@ -92,19 +92,27 @@ export function createAPI(
   const apiTokens = createApiTokenService(db);
   const publicApi = createPublicApiService(db, appURL);
   const api = new Hono<{ Bindings: HttpBindings }>();
-  // File uploads stream to disk and enforce FILES_MAX_BYTES themselves.
-  const isUpload = (path: string) =>
+  // File uploads stream to disk and enforce FILES_MAX_BYTES themselves. On
+  // the issue attachments route only ?filename= requests carry file bytes; a
+  // JSON {fileId} link request there stays size-limited.
+  const isUpload = (path: string, filename: string | undefined) =>
     path === "/api/files/upload" ||
     /^\/api\/v1\/projects\/[^/]+\/files$/.test(path) ||
-    /^\/api\/v1\/issues\/[^/]+\/attachments$/.test(path);
+    (filename !== undefined && /^\/api\/v1\/issues\/[^/]+\/attachments$/.test(path));
   api.use("/api/*", (c, next) =>
-    isUpload(c.req.path)
+    isUpload(c.req.path, c.req.query("filename"))
       ? next()
       : bodyLimit({
           maxSize:
             c.req.path.startsWith("/api/trpc/") || c.req.path.startsWith("/api/v1/")
               ? 3 * 1024 * 1024
               : c.req.path.startsWith("/api/git/webhooks/") ? 1024 * 1024 : 16 * 1024,
+          ...(c.req.path.startsWith("/api/v1/")
+            ? {
+                onError: (c: Context) =>
+                  c.json({ error: { code: "body_too_large", message: "Request bodies are limited to 3 MB." } }, 413),
+              }
+            : {}),
         })(c, next),
   );
   api.use("/api/*", async (c, next) => {

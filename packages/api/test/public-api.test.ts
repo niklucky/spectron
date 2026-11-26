@@ -202,6 +202,9 @@ test("Public API: tokens, issues, filters, comments, mentions and files", async 
   assert.deepEqual(await keys("project=SP&sort=-key"), ["SP-3", "SP-2", "SP-1"]);
   assert.deepEqual((await keys("project=SP,ot")).sort(), ["OT-1", "SP-1", "SP-2", "SP-3"]);
   assert.equal((await keys("")).length, 4);
+  // Key order sorts by project prefix first, in both directions.
+  assert.deepEqual(await keys("project=SP,OT&sort=key"), ["OT-1", "SP-1", "SP-2", "SP-3"]);
+  assert.deepEqual(await keys("project=SP,OT&sort=-key"), ["SP-3", "SP-2", "SP-1", "OT-1"]);
   assert.deepEqual((await keys("status=in%20progress")), ["SP-2"]);
   assert.deepEqual((await keys("statusCategory=opened&project=SP&sort=key")), ["SP-1", "SP-3"]);
   assert.deepEqual(await keys("assignee=me"), ["SP-2"]);
@@ -250,6 +253,17 @@ test("Public API: tokens, issues, filters, comments, mentions and files", async 
   const moved = await ok<Issue>(await call("PATCH", "/issues/SP-1", memberToken, { status: "done", tags: [] }));
   assert.equal(moved.status.name, "Done");
   assert.equal(moved.status.category, "finished");
+  // Without expectedUpdatedAt, concurrent edits to different fields both apply.
+  const [retitled, rescheduled] = await Promise.all([
+    call("PATCH", "/issues/SP-3", token, { title: "Undated chore, renamed" }),
+    call("PATCH", "/issues/SP-3", memberToken, { dueAt: "2027-01-15" }),
+  ]);
+  await ok(retitled);
+  await ok(rescheduled);
+  const both = await ok<Issue>(await call("GET", "/issues/SP-3", token));
+  assert.equal(both.title, "Undated chore, renamed");
+  assert.equal(both.dueAt, "2027-01-15T00:00:00.000Z");
+  await ok(await call("PATCH", "/issues/SP-3", token, { title: "Undated chore", dueAt: null }));
   const cleared = await ok<Issue>(await call("PATCH", "/issues/SP-1", token, { dueAt: null, assignee: null, priority: null }));
   assert.equal(cleared.dueAt, null);
   assert.equal(cleared.assignee, null);
@@ -289,6 +303,30 @@ test("Public API: tokens, issues, filters, comments, mentions and files", async 
   );
   await error(await call("POST", "/issues/SP-3/attachments?filename=big.bin", token, new Uint8Array(5000)), 413);
   await error(await call("POST", "/projects/SP/files", token, bytes), 400);
+  // Upload-and-attach is atomic: a deleted issue publishes no project file.
+  const doomed = await ok<Issue>(await call("POST", "/issues", token, { project: "SP", title: "Doomed" }), 201);
+  await pool.query("UPDATE issues SET deleted_at = now() WHERE id = $1", [doomed.id]);
+  const filesBefore = (await pool.query("SELECT count(*)::int AS n FROM project_files WHERE project_id = $1", [p.id])).rows[0].n;
+  await error(await call("POST", `/issues/${doomed.key}/attachments?filename=late.txt`, token, bytes), 422);
+  const filesAfter = (await pool.query("SELECT count(*)::int AS n FROM project_files WHERE project_id = $1", [p.id])).rows[0].n;
+  assert.equal(filesAfter, filesBefore);
+  // Oversized JSON gets a v1 413, with or without a declared length.
+  const huge = JSON.stringify({ fileId: "x".repeat(4 * 1024 * 1024) });
+  assert.equal((await error(await call("POST", "/issues/SP-3/attachments", token, new TextEncoder().encode(huge), { "content-type": "application/json" }), 413)).code, "body_too_large");
+  const streamed = new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (let i = 0; i < 5; i++) controller.enqueue(new Uint8Array(1024 * 1024).fill(32));
+      controller.close();
+    },
+  });
+  const streamedResponse = await api.request(`${origin}/api/v1/issues/SP-3/attachments`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    body: streamed,
+    duplex: "half",
+  } as RequestInit);
+  assert.equal((await error(streamedResponse, 413)).code, "body_too_large");
+  assert.equal((await error(await call("POST", "/issues", token, { project: "SP", title: "x", description: "y".repeat(3_200_000) }), 413)).code, "body_too_large");
 
   // Comments with mentions by email or id, plus attachments.
   const comment = await ok<Comment>(
@@ -327,6 +365,26 @@ test("Public API: tokens, issues, filters, comments, mentions and files", async 
     await call("GET", `/issues/SP-3/comments?cursor=${pageA.nextCursor}`, token),
   );
   assert.deepEqual(pageB.comments.map((c) => c.body), ["note 20", "note 21"]);
+
+  // Repeated mentions resolve against one member lookup.
+  const repeated = await ok<Comment>(
+    await call("POST", "/issues/SP-1/comments", token, { body: `<@${member.email}> <@${member.email}> <@me>` }),
+    201,
+  );
+  assert.deepEqual(repeated.mentions.map((m) => m.id).sort(), [member.id, owner.id].sort());
+
+  // Project prefixes can repeat; a parent resolves within the child's project.
+  const twin = await trpc<ProjectSummary>("projects.create", owner, { name: "Twin", key: "SP" });
+  const twinIssue = await ok<Issue>(await call("POST", "/issues", token, { project: twin.id, title: "Twin root" }), 201);
+  assert.equal(twinIssue.key, "SP-1");
+  await error(await call("GET", "/issues/SP-1", token), 422);
+  const reparented = await ok<Issue & { parent: { id: string } | null }>(
+    await call("PATCH", `/issues/${third.id}`, token, { parent: "SP-1" }),
+  );
+  assert.equal(reparented.parent?.id, first.id);
+  const twinChild = await ok<Issue>(await call("POST", "/issues", token, { project: twin.id, title: "Twin child", parent: "SP-1" }), 201);
+  assert.equal(twinChild.parent?.id, twinIssue.id);
+  await error(await call("POST", "/issues", token, { project: twin.id, title: "Orphan", parent: "SP-9" }), 422);
 
   // Unknown routes, revocation and expiry.
   assert.equal((await error(await call("GET", "/nope", token), 404)).code, "not_found");

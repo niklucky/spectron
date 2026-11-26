@@ -194,8 +194,7 @@ export function createV1Routes({
   });
   const me = (c: Context<Env>) => c.get("actor").user.id;
   const json = async <T>(c: Context<Env>, schema: z.ZodType<T>): Promise<T> => {
-    if (Number(c.req.header("content-length") ?? 0) > 3 * 1024 * 1024)
-      throw new ApiError(413, "body_too_large", "Request bodies are limited to 3 MB.");
+    // Size is enforced by the bodyLimit middleware in index.ts, streamed bodies included.
     let raw: unknown;
     try {
       raw = await c.req.json();
@@ -204,7 +203,7 @@ export function createV1Routes({
     }
     return schema.parse(raw);
   };
-  const upload = async (c: Context<Env>, projectId: string) => {
+  const upload = async (c: Context<Env>, projectId: string, attachToIssueId?: string) => {
     const filename = z
       .string({ error: "Pass the file name as ?filename=…" })
       .min(1)
@@ -218,6 +217,7 @@ export function createV1Routes({
       filename,
       c.req.raw.body,
       length === undefined ? undefined : Number(length),
+      { attachToIssueId },
     );
   };
   const presentFile = (
@@ -336,7 +336,7 @@ export function createV1Routes({
       id: target.id,
       // Without a version the edit applies to whatever is current: only the
       // fields sent are written, so concurrent edits to other fields survive.
-      expectedUpdatedAt: expectedUpdatedAt ?? target.updatedAt.toISOString(),
+      expectedUpdatedAt,
     });
     return c.json(await publicApi.issue(me(c), target.id));
   });
@@ -363,10 +363,15 @@ export function createV1Routes({
   v1.post("/issues/:issue/comments", async (c) => {
     const input = await json(c, createComment);
     const target = await publicApi.resolveIssue(me(c), c.req.param("issue"));
+    const matches = [...input.body.matchAll(MENTION)];
+    // Each mention adds up to two nodes; the comment service allows 1,000.
+    if (matches.length > 400)
+      throw new ApiError(422, "invalid_input", "Mention at most 400 people in one comment.");
+    const findPerson = matches.length ? await publicApi.personResolver(me(c), target.projectId) : null;
     const body: CommentBody = [];
     let position = 0;
-    for (const match of input.body.matchAll(MENTION)) {
-      const person = await publicApi.resolvePerson(me(c), target.projectId, match[1]!);
+    for (const match of matches) {
+      const person = findPerson!(match[1]!);
       if (match.index > position) body.push({ type: "text", text: input.body.slice(position, match.index) });
       body.push({ type: "mention", userId: person.id, label: person.name });
       position = match.index + match[0].length;
@@ -403,16 +408,20 @@ export function createV1Routes({
     const target = await publicApi.resolveIssue(me(c), c.req.param("issue"));
     // ?filename=… uploads the request body; otherwise JSON {fileId} links an
     // already uploaded project file.
-    const projectFileId =
-      c.req.query("filename") !== undefined
-        ? (await upload(c, target.projectId)).projectFileId
-        : (await json(c, linkAttachment)).fileId;
-    await files.link(me(c), {
-      projectId: target.projectId,
-      issueId: target.id,
-      sourceProjectId: target.projectId,
-      projectFileId,
-    });
+    let projectFileId: string;
+    if (c.req.query("filename") !== undefined)
+      // Uploaded and attached in one transaction: nothing is published if the
+      // issue cannot take attachments.
+      projectFileId = (await upload(c, target.projectId, target.id)).projectFileId;
+    else {
+      projectFileId = (await json(c, linkAttachment)).fileId;
+      await files.link(me(c), {
+        projectId: target.projectId,
+        issueId: target.id,
+        sourceProjectId: target.projectId,
+        projectFileId,
+      });
+    }
     const rows = await files.attachments(me(c), target.projectId, target.id);
     const attached = rows.find((row) => row.projectFileId === projectFileId);
     if (!attached) throw new ApiError(404, "not_found", "Attachment not found.");

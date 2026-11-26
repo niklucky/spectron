@@ -83,6 +83,8 @@ Deleted issues are excluded.
 }
 ```
 
+`parent` is looked up within the issue's own project, so a key prefix shared by several projects is not ambiguous here.
+
 On create you can also send `"attachments": ["<fileId>", …]`, using ids from an upload.
 
 On `PATCH`, only the fields you send are written. Add `"expectedUpdatedAt"` (the issue's `updatedAt`) to get `409` if someone changed the issue since you read it.

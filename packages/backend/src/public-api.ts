@@ -131,8 +131,10 @@ export function createPublicApiService(db: Database, appURL: string) {
    * Accepts a Spectron key (SP-12) or an issue id. Imported Jira keys are
    * informational only (`jiraKey` in responses) and never resolve an issue.
    */
-  async function resolveIssue(userId: string, ref: string) {
-    const projects = await memberProjects(userId);
+  async function resolveIssue(userId: string, ref: string, withinProjectId?: string) {
+    const projects = (await memberProjects(userId)).filter(
+      (p) => !withinProjectId || p.id === withinProjectId,
+    );
     const ids = projects.map((p) => p.id);
     if (!ids.length) throw new ProjectAccessError(`Issue ${ref} not found.`);
     const select = {
@@ -181,9 +183,20 @@ export function createPublicApiService(db: Database, appURL: string) {
       .orderBy(asc(user.name));
   }
 
+  /** Loads members once and returns a resolver for many references (e.g. comment mentions). */
+  async function personResolver(userId: string, projectId: string) {
+    const people = await members(projectId);
+    return (ref: string) => findPerson(people, userId, ref);
+  }
   /** Finds a project member by id, email or "me"; mentions and assignees use the same rules. */
   async function resolvePerson(userId: string, projectId: string, ref: string) {
-    const people = await members(projectId);
+    return findPerson(await members(projectId), userId, ref);
+  }
+  function findPerson(
+    people: Awaited<ReturnType<typeof members>>,
+    userId: string,
+    ref: string,
+  ) {
     const wanted = ref === "me" ? userId : ref;
     const person =
       people.find((p) => p.id === wanted) ??
@@ -239,6 +252,7 @@ export function createPublicApiService(db: Database, appURL: string) {
     resolveProject,
     resolveIssue,
     resolvePerson,
+    personResolver,
     members,
     issueURL,
 
@@ -287,9 +301,12 @@ export function createPublicApiService(db: Database, appURL: string) {
       if (input.parent !== undefined) {
         if (input.parent === null) out.parentId = null;
         else {
-          const parent = await resolveIssue(userId, input.parent);
-          if (parent.projectId !== projectId)
-            throw new IssueInputError("The parent must be in the same project.");
+          // Prefixes can repeat across projects; the parent must share the child's.
+          const parent = await resolveIssue(userId, input.parent, projectId).catch((cause: unknown) => {
+            throw cause instanceof ProjectAccessError
+              ? new IssueInputError(`Parent ${input.parent} was not found in this project.`)
+              : cause;
+          });
           out.parentId = parent.id;
         }
       }
@@ -349,11 +366,13 @@ export function createPublicApiService(db: Database, appURL: string) {
         key: issue.number,
       }[input.sort];
       const direction = input.order === "asc" ? asc : desc;
+      const keyPrefix = input.sort === "key" ? [direction(project.key), direction(project.id)] : [];
       const rows = await baseQuery()
         .where(and(...where))
         .orderBy(
           // Undated issues go last whichever way dates are sorted.
           ...(input.sort === "due" || input.sort === "start" ? [sql`${column} IS NULL`] : []),
+          ...keyPrefix,
           direction(column),
           direction(issue.id),
         )
@@ -361,14 +380,13 @@ export function createPublicApiService(db: Database, appURL: string) {
         .offset(input.offset);
       const page = rows.slice(0, input.limit);
       return {
-        issues: page.map((row) => present(row, scope)),
+        issues: page.map((row) => present(row)),
         nextOffset: rows.length > input.limit ? input.offset + input.limit : null,
       };
     },
 
     async issue(userId: string, ref: string) {
       const target = await resolveIssue(userId, ref);
-      const scope = await memberProjects(userId);
       const [row] = await baseQuery().where(eq(issue.id, target.id));
       const [{ fields }, tags] = await Promise.all([
         options(target.projectId),
@@ -381,7 +399,7 @@ export function createPublicApiService(db: Database, appURL: string) {
       ]);
       const values = row!.issue.fieldValues ?? {};
       return {
-        ...present(row!, scope),
+        ...present(row!),
         description: row!.issue.description,
         tags: tags.map((t) => t.name),
         fields: Object.fromEntries(
@@ -395,6 +413,7 @@ export function createPublicApiService(db: Database, appURL: string) {
     return db
       .select({
         issue,
+        projectKey: project.key,
         state: { id: issueState.id, name: issueState.name, trigger: issueState.trigger },
         priority: { id: issuePriority.id, name: issuePriority.name },
         type: { id: issueType.id, name: issueType.name },
@@ -407,6 +426,7 @@ export function createPublicApiService(db: Database, appURL: string) {
         parent: { id: parentIssue.id, number: parentIssue.number },
       })
       .from(issue)
+      .innerJoin(project, eq(project.id, issue.projectId))
       .innerJoin(issueState, eq(issueState.id, issue.stateId))
       .leftJoin(issuePriority, eq(issuePriority.id, issue.priorityId))
       .leftJoin(issueType, eq(issueType.id, issue.issueTypeId))
@@ -431,9 +451,9 @@ export function createPublicApiService(db: Database, appURL: string) {
     if (identity) return { id: identity.id, name: identity.name, email: null };
     return null;
   }
-  function present(row: Row, scope: { id: string; key: string }[]) {
+  function present(row: Row) {
     const i = row.issue;
-    const projectKey = scope.find((p) => p.id === i.projectId)?.key ?? "";
+    const projectKey = row.projectKey;
     return {
       id: i.id,
       key: `${projectKey}-${i.number}`,
