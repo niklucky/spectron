@@ -134,9 +134,9 @@ for (const shell of shells)
           (error, stdout, stderr) => (error ? reject(new Error(`${error.message}\n${stderr}`)) : resolve(stdout)),
         ),
       );
-    assert.match(await upgrade("--check"), /spectron 1\.1\.0 is available \(this is 1\.0\.0\)/);
+    assert.match(await upgrade("--check"), /serves spectron 1\.1\.0 \(this is 1\.0\.0\)/);
     assert.match(await upgrade(), /Updated spectron 1\.0\.0 → 1\.1\.0\./);
-    assert.match(await upgrade(), /spectron 1\.1\.0 is up to date/);
+    assert.match(await upgrade(), /spectron 1\.1\.0 matches/);
     assert.deepEqual((await readdir(dir)).sort(), ["bin", "install.json", "spectron.mjs"]);
 
     // Node writing to stderr on every start (a shim, a NODE_OPTIONS preload)

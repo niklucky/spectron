@@ -690,9 +690,9 @@ const commands: Command[] = [
   {
     name: "upgrade",
     group: "Advanced",
-    summary: "Update this CLI to the version its server serves",
+    summary: "Switch this CLI to the build its server serves",
     options: {
-      check: { type: "boolean", help: "Only say whether an update is available" },
+      check: { type: "boolean", help: "Only say whether the server serves a different build" },
     },
     async run(ctx) {
       const { io } = ctx;
@@ -701,13 +701,15 @@ const commands: Command[] = [
           "This CLI wasn't installed with the Spectron installer, so it can't update itself. Install it with `curl -fsSL <server>/cli/install.sh | sh` (Windows: `irm <server>/cli/install.ps1 | iex`), or rebuild it from source.",
         );
       const options = { server: normalizeURL(io.defaultURL), bundle: io.bundle, fetch: io.fetch, userAgent: userAgent() };
-      const { manifest, upToDate } = await checkForUpgrade(options);
+      const { manifest, current, upToDate } = await checkForUpgrade(options);
       const report = (status: "current" | "available" | "updated", text: string) =>
         ctx.json ? ctx.data({ status, version: VERSION, latest: manifest.version, server: options.server }) : ctx.out(text);
-      if (upToDate) return report("current", `spectron ${VERSION} is up to date with ${options.server}.`);
+      // "Update" means matching the server's build, which may be a rollback
+      // or a rebuild of the same version.
+      if (upToDate) return report("current", `spectron ${VERSION} matches ${options.server}.`);
       if (flag(ctx, "check"))
-        return report("available", `spectron ${manifest.version} is available (this is ${VERSION}). Run \`spectron upgrade\`.`);
-      await installUpgrade(options, manifest);
+        return report("available", `${options.server} serves spectron ${manifest.version} (this is ${VERSION}). Run \`spectron upgrade\` to switch.`);
+      await installUpgrade({ ...options, checked: current, installServer: io.defaultURL }, manifest);
       report("updated", `Updated spectron ${VERSION} → ${manifest.version}.`);
     },
   },
@@ -972,12 +974,13 @@ export async function run(argv: string[], io: IO): Promise<number> {
     if (error instanceof UsageError) return fail(2, error.message);
     if (error instanceof ApiFailure) {
       const message =
-        error.status === 401 && error.code !== "not_signed_in"
+        error.status === 401 && error.code !== "not_signed_in" && error.code !== "upgrade_unavailable"
           ? `The server rejected the token: it may be revoked or expired, or the account's email isn't verified. Run \`spectron auth login\` with a new one. ${TOKEN_HELP}`
           : error.message;
       // `status` only when a server actually answered; local failures carry just a code.
       const answered = error.status > 0 && error.code !== "not_signed_in";
-      return fail(error.status === 401 ? 4 : 1, message, {
+      // 4 is for the token; the upgrade routes take none.
+      return fail(error.status === 401 && error.code !== "upgrade_unavailable" ? 4 : 1, message, {
         ...(answered ? { status: error.status } : {}),
         code: error.code,
       });

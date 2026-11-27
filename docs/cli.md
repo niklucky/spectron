@@ -43,14 +43,14 @@ rmdir ~/.local/share/spectron
 
 ### Updating
 
-The CLI's version is the Spectron release it came with (`spectron --version`, e.g. `0.4.0`). To match the server you installed from:
+The CLI's version is the Spectron release it came with (`spectron --version`, e.g. `0.4.0`). To switch to the build the server you installed from now serves:
 
 ```sh
-spectron upgrade --check   # is there a newer one?
-spectron upgrade           # replace this CLI with the server's
+spectron upgrade --check   # does the server serve a different build?
+spectron upgrade           # switch to it
 ```
 
-`upgrade` reads `/cli/manifest.json` from that server, which holds the version and the SHA-256 of the CLI it serves. If the installed CLI differs, `upgrade` downloads the new one, checks it against that checksum, runs it once and swaps it in. Any failure leaves the current CLI in place. Your locations, launchers and sign-in stay as they are. Running the install command again also updates.
+`upgrade` reads `/cli/manifest.json` from that server: the version and the SHA-256 of the CLI it serves. It compares checksums, not version numbers, so it also follows a rollback to an older release or a rebuild of the same version. When they differ, `upgrade` downloads the server's CLI, checks it against the checksum, runs it once and swaps it in. Any failure, including a reinstall meanwhile, leaves the current CLI in place. Your locations, launchers and sign-in stay as they are. Running the install command again does the same.
 
 ### Windows
 
@@ -129,7 +129,7 @@ The URL and token are saved to `~/.config/spectron/config.json`, readable only b
 | `file upload SP file…` | Upload without attaching |
 | `file download <url>` or `file download SP <file-id>` | Download (`-o path`, `-o -` for stdout) |
 | `api <path>` | Call any `/api/v1` endpoint |
-| `upgrade [--check]` | Update this CLI to the version its server serves |
+| `upgrade [--check]` | Switch this CLI to the build its server serves |
 
 `spectron <command> --help` lists every option.
 

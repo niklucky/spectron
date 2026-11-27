@@ -16,24 +16,34 @@ async function get({ server, fetch, userAgent }: Options, path: string) {
   const url = `${server}${path}`;
   let response: Response;
   try {
-    response = await fetch(url, { headers: { "user-agent": userAgent }, redirect: "manual" });
+    // Bounds the whole exchange, body included: a stalled proxy can't hang it.
+    response = await fetch(url, { headers: { "user-agent": userAgent }, redirect: "manual", signal: AbortSignal.timeout(120_000) });
   } catch (error) {
     const cause = error instanceof Error ? (error.cause as (Error & { code?: string }) | undefined) : undefined;
     throw new ApiFailure(0, "network_error", `Couldn't reach ${server}: ${cause?.message || cause?.code || String(error)}`);
   }
   if (response.status !== 200)
-    throw new ApiFailure(response.status, "upgrade_unavailable", `${url} answered ${response.status}, so there is nothing to update from.`);
+    throw new ApiFailure(
+      response.status,
+      "upgrade_unavailable",
+      response.status === 503
+        ? `${server} is rebuilding its CLI. Try again in a moment.`
+        : `${url} answered ${response.status}, so there is nothing to update from.`,
+    );
   return response;
 }
 
 /** Compares the running bundle with the one the install server serves now. */
 export async function checkForUpgrade(options: Options) {
-  const body: unknown = await (await get(options, "/cli/manifest.json")).json().catch(() => null);
+  const body: unknown = await (await get(options, "/cli/manifest.json")).json().catch((error: unknown) => {
+    if (error instanceof Error && error.name === "TimeoutError") throw new ApiFailure(0, "network_error", `${options.server} stopped answering.`);
+    return null;
+  });
   const manifest = body as Partial<Manifest> | null;
   if (typeof manifest?.version !== "string" || !/^[0-9a-f]{64}$/.test(manifest.sha256 ?? ""))
     throw new ApiFailure(0, "upgrade_unavailable", `${options.server} didn't answer with a CLI manifest.`);
   const current = sha256(await readFile(options.bundle));
-  return { manifest: manifest as Manifest, upToDate: current === manifest.sha256 };
+  return { manifest: manifest as Manifest, current, upToDate: current === manifest.sha256 };
 }
 
 /**
@@ -42,8 +52,13 @@ export async function checkForUpgrade(options: Options) {
  * a failure at any step leaves the current CLI as it was. install.json and
  * the launchers stay; they don't change between versions.
  */
-export async function installUpgrade(options: Options, manifest: Manifest) {
-  const bytes = Buffer.from(await (await get(options, "/cli/spectron.mjs")).arrayBuffer());
+export async function installUpgrade(options: Options & { checked: string; installServer: string }, manifest: Manifest) {
+  const response = await get(options, "/cli/spectron.mjs");
+  const bytes = Buffer.from(
+    await response.arrayBuffer().catch(() => {
+      throw new ApiFailure(0, "network_error", `The download from ${options.server} broke off, so nothing changed. Run \`spectron upgrade\` again.`);
+    }),
+  );
   if (sha256(bytes) !== manifest.sha256)
     throw new ApiFailure(
       0,
@@ -56,10 +71,18 @@ export async function installUpgrade(options: Options, manifest: Manifest) {
     await writeFile(staged, bytes, { flag: "wx" });
     await chmod(staged, 0o755);
     const printed = await new Promise<string>((resolve, reject) =>
-      execFile(process.execPath, [staged, "--version"], (error, stdout) => (error ? reject(error) : resolve(stdout.trim()))),
+      execFile(process.execPath, [staged, "--version"], { timeout: 30_000 }, (error, stdout) => (error ? reject(error) : resolve(stdout.trim()))),
     ).catch(() => null);
     if (printed !== manifest.version)
       throw new ApiFailure(0, "upgrade_failed", `The new CLI doesn't run with this Node.js (${process.version}), so nothing changed.`);
+    // Still the install that was checked? A reinstall meanwhile (perhaps from
+    // another server) wins; this upgrade then changes nothing.
+    const [installed, server] = await Promise.all([
+      readFile(options.bundle).then(sha256, () => null),
+      readFile(join(dirname(options.bundle), "install.json"), "utf8").then((text) => (JSON.parse(text) as { url?: unknown }).url, () => null),
+    ]);
+    if (installed !== options.checked || server !== options.installServer)
+      throw new ApiFailure(0, "upgrade_failed", "This CLI was reinstalled while updating, so the update was dropped. Run `spectron upgrade` again if needed.");
     await rename(staged, options.bundle);
   } catch (error) {
     await rm(staged, { force: true });

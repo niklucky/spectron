@@ -6,7 +6,8 @@
 // SPECTRON_VERSION is the release (from the vX.Y.Z tag, see release.yml and
 // Dockerfile.api); without it the build is 0.0.0-dev.
 import { build } from "esbuild";
-import { copyFile, mkdir, rm, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -33,5 +34,8 @@ await build({
   logLevel: "warning",
   define: { __SPECTRON_VERSION__: JSON.stringify(version) },
 });
-await writeFile(join(out, "manifest.json"), `${JSON.stringify({ version })}\n`);
+// The bundle's SHA-256 too: the server serves the manifest only while the
+// bundle on disk still matches it (not mid-rebuild).
+const sha256 = createHash("sha256").update(await readFile(join(out, "spectron.mjs"))).digest("hex");
+await writeFile(join(out, "manifest.json"), `${JSON.stringify({ version, sha256 })}\n`);
 for (const script of ["install.sh", "install.ps1"]) await copyFile(join(here, script), join(out, script));

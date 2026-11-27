@@ -127,11 +127,11 @@ test("CLI installer: curl | sh installs, upgrades and refuses bad downloads", { 
   assert.equal((await sh(`"${bin}" --version`, env)).stdout, "1.0.0\n");
   const current = await sh(`"${bin}" upgrade`, env);
   assert.equal(current.code, 0, current.stderr);
-  assert.match(current.stdout, /spectron 1\.0\.0 is up to date with http:\/\/127\.0\.0\.1/);
+  assert.match(current.stdout, /spectron 1\.0\.0 matches http:\/\/127\.0\.0\.1/);
   await build("1.1.0");
   assert.equal((await manifest()).version, "1.1.0");
   const available = await sh(`"${bin}" upgrade --check`, env);
-  assert.match(available.stdout, /spectron 1\.1\.0 is available \(this is 1\.0\.0\)/);
+  assert.match(available.stdout, /serves spectron 1\.1\.0 \(this is 1\.0\.0\)/);
   assert.equal((await sh(`"${bin}" --version`, env)).stdout, "1.0.0\n");
   const updated = await sh(`"${bin}" upgrade`, env);
   assert.equal(updated.code, 0, updated.stderr);
@@ -143,6 +143,29 @@ test("CLI installer: curl | sh installs, upgrades and refuses bad downloads", { 
   const json = JSON.parse((await sh(`"${bin}" upgrade --json`, env)).stdout) as Record<string, string>;
   assert.equal(json.status, "current");
   assert.equal(json.latest, "1.1.0");
+
+  // A version is only served with the bundle it was built with: mid-rebuild
+  // (bundle replaced, manifest not yet), the manifest is a 503.
+  const bundleBefore = await readFile(join(dist, "spectron.mjs"));
+  await appendFile(join(dist, "spectron.mjs"), "\n// mid-rebuild\n");
+  const rebuilding = await fetch(`${origin}/cli/manifest.json`);
+  assert.equal(rebuilding.status, 503);
+  assert.equal(rebuilding.headers.get("cache-control"), "no-store");
+  const busy = await sh(`"${bin}" upgrade`, env);
+  assert.equal(busy.code, 1);
+  assert.match(busy.stderr, /is rebuilding its CLI/);
+  await writeFile(join(dist, "spectron.mjs"), bundleBefore);
+
+  // The upgrade routes take no token: a 401 from them (say, a proxy) is not
+  // "token rejected" (exit 4) but an unavailable update.
+  const saved = routes;
+  routes = new Hono();
+  routes.get("/cli/manifest.json", () => new Response("Unauthorized", { status: 401 }));
+  const behindAuth = await sh(`"${bin}" upgrade --check --json`, env);
+  routes = saved;
+  assert.equal(behindAuth.code, 1);
+  assert.equal(JSON.parse(behindAuth.stderr).error.code, "upgrade_unavailable");
+  assert.equal(JSON.parse(behindAuth.stderr).error.status, 401);
 
   // Running it again upgrades in place, and needs no PATH hint once on PATH.
   const again = await sh(install, { ...env, PATH: `${join(home, ".local/bin")}:${env.PATH}` });

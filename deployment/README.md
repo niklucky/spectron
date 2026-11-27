@@ -114,7 +114,7 @@ The tag is also the version: `release.yml` builds `vX.Y.Z` into the API image
 as `X.Y.Z`, which the CLI reports (`spectron --version`) and the server
 publishes at `/cli/manifest.json` for `spectron upgrade`.
 
-The deploy pins all three images to the commit sha it just built and verified,
+The deploy pins all three images to the commit sha and version it just built and verified,
 so what is running is unambiguous. A rollback is the same deploy re-run against
 an older tag.
 
