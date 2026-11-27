@@ -27,10 +27,11 @@ export function createCliRoutes({ appURL, dist }: { appURL: string; dist: string
     const [script, bundle] = await Promise.all([read("install.sh"), read("spectron.mjs")]);
     if (script === null || bundle === null)
       // Still a valid script, for `curl … | sh` without -f.
-      return notFound(`echo "The Spectron CLI isn't available on ${appURL} yet." >&2\nexit 1\n`);
+      return notFound(`echo "The Spectron CLI isn't available on this server yet." >&2\nexit 1\n`);
     const checksum = createHash("sha256").update(bundle).digest("hex");
     return c.body(
-      script.replaceAll("__SPECTRON_SERVER__", appURL).replaceAll("__SPECTRON_SHA256__", checksum),
+      // Callbacks, so `$&` and the like in a value are never replacement patterns.
+      script.replaceAll("__SPECTRON_SERVER__", () => shellQuote(appURL)).replaceAll("__SPECTRON_SHA256__", () => checksum),
       200,
       // text/plain so a browser shows the script for reading before running it.
       headers("text/plain; charset=utf-8"),
@@ -49,3 +50,6 @@ export function createCliRoutes({ appURL, dist }: { appURL: string; dist: string
 
   return routes;
 }
+
+/** A POSIX shell literal: single-quoted, with any ' closed, escaped and reopened. */
+export const shellQuote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;

@@ -27,7 +27,12 @@ curl -fsSL https://app.spectron.dev/cli/install.sh -o install-spectron.sh && sh 
 
 Run the install command again to upgrade. It only ever replaces its own `spectron` link: if another program already has that name, it stops and says so.
 
-To uninstall, sign out first with `spectron auth logout`. Then delete the link (`command -v spectron` shows where it is) and the directory it points to: `~/.local/share/spectron` by default, `$XDG_DATA_HOME/spectron` when that is set, or your `SPECTRON_INSTALL_DIR`.
+To uninstall, sign out first with `spectron auth logout`. Then remove what the installer added: the `spectron` link in the bin directory you installed to (`~/.local/bin` by default, or your `SPECTRON_BIN_DIR`), and `spectron.mjs` and `install.json` in the install directory. The install directory is `~/.local/share/spectron` by default, `$XDG_DATA_HOME/spectron` when that is set, or your `SPECTRON_INSTALL_DIR`. With the defaults:
+
+```sh
+rm ~/.local/bin/spectron ~/.local/share/spectron/spectron.mjs ~/.local/share/spectron/install.json
+rmdir ~/.local/share/spectron
+```
 
 In local development, run `pnpm --filter @spectron/cli build` first. Your local server then serves it at `$APP_URL/cli/install.sh`.
 

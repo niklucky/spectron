@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
-import { appendFile, lstat, stat, mkdir, mkdtemp, readFile, readlink, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { execFile, spawn } from "node:child_process";
+import { once } from "node:events";
+import { appendFile, lstat, readdir, stat, mkdir, mkdtemp, readFile, readlink, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -9,7 +10,7 @@ import { test } from "node:test";
 import { Readable, Writable } from "node:stream";
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
-import { createCliRoutes } from "../src/cli-install";
+import { createCliRoutes, shellQuote } from "../src/cli-install";
 import { run } from "../../../apps/cli/src/cli";
 
 const cliDir = fileURLToPath(new URL("../../../apps/cli/", import.meta.url));
@@ -25,7 +26,8 @@ function sh(script: string, env: Record<string, string>, stdin?: string, cwd?: s
 }
 
 test("CLI installer: curl | sh installs, upgrades and refuses bad downloads", { skip: process.platform === "win32" }, async (t) => {
-  const root = await mkdtemp(join(tmpdir(), "spectron-cli-install-"));
+  // Physical, as the installer resolves it (macOS: /var is /private/var).
+  const root = await realpath(await mkdtemp(join(tmpdir(), "spectron-cli-install-")));
   const dist = join(root, "dist");
   const home = join(root, "home");
   await mkdir(home);
@@ -41,6 +43,7 @@ test("CLI installer: curl | sh installs, upgrades and refuses bad downloads", { 
   await new Promise((resolve) => server.once("listening", resolve));
   const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   t.after(async () => {
+    server.closeAllConnections();
     await new Promise((resolve) => server.close(resolve));
     await rm(root, { recursive: true, force: true });
   });
@@ -55,7 +58,7 @@ test("CLI installer: curl | sh installs, upgrades and refuses bad downloads", { 
   routes.route("/cli", createCliRoutes({ appURL: origin, dist: join(root, "missing") }));
   const missing = await sh(`curl -sS ${origin}/cli/install.sh | sh`, env);
   assert.equal(missing.code, 1);
-  assert.match(missing.stderr, /isn't available on http:\/\/127\.0\.0\.1/);
+  assert.match(missing.stderr, /isn't available on this server yet/);
 
   const gone = await fetch(`${origin}/cli/spectron.mjs`);
   assert.equal(gone.status, 404);
@@ -118,11 +121,39 @@ test("CLI installer: curl | sh installs, upgrades and refuses bad downloads", { 
   const noHome = await sh(install, homeless);
   assert.equal(noHome.code, 1);
   assert.match(noHome.stderr, /HOME isn't set\. Set SPECTRON_INSTALL_DIR and SPECTRON_BIN_DIR/);
+  // …unless the locations come from elsewhere.
+  const xdg = await sh(install, { ...homeless, XDG_DATA_HOME: join(root, "xdg"), SPECTRON_BIN_DIR: join(root, "xdg-bin") });
+  assert.equal(xdg.code, 0, xdg.stderr);
+  assert.ok((await lstat(join(root, "xdg-bin/spectron"))).isSymbolicLink());
+
+  // A fresh install under a restrictive umask still works and is shared;
+  // an existing private install directory stays private.
+  const freshHome = join(root, "fresh-home");
+  await mkdir(freshHome);
+  const fresh = await sh(`umask 177; ${install}`, { ...env, HOME: freshHome });
+  assert.equal(fresh.code, 0, fresh.stderr);
+  assert.equal((await stat(join(freshHome, ".local/share/spectron"))).mode & 0o777, 0o755);
+  assert.equal((await stat(join(freshHome, ".local/bin"))).mode & 0o777, 0o755);
+  const privateDir = join(root, "private");
+  await mkdir(privateDir, { mode: 0o700 });
+  const kept = await sh(install, { ...env, SPECTRON_INSTALL_DIR: privateDir, SPECTRON_BIN_DIR: join(root, "private-bin") });
+  assert.equal(kept.code, 0, kept.stderr);
+  assert.equal((await stat(privateDir)).mode & 0o777, 0o700);
+
+  // A directory where a file goes is refused before anything moves.
+  const occupied = join(root, "occupied");
+  await mkdir(join(occupied, "spectron.mjs"), { recursive: true });
+  const refusedDir = await sh(install, { ...env, SPECTRON_INSTALL_DIR: occupied, SPECTRON_BIN_DIR: join(root, "occupied-bin") });
+  assert.equal(refusedDir.code, 1);
+  assert.match(refusedDir.stderr, /spectron\.mjs is a directory/);
+
+  // Staging directories never outlive a run.
+  assert.deepEqual((await readdir(share)).sort(), ["install.json", "spectron.mjs"]);
 
   // Relative directories still produce a link that resolves.
   const relative = await sh(install, { ...env, SPECTRON_INSTALL_DIR: "tools/share", SPECTRON_BIN_DIR: "tools/bin" }, undefined, root);
   assert.equal(relative.code, 0, relative.stderr);
-  assert.equal(await readlink(join(root, "tools/bin/spectron")), join(await realpath(root), "tools/share/spectron.mjs"));
+  assert.equal(await readlink(join(root, "tools/bin/spectron")), join(root, "tools/share/spectron.mjs"));
   assert.match((await sh("tools/bin/spectron --version", env, undefined, root)).stdout, /^\d+\.\d+\.\d+\n$/);
 
   // A bundle that changed after the installer was served is refused, and the
@@ -151,6 +182,30 @@ test("CLI installer: curl | sh installs, upgrades and refuses bad downloads", { 
   assert.equal(linked.code, 1);
   assert.match(linked.stderr, /links to \/bin\/sh, not to/);
   assert.equal(await readlink(join(linkedBin, "spectron")), "/bin/sh");
+
+  // A signal during a stalled download stops it at once and cleans up.
+  const stalledShare = join(root, "stalled");
+  routes = new Hono();
+  routes.get("/cli/install.sh", () => new Response(script));
+  routes.get("/cli/spectron.mjs", () => new Promise<Response>(() => {}));
+  await writeFile(join(root, "install.sh"), script);
+  const child = spawn("sh", [join(root, "install.sh")], { env: { ...env, SPECTRON_INSTALL_DIR: stalledShare, SPECTRON_BIN_DIR: join(root, "stalled-bin") } });
+  const exited = once(child, "exit");
+  // "Downloading…" is printed once the traps are set; an early exit fails the test.
+  await Promise.race([once(child.stdout, "data"), exited.then(() => assert.fail("The installer exited before downloading."))]);
+  const started = Date.now();
+  child.kill("SIGTERM");
+  const [code] = (await exited) as [number | null];
+  assert.equal(code, 143);
+  assert.ok(Date.now() - started < 2000);
+  assert.deepEqual(await readdir(stalledShare), []);
+});
+
+test("shellQuote makes a POSIX shell literal", async () => {
+  for (const value of ["https://a.example", "it's", "'", "$(x) `y` \\ \"z\""]) {
+    const { stdout } = await sh(`printf %s ${shellQuote(value)}`, { PATH: "/usr/bin:/bin" });
+    assert.equal(stdout, value);
+  }
 });
 
 test("CLI login: --url, SPECTRON_URL, the saved server, then the install server", async (t) => {
