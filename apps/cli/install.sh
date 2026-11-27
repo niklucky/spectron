@@ -9,8 +9,8 @@
 #
 # Installs to ~/.local/share/spectron and links ~/.local/bin/spectron.
 # SPECTRON_INSTALL_DIR and SPECTRON_BIN_DIR change those, e.g.
-#   curl -fsSL https://app.spectron.dev/cli/install.sh |
-#     SPECTRON_INSTALL_DIR=/usr/local/lib/spectron SPECTRON_BIN_DIR=/usr/local/bin sh
+#   curl -fsSL https://app.spectron.dev/cli/install.sh -o /tmp/install-spectron.sh &&
+#     SPECTRON_INSTALL_DIR=/usr/local/lib/spectron SPECTRON_BIN_DIR=/usr/local/bin sh /tmp/install-spectron.sh
 #
 # Everything runs inside main(), called on the last line, so a download that
 # is cut short runs nothing.
