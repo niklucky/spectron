@@ -44,7 +44,7 @@ export type IssuePanelActions = {
     id: string,
     overwriteRemote?: boolean,
   ) => Promise<{ key: string }>;
-  reimportJira?: (projectId: string, externalId: string) => Promise<{ key: string }>;
+  reimportJira?: (projectId: string, id: string) => Promise<{ key: string }>;
   activity: (input: {
     projectId: string;
     issueId: string;
@@ -297,20 +297,20 @@ export function IssuePanel({
     }
   };
   const confirmReimport = async () => {
-    if (busy || !reimportJira || !issue.externalId) return;
+    if (busy || !reimportJira) return;
     setBusy(true);
     setReimportError("");
     setJiraFeedback("");
     try {
-      const result = await reimportJira(issue.projectId, issue.externalId);
+      const result = await reimportJira(issue.projectId, issue.id);
       setEditing(false);
       setJiraError("");
       setReimportOpen(false);
       setJiraFeedback(`Re-imported ${result.key} from Jira.`);
+      setReload((n) => n + 1);
     } catch (cause) {
       setReimportError(cause instanceof Error ? cause.message : "Could not re-import from Jira.");
     } finally {
-      setReload((n) => n + 1);
       setBusy(false);
     }
   };
@@ -612,7 +612,7 @@ export function IssuePanel({
       {reimportOpen && reimportJira && (
         <Dialog title="Re-import from Jira" size="sm" onClose={() => { if (!busy) setReimportOpen(false); }}>
           <p className="text-sm text-ink-2">
-            Import the latest Jira data for {issue.externalKey ?? issue.key}. This can replace local edits to synced fields, comments, and worklogs.
+            Import the latest Jira fields for {issue.externalKey ?? issue.key}. Jira values will replace local edits to synced fields.
           </p>
           {reimportError && <p className="mt-2 text-sm text-bad" role="alert">{reimportError}</p>}
           <DialogFooter>

@@ -498,6 +498,9 @@ export const appRouter = t.router({
           input.runId,
         ),
       ),
+    reimportIssue: authenticated.input(issueRef).mutation(({ ctx, input }) =>
+      ctx.jira.reimportIssue(ctx.userId, input.projectId, input.id),
+    ),
     pushIssue: authenticated
       .input(issueRef.extend({ overwriteRemote: z.boolean().default(false) }))
       .mutation(({ ctx, input }) =>
