@@ -217,11 +217,12 @@
     foreach ($entry in $search) {
       $folder = & $normal $entry
       # Blank and relative entries ("", " ", "tools") don't name a fixed folder.
-      if (-not $folder -or -not [IO.Path]::IsPathRooted($folder)) { continue }
+      # A pattern, not IsPathRooted, which throws on 5.1 for a malformed entry.
+      if ($folder -notmatch '^([A-Za-z]:\\|\\\\)') { continue }
       foreach ($extension in ($pathext.Split(';') | Where-Object { $_ })) {
-        # A malformed entry is skipped, as Windows skips it.
+        # A malformed entry is skipped, as Windows skips it; File.Exists never throws.
         try { $candidate = [IO.Path]::Combine($folder, 'spectron' + $extension) } catch { continue }
-        if (Test-Path -LiteralPath $candidate -PathType Leaf) { $found = $candidate; break }
+        if ([IO.File]::Exists($candidate)) { $found = $candidate; break }
       }
       if ($found) { break }
     }

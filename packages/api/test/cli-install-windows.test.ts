@@ -233,7 +233,7 @@ for (const shell of shells)
         assert.equal((await ps(shell, read, {})).stdout.trim(), original);
       });
       const bin = join(dir, "bin");
-      await ps(shell, `Set-ItemProperty -LiteralPath 'HKCU:\\Environment' -Name Path -Type ExpandString -Value '%USERPROFILE%\\spectron-test-entry;${bin}'`, {});
+      await ps(shell, `Set-ItemProperty -LiteralPath 'HKCU:\\Environment' -Name Path -Type ExpandString -Value '%USERPROFILE%\\spectron-test-entry;${bin};C:\\Bad"Entry\\'`, {});
       const { SPECTRON_NO_MODIFY_PATH: _skip, ...modifying } = env;
       routes = new Hono().route("/cli", createCliRoutes({ appURL: origin, dist }));
       const withPath = await ps(shell, `${install}; spectron --version`, modifying);
@@ -242,7 +242,8 @@ for (const shell of shells)
       assert.match(withPath.stdout, /\n\d+\.\d+\.\d+\s*$/);
       const after = (await ps(shell, read, {})).stdout.trim();
       assert.equal(after.split("|")[0], "ExpandString");
-      assert.equal(decoded(after), `${bin};%USERPROFILE%\\spectron-test-entry`);
+      // A malformed entry (a stray quote) is kept, and doesn't stop the install.
+      assert.equal(decoded(after), `${bin};%USERPROFILE%\\spectron-test-entry;C:\\Bad"Entry\\`);
       // Already first: left alone, and nothing left behind by the broadcast.
       const twice = await ps(shell, install, modifying);
       assert.doesNotMatch(twice.stdout, /first in your user PATH/);
