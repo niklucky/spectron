@@ -622,7 +622,23 @@ test("Jira project fields, import, publishing, conflicts and retry safety", asyn
   assert.equal(remote.fields.summary, "Local edit");
   assert.deepEqual((remote.fields.labels as string[]).slice().sort(), ["frontend", "urgent"]);
   assert.equal(remote.fields.issuetype?.id, "10001");
+
+  row = await issues.update("owner", {
+    projectId: p.id,
+    id: row.id,
+    expectedUpdatedAt: row.updatedAt,
+    title: "Another local edit",
+  });
+  remote.fields.summary = "Latest Jira title";
+  await assert.rejects(jira.pushIssue("owner", p.id, row.id), /Jira changed/);
+  const writesBeforeReimport = writes.length;
+  const reimported = await jira.import("owner", p.id, row.externalId!, true);
+  assert.deepEqual(reimported, { id: row.id, key: row.externalKey });
   row = (await issues.list("owner", p.id))[0]!;
+  assert.equal(row.title, "Latest Jira title");
+  await jira.pushIssue("owner", p.id, row.id);
+  assert.equal(writes.length, writesBeforeReimport);
+
   await issues.update("owner", {
     projectId: p.id,
     id: row.id,

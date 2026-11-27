@@ -15,6 +15,7 @@ import type {
   ProjectMemberSummary,
 } from "@spectron/shared";
 import { Button, IconButton } from "../../ui/button";
+import { Dialog, DialogFooter } from "../../ui/dialog";
 import { Field, Input, Select, Textarea } from "../../ui/input";
 import { Icon } from "../../ui/icon";
 import { Segmented } from "../../ui/segmented";
@@ -43,6 +44,7 @@ export type IssuePanelActions = {
     id: string,
     overwriteRemote?: boolean,
   ) => Promise<{ key: string }>;
+  reimportJira?: (projectId: string, externalId: string) => Promise<{ key: string }>;
   activity: (input: {
     projectId: string;
     issueId: string;
@@ -118,6 +120,9 @@ export function IssuePanel({
   useEffect(() => { if (!keyCopied) return; const timer = window.setTimeout(() => setKeyCopied(false), 2000); return () => window.clearTimeout(timer); }, [keyCopied]);
   const [chatTool, setChatTool] = useState<"files" | "worklog" | null>(null);
   const [jiraFeedback, setJiraFeedback] = useState("");
+  const [jiraError, setJiraError] = useState("");
+  const [reimportOpen, setReimportOpen] = useState(false);
+  const [reimportError, setReimportError] = useState("");
   const [editing, setEditing] = useState(false);
   const [entries, setEntries] = useState<IssueHistoryEntry[]>([]);
   const [members, setMembers] = useState<ProjectMemberSummary[]>([]);
@@ -268,6 +273,47 @@ export function IssuePanel({
     }
   };
   const stateFill = state?.color ?? statusColor(state?.trigger ?? "opened");
+  const canSyncJira = !issue.deletedAt && actions.canPublish?.(issue.projectId);
+  const reimportJira = canSyncJira && issue.externalId ? actions.reimportJira : undefined;
+  const jiraConflict = jiraError.includes("Jira changed since");
+  const openReimport = () => {
+    setReimportError("");
+    setReimportOpen(true);
+  };
+  const pushJira = async (overwriteRemote = false) => {
+    if (busy || !actions.pushJira) return;
+    setBusy(true);
+    setError("");
+    setJiraError("");
+    setJiraFeedback("");
+    try {
+      const result = await actions.pushJira(issue.projectId, issue.id, overwriteRemote);
+      setJiraFeedback(overwriteRemote ? `Replaced Jira values: ${result.key}` : `Saved to Jira: ${result.key}`);
+    } catch (cause) {
+      setJiraError(cause instanceof Error ? cause.message : "Could not send to Jira.");
+      toggleDrawer(true);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const confirmReimport = async () => {
+    if (busy || !reimportJira || !issue.externalId) return;
+    setBusy(true);
+    setReimportError("");
+    setJiraFeedback("");
+    try {
+      const result = await reimportJira(issue.projectId, issue.externalId);
+      setEditing(false);
+      setJiraError("");
+      setReimportOpen(false);
+      setJiraFeedback(`Re-imported ${result.key} from Jira.`);
+    } catch (cause) {
+      setReimportError(cause instanceof Error ? cause.message : "Could not re-import from Jira.");
+    } finally {
+      setReload((n) => n + 1);
+      setBusy(false);
+    }
+  };
   const menuItems = [
     { label: "Refresh chat", icon: "refresh" as const, onSelect: () => setReload((n) => n + 1) },
     { label: "Copy issue link", icon: "link" as const, onSelect: onCopy },
@@ -278,13 +324,11 @@ export function IssuePanel({
           { label: "Edit issue", icon: "edit" as const, onSelect: () => { toggleDrawer(true); setEditing(true); } },
         ]
       : []),
-    ...(!issue.deletedAt && actions.pushJira && actions.canPublish?.(issue.projectId)
-      ? [{ label: issue.externalId ? "Sync to Jira" : "Create in Jira", icon: "jira" as const, onSelect: async () => {
-          setBusy(true); setError(""); setJiraFeedback("");
-          try { const result = await actions.pushJira!(issue.projectId, issue.id); setJiraFeedback(`Saved to Jira: ${result.key}`); }
-          catch (e) { setError(e instanceof Error ? e.message : "Could not send to Jira."); toggleDrawer(true); }
-          finally { setBusy(false); }
-        } }]
+    ...(canSyncJira && actions.pushJira
+      ? [{ label: issue.externalId ? "Sync to Jira" : "Create in Jira", icon: "jira" as const, onSelect: () => void pushJira() }]
+      : []),
+    ...(reimportJira
+      ? [{ label: "Re-import from Jira", icon: "refresh" as const, onSelect: openReimport }]
       : []),
     ...(!issue.deletedAt && actions.pushTracker && actions.canPublishTracker?.(issue.projectId)
       ? [{ label: issue.trackerKey ? "Sync to Yandex Tracker" : "Create in Yandex Tracker", icon: "external" as const, onSelect: async () => {
@@ -303,6 +347,7 @@ export function IssuePanel({
   ];
   const kv = "grid grid-cols-[84px_minmax(0,1fr)] items-center gap-x-2.5 gap-y-2 text-sm";
   const dt = "text-ink-3";
+  const bannerError = titleError || (drawer ? "" : jiraError || error);
   return (
     <AttachmentGallery projectId={issue.projectId} issueId={issue.id} actions={actions.files}>
     <main className="chat-column relative flex min-w-0 bg-surface" aria-label={`${issue.key} issue`}>
@@ -351,12 +396,12 @@ export function IssuePanel({
             <span className="mx-1 h-[18px] w-px bg-line max-[900px]:hidden" />
             <Segmented label="Conversation detail" size="sm" value={detail} onChange={setDetail} options={[{ value: "simple", label: "Simple", title: "People and agent summaries" }, { value: "dev", label: "Developer", title: "Requests, checks, branches and logs" }]} />
             <IconButton icon="panel" label={drawer ? "Hide issue details" : "Show issue details"} active={drawer} onClick={() => toggleDrawer(!drawer)} />
-            <Menu compact label="Issue actions" items={menuItems} align="end" />
+            <Menu compact label="Issue actions" items={menuItems} align="end" disabled={busy} />
           </div>
         </header>
-        {(titleError || jiraFeedback || (error && !drawer)) && (
+        {(bannerError || jiraFeedback) && (
           <div className="absolute inset-x-0 top-14 z-10 flex justify-center px-5 pt-2">
-            <p role={titleError || error ? "alert" : "status"} className={cn("rounded-lg px-3 py-1.5 text-sm shadow-soft hairline", titleError || error ? "bg-bad-soft text-bad" : "bg-surface text-ink-2")}>{titleError || error || jiraFeedback}</p>
+            <p role={bannerError ? "alert" : "status"} className={cn("rounded-lg px-3 py-1.5 text-sm shadow-soft hairline", bannerError ? "bg-bad-soft text-bad" : "bg-surface text-ink-2")}>{bannerError || jiraFeedback}</p>
           </div>
         )}
         <IssueChat
@@ -384,6 +429,27 @@ export function IssuePanel({
               <IconButton icon="close" label="Close details" onClick={() => toggleDrawer(false)} />
             </div>
           </div>
+          {jiraError && (
+            <div className="mx-4 mb-4 rounded-lg bg-bad-soft px-3 py-2 text-sm text-bad">
+              <p role="alert">{jiraError}</p>
+              <div className="mt-1 flex flex-wrap gap-1">
+                {jiraConflict && reimportJira && (
+                  <Button variant="secondary" size="sm" disabled={busy} onClick={openReimport}>
+                    Re-import from Jira
+                  </Button>
+                )}
+                {jiraConflict && canSyncJira && actions.pushJira && (
+                  <Button variant="ghost" size="sm" disabled={busy} onClick={() => void pushJira(true)}>
+                    Replace Jira values with local values
+                  </Button>
+                )}
+                <Button variant="ghost" size="sm" disabled={busy} onClick={() => {
+                  setJiraError("");
+                  setReload((n) => n + 1);
+                }}>Reload</Button>
+              </div>
+            </div>
+          )}
           {issue.deletedAt && (
             <div className="mx-4 mb-3 rounded-lg bg-bad-soft px-3 py-2 text-sm text-bad" role="status">
               Deleted {formatDateTime(issue.deletedAt)}. History is retained.
@@ -538,18 +604,24 @@ export function IssuePanel({
           {error && (
             <p className="mx-4 mb-4 rounded-lg bg-bad-soft px-3 py-2 text-sm text-bad" role="alert">
               {error}{" "}
-              {error.includes("Jira changed since") && actions.pushJira && (
-                <Button variant="ghost" size="sm" disabled={busy} onClick={async () => {
-                  setBusy(true);
-                  try { const result = await actions.pushJira!(issue.projectId, issue.id, true); setError(""); setJiraFeedback(`Replaced Jira values: ${result.key}`); }
-                  catch (e) { setError(e instanceof Error ? e.message : "Could not send to Jira."); }
-                  finally { setBusy(false); }
-                }}>Replace Jira values with local values</Button>
-              )}
               <Button variant="ghost" size="sm" onClick={() => setReload((n) => n + 1)}>Reload</Button>
             </p>
           )}
         </aside>
+      )}
+      {reimportOpen && reimportJira && (
+        <Dialog title="Re-import from Jira" size="sm" onClose={() => { if (!busy) setReimportOpen(false); }}>
+          <p className="text-sm text-ink-2">
+            Import the latest Jira data for {issue.externalKey ?? issue.key}. This can replace local edits to synced fields, comments, and worklogs.
+          </p>
+          {reimportError && <p className="mt-2 text-sm text-bad" role="alert">{reimportError}</p>}
+          <DialogFooter>
+            <Button variant="ghost" disabled={busy} onClick={() => setReimportOpen(false)}>Cancel</Button>
+            <Button variant="danger" disabled={busy} onClick={() => void confirmReimport()}>
+              {busy ? "Re-importing…" : "Re-import"}
+            </Button>
+          </DialogFooter>
+        </Dialog>
       )}
     </main>
     </AttachmentGallery>
