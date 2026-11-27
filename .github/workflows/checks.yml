@@ -57,6 +57,36 @@ jobs:
         run: pnpm test
         env:
           TEST_DATABASE_URL: postgresql://spectron:spectron@127.0.0.1:5442/spectron
+          # The PowerShell installer test must run, not skip.
+          SPECTRON_TEST_SHELLS: pwsh
 
       - name: Build
         run: pnpm build
+
+  # The Windows installer on real Windows, under Windows PowerShell 5.1 and
+  # PowerShell 7: the cmd launcher, the registry PATH and quoting. It needs no
+  # database, so it installs only what the test and the CLI build use.
+  windows-installer:
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --filter @spectron/api... --filter @spectron/cli
+
+      - name: Test the Windows installer
+        run: pnpm --filter @spectron/api exec tsx --test test/cli-install-windows.test.ts
+        env:
+          # Both must run, not skip: Windows PowerShell 5.1 and PowerShell 7.
+          SPECTRON_TEST_SHELLS: powershell pwsh
