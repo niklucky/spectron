@@ -259,7 +259,7 @@ const commands: Command[] = [
     group: "Account",
     summary: "Sign in with a personal access token",
     options: {
-      url: { type: "string", help: "Spectron address, e.g. https://spectron.example.com (default: the server you're signed in to, else the one you installed from)" },
+      url: { type: "string", help: "Spectron address, e.g. https://spectron.example.com (default: $SPECTRON_URL, else the server you're signed in to, else the one you installed from)" },
       "with-token": { type: "boolean", help: "Read the token from stdin instead of prompting" },
     },
     async run(ctx) {
