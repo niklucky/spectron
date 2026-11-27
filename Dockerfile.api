@@ -9,8 +9,7 @@ RUN pnpm --filter @spectron/app build
 # The CLI and its installers, served at /cli/, stamped with the release
 # version (release.yml passes it from the vX.Y.Z tag).
 ARG SPECTRON_VERSION=0.0.0-dev
-RUN SPECTRON_VERSION=$SPECTRON_VERSION pnpm --filter @spectron/cli build
-ENV SPECTRON_VERSION=$SPECTRON_VERSION
+RUN pnpm --filter @spectron/cli build
 ENV NODE_ENV=production
 ENV API_HOST=0.0.0.0
 ENV STATIC_ROOT=/workspace/apps/app/dist

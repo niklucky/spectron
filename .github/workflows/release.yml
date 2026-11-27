@@ -44,6 +44,11 @@ jobs:
         id: version
         run: |
           if [ "$GITHUB_REF_TYPE" = tag ]; then version="${GITHUB_REF_NAME#v}"; else version="0.0.0-${GITHUB_SHA::7}"; fi
+          # Checked before anything is built or pushed (build.mjs checks the same).
+          if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "::error::$GITHUB_REF_NAME is not a release tag like v1.2.3."
+            exit 1
+          fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
   build:

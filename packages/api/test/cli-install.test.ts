@@ -3,7 +3,7 @@ import { execFile, spawn } from "node:child_process";
 import { createServer, type IncomingMessage } from "node:http";
 import { connect, type Socket } from "node:net";
 import { once } from "node:events";
-import { appendFile, lstat, readdir, stat, mkdir, mkdtemp, readFile, readlink, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { appendFile, chmod, lstat, readdir, stat, mkdir, mkdtemp, readFile, readlink, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import type { AddressInfo } from "node:net";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
@@ -166,6 +166,67 @@ test("CLI installer: curl | sh installs, upgrades and refuses bad downloads", { 
   assert.equal(behindAuth.code, 1);
   assert.equal(JSON.parse(behindAuth.stderr).error.code, "upgrade_unavailable");
   assert.equal(JSON.parse(behindAuth.stderr).error.status, 401);
+
+  // Each failure leaves the installed CLI exactly as it was, and no staged file.
+  const hash = (data: string | Uint8Array) => createHash("sha256").update(data).digest("hex");
+  const offer = (manifest: object, bundle: () => ConstructorParameters<typeof Response>[0]) => {
+    routes = new Hono();
+    routes.get("/cli/manifest.json", (c) => c.json(manifest));
+    routes.get("/cli/spectron.mjs", () => new Response(bundle()));
+  };
+  const intact = async () => {
+    assert.equal(await readFile(join(share, "spectron.mjs"), "utf8"), await readFile(join(dist, "spectron.mjs"), "utf8"));
+    assert.deepEqual((await readdir(share)).sort(), ["install.json", "spectron.mjs"]);
+  };
+  const failure = async (expected: { code: string; message: RegExp }) => {
+    const result = await sh(`"${bin}" upgrade --json`, env);
+    assert.equal(result.code, 1, result.stdout);
+    const { error } = JSON.parse(result.stderr) as { error: { code: string; message: string } };
+    assert.equal(error.code, expected.code);
+    assert.match(error.message, expected.message);
+    await intact();
+  };
+  const next = "console.log('1.2.0')";
+  // The download doesn't match the manifest.
+  offer({ version: "1.2.0", sha256: hash("something else") }, () => next);
+  await failure({ code: "checksum_mismatch", message: /doesn't match the server's checksum/ });
+  // It matches, but doesn't run (prints another version).
+  const broken = "console.log('9.9.9')";
+  offer({ version: "1.2.0", sha256: hash(broken) }, () => broken);
+  await failure({ code: "upgrade_failed", message: /doesn't run with this Node\.js/ });
+  // The connection drops halfway through the download.
+  offer({ version: "1.2.0", sha256: hash(next) }, () =>
+    new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("console"));
+        controller.error(new Error("dropped"));
+      },
+    }),
+  );
+  await failure({ code: "network_error", message: /broke off, so nothing changed/ });
+  // A manifest with no proper version is no manifest.
+  offer({ version: "", sha256: hash("") }, () => "");
+  await failure({ code: "upgrade_unavailable", message: /didn't answer with a CLI manifest/ });
+  // The install folder isn't writable (a shared install, another user).
+  offer({ version: "1.2.0", sha256: hash(next) }, () => next);
+  if (process.getuid?.() !== 0) {
+    await chmod(share, 0o555);
+    try {
+      await failure({ code: "upgrade_failed", message: /permission denied/ });
+    } finally {
+      await chmod(share, 0o755);
+    }
+  }
+  // And --json for an available and a done update.
+  assert.deepEqual(JSON.parse((await sh(`"${bin}" upgrade --check --json`, env)).stdout), {
+    status: "available", version: "1.1.0", latest: "1.2.0", server: origin,
+  });
+  assert.deepEqual(JSON.parse((await sh(`"${bin}" upgrade --json`, env)).stdout), {
+    status: "updated", version: "1.1.0", latest: "1.2.0", server: origin,
+  });
+  assert.equal(await readFile(join(share, "spectron.mjs"), "utf8"), next);
+  assert.equal(((await stat(join(share, "spectron.mjs"))).mode & 0o777), 0o755);
+  routes = saved;
 
   // Running it again upgrades in place, and needs no PATH hint once on PATH.
   const again = await sh(install, { ...env, PATH: `${join(home, ".local/bin")}:${env.PATH}` });

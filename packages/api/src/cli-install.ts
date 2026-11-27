@@ -47,10 +47,15 @@ export function createCliRoutes({ appURL, dist }: { appURL: string; dist: string
   routes.get("/manifest.json", async (c) => {
     const [manifest, bundle] = await Promise.all([read("manifest.json"), read("spectron.mjs")]);
     if (manifest === null || bundle === null) return notFound("The Spectron CLI isn't available on this server yet.\n");
-    const { version, sha256 } = JSON.parse(manifest) as { version: string; sha256?: string };
+    let version: unknown, sha256: unknown;
+    try {
+      ({ version, sha256 } = JSON.parse(manifest) as { version?: unknown; sha256?: unknown });
+    } catch {
+      // Half-written mid-rebuild: same as a mismatch below.
+    }
     // A version is only ever paired with the bundle it was built with: while a
     // rebuild has replaced one and not yet the other, there is no manifest.
-    if (sha256 !== createHash("sha256").update(bundle).digest("hex"))
+    if (typeof version !== "string" || sha256 !== createHash("sha256").update(bundle).digest("hex"))
       return new Response("The Spectron CLI is being rebuilt. Try again in a moment.\n", {
         status: 503,
         headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store", "Retry-After": "5" },

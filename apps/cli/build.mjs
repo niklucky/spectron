@@ -13,12 +13,12 @@ import { fileURLToPath } from "node:url";
 
 const here = fileURLToPath(new URL(".", import.meta.url));
 const out = resolve(process.argv[2] ?? join(here, "dist"));
-// Only the default output is cleared; a directory passed in is left as is.
-if (!process.argv[2]) await rm(out, { recursive: true, force: true });
-
 const version = (process.env.SPECTRON_VERSION || "0.0.0-dev").replace(/^v/, "");
 if (!/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/.test(version))
   throw new Error(`SPECTRON_VERSION must look like 1.2.3 or v1.2.3, not "${process.env.SPECTRON_VERSION}".`);
+
+// Only the default output is cleared; a directory passed in is left as is.
+if (!process.argv[2]) await rm(out, { recursive: true, force: true });
 
 await mkdir(out, { recursive: true });
 await build({
