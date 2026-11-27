@@ -61,7 +61,13 @@
     } catch {
       throw "Couldn't download $server/cli/spectron.mjs: $($_.Exception.Message)"
     }
-    if ((Get-FileHash -LiteralPath $part -Algorithm SHA256).Hash.ToLowerInvariant() -ne $checksum) {
+    # .NET rather than Get-FileHash: 5.1 loads that from a module file, which a
+    # PSModulePath inherited from PowerShell 7 hides.
+    $sha256 = [Security.Cryptography.SHA256]::Create()
+    $stream = [IO.File]::OpenRead($part)
+    try { $hash = -join ($sha256.ComputeHash($stream) | ForEach-Object { $_.ToString('x2') }) }
+    finally { $stream.Dispose(); $sha256.Dispose() }
+    if ($hash -ne $checksum) {
       throw 'The download doesn''t match its checksum, so nothing was installed. Run the install command again.'
     }
     $version = (& node $part --version)
