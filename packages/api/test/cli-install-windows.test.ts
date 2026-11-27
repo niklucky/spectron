@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile, execFileSync, spawn } from "node:child_process";
 import { once } from "node:events";
-import { appendFile, mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, readdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
@@ -105,6 +105,19 @@ for (const shell of shells)
     // Running it again upgrades in place.
     const again = await ps(shell, install, env);
     assert.equal(again.code, 0, again.stderr);
+
+    // Node writing to stderr on every start (a shim, a NODE_OPTIONS preload)
+    // doesn't stop the install, even on Windows PowerShell 5.1.
+    const noisy = await ps(shell, install, { ...env, NODE_OPTIONS: "--import=data:text/javascript,process.stderr.write(String.fromCharCode(33))" });
+    assert.equal(noisy.code, 0, noisy.stderr);
+
+    // A Node found through a non-ASCII folder survives the console code page.
+    if (windows) {
+      const accented = join(root, "José-node");
+      await symlink(dirname(process.execPath), accented, "junction");
+      const viaAccent = await ps(shell, install, { ...env, PATH: `${accented}${delimiter}${env.PATH}` });
+      assert.equal(viaAccent.code, 0, viaAccent.stderr);
+    }
 
     // Spaces, wildcard characters and ! in the path are just characters.
     const odd = join(root, "with spaces [1] !");

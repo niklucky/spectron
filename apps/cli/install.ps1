@@ -32,6 +32,9 @@
   # The last line only, and checked: a version manager's shim may print more.
   $askNode = {
     param($expression)
+    # Local to this block: on 5.1, stderr from a native command (a shim's or
+    # NODE_OPTIONS warning) would otherwise end the install under 'Stop'.
+    $ErrorActionPreference = 'Continue'
     if (-not $onWindows) { return "$(& node -p $expression 2>$null | Select-Object -Last 1)".Trim() }
     $saved = $env:NoDefaultCurrentDirectoryInExePath
     $env:NoDefaultCurrentDirectoryInExePath = '1'
@@ -39,7 +42,8 @@
     finally { $env:NoDefaultCurrentDirectoryInExePath = $saved }
   }
   $nodeVersion = & $askNode 'process.versions.node'
-  $nodePath = & $askNode 'process.execPath'
+  # Percent-encoded so it survives the console's code page (C:\Users\José\…).
+  $nodePath = [Uri]::UnescapeDataString((& $askNode 'encodeURIComponent(process.execPath)'))
   if ($nodeVersion -notmatch '^\d+\.\d+\.\d+$' -or -not $nodePath) {
     throw "Couldn't run node from PATH to check its version (it printed '$nodeVersion'). Check that Node.js is installed and on PATH, then run this again."
   }
@@ -113,8 +117,10 @@
     if ($hash -ne $checksum) {
       throw 'The download doesn''t match its checksum, so nothing was installed. Run the install command again.'
     }
-    $version = (& $nodePath $part --version)
-    if ($LASTEXITCODE -ne 0) {
+    $ErrorActionPreference = 'Continue'
+    $version = "$(& $nodePath $part --version 2>$null | Select-Object -Last 1)".Trim()
+    $ErrorActionPreference = 'Stop'
+    if ($LASTEXITCODE -ne 0 -or -not $version) {
       throw "The downloaded CLI doesn't run with this Node.js (v$nodeVersion), so nothing was installed."
     }
     # The CLI reads install.json beside itself: auth login signs in here unless told otherwise.
@@ -129,14 +135,14 @@
       'node "%~dp0..\spectron.mjs" %*'
     ) -join "`r`n") + "`r`n")
 
-    # The launcher is the same in every version, so it goes first. Then the
-    # CLI and install.json change together: each live file is moved aside,
-    # then replaced, with .NET (Move-Item -Force deletes the target first). If
-    # any step fails (a file in use), every step is undone in reverse.
-    Move-Item -Force -LiteralPath (Join-Path $stage 'spectron.cmd') -Destination $launcher
+    # The CLI, install.json and the launcher change together: each live file
+    # is moved aside, then replaced, with .NET (Move-Item -Force deletes the
+    # target first). If any step fails (a file in use), every step is undone
+    # in reverse, so a first install leaves nothing behind.
     $swaps = @(
       @{ New = $part; Live = $target; Old = (Join-Path $stage 'previous.mjs') },
-      @{ New = (Join-Path $stage 'install.json'); Live = $meta; Old = (Join-Path $stage 'previous.json') }
+      @{ New = (Join-Path $stage 'install.json'); Live = $meta; Old = (Join-Path $stage 'previous.json') },
+      @{ New = (Join-Path $stage 'spectron.cmd'); Live = $launcher; Old = (Join-Path $stage 'previous.cmd') }
     )
     try {
       foreach ($swap in $swaps) {
@@ -149,14 +155,17 @@
       for ($i = $swaps.Count - 1; $i -ge 0; $i--) {
         $swap = $swaps[$i]
         try {
-          if ($swap.Published) { [IO.File]::Delete($swap.Live) }
+          if ($swap.Published) { [IO.File]::Delete($swap.Live); $swap.Published = $false }
           if ($swap.MovedAside) { [IO.File]::Move($swap.Old, $swap.Live) }
-        } catch { $stranded += "$($swap.Old) -> $($swap.Live)" }
+        } catch {
+          if ($swap.Published) { $stranded += "delete $($swap.Live)" }
+          if ($swap.MovedAside) { $stranded += "move $($swap.Old) to $($swap.Live)" }
+        }
       }
       if ($stranded) {
         # Keep the staging folder: it holds the only copies of the previous files.
         $stage = $null
-        throw "Couldn't finish installing ($reason), nor put the previous version back. Move these yourself: $($stranded -join '; ')"
+        throw "Couldn't finish installing ($reason), nor undo it. To restore the previous state: $($stranded -join '; ')"
       }
       throw "Couldn't finish installing, so the previous version was kept: $reason"
     }
@@ -169,8 +178,13 @@
 
   Write-Host "Installed spectron $version`: $launcher"
   if ($onWindows -and $env:SPECTRON_NO_MODIFY_PATH -ne '1') {
-    # Entries may be quoted, use /, or end in \.
-    $normal = { param($entry) [Environment]::ExpandEnvironmentVariables($entry).Trim().Trim('"').Replace('/', '\').TrimEnd('\') }
+    # Entries may be quoted, use /, or end in \ (kept on a drive root: C:\).
+    $normal = {
+      param($entry)
+      $path = [Environment]::ExpandEnvironmentVariables($entry).Trim().Trim('"').Trim().Replace('/', '\').TrimEnd('\')
+      if ($path -match '^[A-Za-z]:$') { $path += '\' }
+      $path
+    }
     $isBin = { param($entry) (& $normal $entry) -ieq $binDir }
     # First in the user PATH, moved there if it was further down, so an
     # older spectron (an npm install) can't win. Read and written raw,
@@ -201,9 +215,12 @@
     # PowerShell also runs a spectron.ps1 found on PATH.
     $pathext = "$pathext;.PS1"
     foreach ($entry in $search) {
+      $folder = & $normal $entry
+      # Blank and relative entries ("", " ", "tools") don't name a fixed folder.
+      if (-not $folder -or -not [IO.Path]::IsPathRooted($folder)) { continue }
       foreach ($extension in ($pathext.Split(';') | Where-Object { $_ })) {
         # A malformed entry is skipped, as Windows skips it.
-        try { $candidate = [IO.Path]::Combine((& $normal $entry), 'spectron' + $extension) } catch { continue }
+        try { $candidate = [IO.Path]::Combine($folder, 'spectron' + $extension) } catch { continue }
         if (Test-Path -LiteralPath $candidate -PathType Leaf) { $found = $candidate; break }
       }
       if ($found) { break }
