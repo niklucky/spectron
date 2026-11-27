@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFile, execFileSync, spawn } from "node:child_process";
+import { execFile, execFileSync, spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
 import { appendFile, mkdir, mkdtemp, readdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import type { AddressInfo } from "node:net";
@@ -101,6 +101,21 @@ for (const shell of shells)
       : await ps(shell, `'not-a-token' | node '${join(dir, "spectron.mjs")}' auth login --with-token; exit $LASTEXITCODE`, env);
     assert.equal(login.code, 2);
     assert.match(login.stdout + login.stderr, /doesn't look like a Spectron token/);
+
+    // Three launchers, each passing R&D through untouched: spectron.cmd for
+    // cmd, spectron.ps1 for PowerShell (only where both PowerShells run
+    // scripts; always off Windows), and an extensionless one for Git Bash.
+    const binDir = join(dir, "bin");
+    const echoed = /Unknown command "R&D"/;
+    if (!windows) {
+      assert.deepEqual((await readdir(binDir)).sort(), ["spectron", "spectron.cmd", "spectron.ps1"]);
+      const viaScript = await ps(shell, `& '${join(binDir, "spectron.ps1")}' 'R&D'; exit $LASTEXITCODE`, env);
+      assert.equal(viaScript.code, 2);
+      assert.match(viaScript.stdout + viaScript.stderr, echoed);
+      const viaShell = spawnSync("sh", [join(binDir, "spectron"), "R&D"], { env: { ...process.env, ...env } });
+      assert.equal(viaShell.status, 2);
+      assert.match(viaShell.stderr.toString(), echoed);
+    }
 
     // Running it again upgrades in place.
     const again = await ps(shell, install, env);
@@ -250,6 +265,79 @@ for (const shell of shells)
       assert.equal((await ps(shell, `${registry}.GetValueNames() -contains 'SPECTRON_INSTALL_REFRESH'`, {})).stdout.trim(), "False");
     }
   });
+
+// Windows only: spectron.ps1 follows both PowerShells' policy for new windows,
+// and the Git Bash launcher works. Per-user policies are set for the test and
+// restored afterwards.
+test("Windows launchers follow the script policy, and Git Bash runs spectron", { skip: !windows || shells.length === 0 }, async (t) => {
+  const shell = shells[0]!;
+  const root = await realpath(await mkdtemp(join(tmpdir(), "spectron-cli-ps-policy-")));
+  const dist = join(root, "dist");
+  execFileSync(process.execPath, [join(cliDir, "build.mjs"), dist]);
+  const app = new Hono();
+  const server = serve({ fetch: app.fetch, port: 0, hostname: "127.0.0.1" });
+  await new Promise((resolve) => server.once("listening", resolve));
+  const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  app.route("/cli", createCliRoutes({ appURL: origin, dist }));
+
+  // Windows PowerShell's per-user policy (registry) and PowerShell 7's
+  // (powershell.config.json in Documents), saved to restore exactly.
+  const shellIds = "HKCU:\\Software\\Microsoft\\PowerShell\\1\\ShellIds\\Microsoft.PowerShell";
+  const savedWindows = (await ps(shell, `(Get-ItemProperty -LiteralPath '${shellIds}' -Name ExecutionPolicy -ErrorAction SilentlyContinue).ExecutionPolicy`, {})).stdout.trim();
+  const documents = (await ps(shell, "[Environment]::GetFolderPath('MyDocuments')", {})).stdout.trim();
+  const config = join(documents, "PowerShell", "powershell.config.json");
+  const savedConfig = await readFile(config, "utf8").catch(() => null);
+  const setWindows = (policy: string) =>
+    ps(shell, `New-Item -Force -Path '${shellIds}' | Out-Null; Set-ItemProperty -LiteralPath '${shellIds}' -Name ExecutionPolicy -Value ${policy}`, {});
+  const setCore = async (policy: string) => {
+    await mkdir(dirname(config), { recursive: true });
+    await writeFile(config, JSON.stringify({ ...(savedConfig ? JSON.parse(savedConfig) : {}), "Microsoft.PowerShell:ExecutionPolicy": policy }));
+  };
+  t.after(async () => {
+    await ps(shell, savedWindows ? `Set-ItemProperty -LiteralPath '${shellIds}' -Name ExecutionPolicy -Value ${savedWindows}` : `Remove-ItemProperty -LiteralPath '${shellIds}' -Name ExecutionPolicy -ErrorAction SilentlyContinue`, {});
+    if (savedConfig === null) await rm(config, { force: true });
+    else await writeFile(config, savedConfig);
+    await new Promise((resolve) => server.close(resolve));
+    await rm(root, { recursive: true, force: true });
+  });
+
+  const dir = join(root, "spectron");
+  const binDir = join(dir, "bin");
+  const env = { SPECTRON_INSTALL_DIR: dir, SPECTRON_NO_MODIFY_PATH: "1", PATH: `${dirname(process.execPath)}${delimiter}${process.env.PATH}` };
+  const install = `irm ${origin}/cli/install.ps1 | iex`;
+  const echoed = /Unknown command "R&D"/;
+
+  // Both allow scripts: spectron.ps1 is installed, and PowerShell runs it by
+  // name with R&D intact (through spectron.cmd it would arrive as R).
+  await setWindows("RemoteSigned");
+  await setCore("RemoteSigned");
+  const allowed = await ps(shell, install, env);
+  assert.equal(allowed.code, 0, allowed.stderr);
+  assert.deepEqual((await readdir(binDir)).sort(), ["spectron", "spectron.cmd", "spectron.ps1"]);
+  const byName = await ps(shell, `spectron 'R&D'; exit $LASTEXITCODE`, { ...env, PATH: `${binDir}${delimiter}${env.PATH}` });
+  assert.equal(byName.code, 2);
+  assert.match(byName.stdout + byName.stderr, echoed);
+
+  // Windows PowerShell refuses scripts: no spectron.ps1, and an earlier one
+  // is removed, so it falls back to spectron.cmd instead of failing.
+  await setWindows("Restricted");
+  const refused = await ps(shell, install, env);
+  assert.equal(refused.code, 0, refused.stderr);
+  assert.deepEqual((await readdir(binDir)).sort(), ["spectron", "spectron.cmd"]);
+  // Likewise when only PowerShell 7 refuses.
+  await setWindows("RemoteSigned");
+  await setCore("AllSigned");
+  assert.equal((await ps(shell, install, env)).code, 0);
+  assert.deepEqual((await readdir(binDir)).sort(), ["spectron", "spectron.cmd"]);
+
+  // Git Bash runs the extensionless launcher by name, R&D intact.
+  const bash = join(process.env.ProgramFiles ?? "C:\\Program Files", "Git", "bin", "bash.exe");
+  if (await readFile(bash).then(() => true, () => false)) {
+    const viaBash = spawnSync(bash, ["-c", 'spectron "R&D"'], { env: { ...process.env, ...env, PATH: `${binDir}${delimiter}${env.PATH}` } });
+    assert.equal(viaBash.status, 2, viaBash.stderr.toString());
+    assert.match(viaBash.stderr.toString(), echoed);
+  }
+});
 
 test("powershellQuote makes a PowerShell verbatim string", { skip: shells.length === 0 }, async () => {
   for (const value of ["https://a.example", "it's", "'", "‘’", "$(x) `y` \"z\""]) {

@@ -24,6 +24,63 @@
   $checksum = '__SPECTRON_SHA256__'
 
   $onWindows = $env:OS -eq 'Windows_NT'
+
+  # The script execution policy a new window of each PowerShell would get:
+  # Group Policy (machine, then user), then the user's and the machine's
+  # setting, then the default. This window's -ExecutionPolicy (the Process
+  # scope) doesn't carry over, so it is ignored.
+  $allowsScripts = { param($policy) @('RemoteSigned', 'Unrestricted', 'Bypass') -contains $policy }
+  $registryValue = {
+    param($key, $name)
+    try { (Get-ItemProperty -LiteralPath $key -Name $name -ErrorAction Stop).$name } catch { $null }
+  }
+  $groupPolicy = {
+    param($key)
+    $enabled = & $registryValue $key 'EnableScripts'
+    if ($null -eq $enabled) { return $null }
+    if ($enabled -ne 1) { return 'Restricted' }
+    $policy = & $registryValue $key 'ExecutionPolicy'
+    if ($policy) { $policy } else { 'AllSigned' }
+  }
+  $windowsPowerShellPolicy = {
+    foreach ($key in 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\PowerShell', 'HKCU:\SOFTWARE\Policies\Microsoft\Windows\PowerShell') {
+      $policy = & $groupPolicy $key
+      if ($policy) { return $policy }
+    }
+    foreach ($key in 'HKCU:\Software\Microsoft\PowerShell\1\ShellIds\Microsoft.PowerShell', 'HKLM:\SOFTWARE\Microsoft\PowerShell\1\ShellIds\Microsoft.PowerShell') {
+      $policy = & $registryValue $key 'ExecutionPolicy'
+      if ($policy -and $policy -ne 'Undefined') { return $policy }
+    }
+    # Desktop Windows defaults to Restricted, Windows Server to RemoteSigned.
+    if ((& $registryValue 'HKLM:\SYSTEM\CurrentControlSet\Control\ProductOptions' 'ProductType') -eq 'WinNT') { 'Restricted' } else { 'RemoteSigned' }
+  }
+  $powerShell7Policy = {
+    foreach ($scope in 'HKLM', 'HKCU') {
+      $key = "${scope}:\SOFTWARE\Policies\Microsoft\PowerShellCore"
+      if ((& $registryValue $key 'UseWindowsPowerShellPolicySetting') -eq 1) { $key = "${scope}:\SOFTWARE\Policies\Microsoft\Windows\PowerShell" }
+      $policy = & $groupPolicy $key
+      if ($policy) { return $policy }
+    }
+    # powershell.config.json: the user's, then each installation's.
+    $configs = @(Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'PowerShell\powershell.config.json')
+    if ($PSVersionTable.PSEdition -eq 'Core') { $configs += Join-Path $PSHOME 'powershell.config.json' }
+    $configs += @(Get-Command pwsh -CommandType Application -ErrorAction SilentlyContinue | ForEach-Object { Join-Path (Split-Path $_.Source) 'powershell.config.json' })
+    if ($env:ProgramFiles) { $configs += Join-Path $env:ProgramFiles 'PowerShell\7\powershell.config.json' }
+    $userConfig = $true
+    foreach ($config in $configs) {
+      try {
+        if ([IO.File]::Exists($config)) {
+          $policy = (ConvertFrom-Json ([IO.File]::ReadAllText($config))).'Microsoft.PowerShell:ExecutionPolicy'
+          if ($policy -and $policy -ne 'Undefined') {
+            # Installations can differ; the strictest decides for the machine settings.
+            if ($userConfig -or -not (& $allowsScripts $policy)) { return $policy }
+          }
+        }
+      } catch {}
+      $userConfig = $false
+    }
+    'RemoteSigned'
+  }
   if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
     throw 'The Spectron CLI needs Node.js 22 or later. Install it from https://nodejs.org, then run this again.'
   }
@@ -66,9 +123,11 @@
   $target = Join-Path $installDir 'spectron.mjs'
   $meta = Join-Path $installDir 'install.json'
   $launcher = Join-Path $binDir 'spectron.cmd'
+  $scriptLauncher = Join-Path $binDir 'spectron.ps1'
+  $shellLauncher = Join-Path $binDir 'spectron'
   # .NET, so [ and ] in a path are characters, not wildcards.
   [IO.Directory]::CreateDirectory($binDir) | Out-Null
-  foreach ($path in @($target, $meta, $launcher)) {
+  foreach ($path in @($target, $meta, $launcher, $scriptLauncher, $shellLauncher)) {
     if (Test-Path -LiteralPath $path -PathType Container) {
       throw "$path is a directory. Remove it, or choose another location with SPECTRON_INSTALL_DIR."
     }
@@ -134,6 +193,31 @@
       'set NoDefaultCurrentDirectoryInExePath=1'
       'node "%~dp0..\spectron.mjs" %*'
     ) -join "`r`n") + "`r`n")
+    # PowerShell prefers spectron.ps1 to spectron.cmd and hands it arguments
+    # untouched; through cmd, an unquoted & | < > in one (a title like R&D)
+    # would be read as syntax. Only where both Windows PowerShell and
+    # PowerShell 7 would run scripts in a new window: the one that refuses
+    # would fail on spectron.ps1 instead of falling back to spectron.cmd.
+    $scriptsAllowed = $true
+    if ($onWindows) {
+      try { $scriptsAllowed = (& $allowsScripts (& $windowsPowerShellPolicy)) -and (& $allowsScripts (& $powerShell7Policy)) }
+      catch { $scriptsAllowed = $false }
+    }
+    # Git Bash (Claude Code's shell on Windows) runs neither .cmd nor .ps1 by
+    # name, only an extensionless script. LF line endings.
+    [IO.File]::WriteAllText((Join-Path $stage 'spectron'), (@(
+      '#!/bin/sh'
+      '# The Spectron CLI, for Git Bash and other POSIX shells on Windows.'
+      'exec node "$(dirname "$0")/../spectron.mjs" "$@"'
+    ) -join "`n") + "`n")
+    if ($scriptsAllowed) {
+      [IO.File]::WriteAllText((Join-Path $stage 'spectron.ps1'), (@(
+        '# The Spectron CLI, for PowerShell. Passes arguments and piped input to node as they are.'
+        '$cli = Join-Path $PSScriptRoot ''..\spectron.mjs'''
+        'if ($MyInvocation.ExpectingInput) { $input | & node $cli @args } else { & node $cli @args }'
+        'exit $LASTEXITCODE'
+      ) -join "`r`n") + "`r`n")
+    }
 
     # The CLI, install.json and the launcher change together: each live file
     # is moved aside, then replaced, with .NET (Move-Item -Force deletes the
@@ -144,6 +228,10 @@
       @{ New = (Join-Path $stage 'install.json'); Live = $meta; Old = (Join-Path $stage 'previous.json') },
       @{ New = (Join-Path $stage 'spectron.cmd'); Live = $launcher; Old = (Join-Path $stage 'previous.cmd') }
     )
+    $swaps += @{ New = (Join-Path $stage 'spectron'); Live = $shellLauncher; Old = (Join-Path $stage 'previous.sh') }
+    if ($scriptsAllowed) {
+      $swaps += @{ New = (Join-Path $stage 'spectron.ps1'); Live = $scriptLauncher; Old = (Join-Path $stage 'previous.ps1') }
+    }
     try {
       foreach ($swap in $swaps) {
         if ([IO.File]::Exists($swap.Live)) { [IO.File]::Move($swap.Live, $swap.Old); $swap.MovedAside = $true }
@@ -176,6 +264,11 @@
     Remove-Item -Force -LiteralPath $lockPath -ErrorAction SilentlyContinue
   }
 
+  # Scripts no longer allowed: an earlier spectron.ps1 would now be refused
+  # instead of falling back to spectron.cmd.
+  if (-not $scriptsAllowed -and [IO.File]::Exists($scriptLauncher)) {
+    Remove-Item -Force -LiteralPath $scriptLauncher -ErrorAction SilentlyContinue
+  }
   Write-Host "Installed spectron $version`: $launcher"
   if ($onWindows -and $env:SPECTRON_NO_MODIFY_PATH -ne '1') {
     # Entries may be quoted, use /, or end in \ (kept on a drive root: C:\).
@@ -231,7 +324,7 @@
       Write-Host "New terminals will run $found, which comes first on PATH, not this install. Remove it (for an npm install: npm uninstall -g @spectron/cli)."
     }
     $here = Get-Command spectron -ErrorAction SilentlyContinue | Select-Object -First 1
-    if ($here -and $here.CommandType -ne 'Application') {
+    if ($here -and $here.CommandType -ne 'Application' -and $here.Source -ine $scriptLauncher) {
       Write-Host ''
       Write-Host "In this window, spectron is a $($here.CommandType.ToString().ToLower()), which runs instead of this install. Remove it, or run $launcher."
     }
