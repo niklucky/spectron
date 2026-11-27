@@ -102,6 +102,7 @@ spectron api /issues -d @new-issue.json
 
 - Add `--json` to any command for the API's own response shapes (see [api.md](api.md)). Errors then go to stderr as `{"error":{"message","code","status"}}`. `code` is the API's error code, `usage` for bad arguments, or `error` otherwise. `status` is present only when the server answered.
 - Arguments are strict: extra positional arguments and empty option values (such as an unset `$VAR`) are errors rather than silently ignored. Quote values that contain spaces. Only `--description ""` may be empty.
+- Write each option and its value separately (`-s Done`, not `-sDone`). A value may start with a dash (`--sort -created`, `-d "-1 on this"`), so an option whose value is missing takes the next word as its value: `-t -sDone` sets the title to `-sDone`.
 - Exit codes: `0` success, `1` API or other error, `2` bad arguments, `4` not signed in or token rejected.
 - Text goes to stdout; notes such as "More issues match" go to stderr, so piping stays clean.
 - Edits are attributed to the token's owner, like edits made through the API.
