@@ -17,13 +17,20 @@
 & {
   $ErrorActionPreference = 'Stop'
   $ProgressPreference = 'SilentlyContinue'
+  # Native commands report through $LASTEXITCODE here, even if the caller
+  # turned on PowerShell 7.4's error-on-exit-code. (Scoped to this block.)
+  $PSNativeCommandUseErrorActionPreference = $false
   $server = __SPECTRON_SERVER__
   $checksum = '__SPECTRON_SHA256__'
 
   if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
     throw 'The Spectron CLI needs Node.js 22 or later. Install it from https://nodejs.org, then run this again.'
   }
-  $nodeVersion = (& node -p 'process.versions.node').Trim()
+  # The last line only, and checked: a version manager's shim may print more.
+  $nodeVersion = "$(& node -p 'process.versions.node' 2>$null | Select-Object -Last 1)".Trim()
+  if ($nodeVersion -notmatch '^\d+\.\d+\.\d+$') {
+    throw "Couldn't run node to check its version (it printed '$nodeVersion'). Check your Node.js installation, then run this again."
+  }
   if ([int]($nodeVersion.Split('.')[0]) -lt 22) {
     throw "The Spectron CLI needs Node.js 22 or later, and this is v$nodeVersion. Upgrade Node.js, then run this again."
   }
@@ -33,13 +40,18 @@
     if (-not $env:LOCALAPPDATA) { throw 'LOCALAPPDATA isn''t set. Set SPECTRON_INSTALL_DIR to choose where to install.' }
     $installDir = Join-Path $env:LOCALAPPDATA 'Programs\spectron'
   }
-  # Relative to the shell's current location, not the process's start directory.
-  $installDir = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($installDir)
+  # Relative to the shell's current file system location, not the process's
+  # start directory (nor the registry, if the shell is parked in HKCU:).
+  if (-not [IO.Path]::IsPathRooted($installDir)) {
+    $installDir = Join-Path (Get-Location -PSProvider FileSystem).ProviderPath $installDir
+  }
+  $installDir = [IO.Path]::GetFullPath($installDir)
   $binDir = Join-Path $installDir 'bin'
   $target = Join-Path $installDir 'spectron.mjs'
   $meta = Join-Path $installDir 'install.json'
   $launcher = Join-Path $binDir 'spectron.cmd'
-  New-Item -ItemType Directory -Force -Path $binDir | Out-Null
+  # .NET, so [ and ] in a path are characters, not wildcards.
+  [IO.Directory]::CreateDirectory($binDir) | Out-Null
   foreach ($path in @($target, $meta, $launcher)) {
     if (Test-Path -LiteralPath $path -PathType Container) {
       throw "$path is a directory. Remove it, or choose another location with SPECTRON_INSTALL_DIR."
@@ -49,7 +61,7 @@
   # Staged in a folder of its own and checked before replacing anything, so a
   # failure at any step leaves a working install as it was.
   $stage = Join-Path $installDir ('.staging-' + [Guid]::NewGuid().ToString('N'))
-  New-Item -ItemType Directory -Path $stage | Out-Null
+  [IO.Directory]::CreateDirectory($stage) | Out-Null
   try {
     Write-Host "Downloading the Spectron CLI from $server"
     $part = Join-Path $stage 'spectron.mjs'
@@ -62,7 +74,7 @@
       }
       # No redirects: the address is exactly the server that served this.
       # The system proxy applies, as it did for this script.
-      Invoke-WebRequest -Uri "$server/cli/spectron.mjs" -OutFile $part -UseBasicParsing -MaximumRedirection 0
+      Invoke-WebRequest -Uri "$server/cli/spectron.mjs" -OutFile $part -UseBasicParsing -MaximumRedirection 0 -TimeoutSec 120
     } catch {
       throw "Couldn't download $server/cli/spectron.mjs: $($_.Exception.Message)"
     } finally {
@@ -93,8 +105,10 @@
       'node "%~dp0..\spectron.mjs" %*'
     ) -join "`r`n") + "`r`n")
 
-    # The CLI and install.json change together: if either can't be replaced
-    # (a file in use), the previous CLI is put back.
+    # The launcher is the same in every version, so it goes first. Then the
+    # CLI and install.json change together: if either can't be replaced (a
+    # file in use), the previous CLI is put back, or a first install removed.
+    Move-Item -Force -LiteralPath (Join-Path $stage 'spectron.cmd') -Destination $launcher
     $previous = Join-Path $stage 'previous.mjs'
     $hadPrevious = Test-Path -LiteralPath $target -PathType Leaf
     if ($hadPrevious) {
@@ -106,21 +120,26 @@
       Move-Item -Force -LiteralPath (Join-Path $stage 'install.json') -Destination $meta
     } catch {
       $reason = $_.Exception.Message
-      if ($hadPrevious) {
-        Remove-Item -Force -LiteralPath $target -ErrorAction SilentlyContinue
-        Move-Item -LiteralPath $previous -Destination $target
+      try {
+        if ($hadPrevious) { Move-Item -Force -LiteralPath $previous -Destination $target }
+        else { Remove-Item -Force -LiteralPath $target -ErrorAction SilentlyContinue }
+      } catch {
+        # Keep the staging folder: it holds the only copy of the previous CLI.
+        $stage = $null
+        throw "Couldn't finish installing ($reason), nor put the previous version back: it is $previous. Move it to $target."
       }
       throw "Couldn't finish installing, so the previous version was kept: $reason"
     }
-    Move-Item -Force -LiteralPath (Join-Path $stage 'spectron.cmd') -Destination $launcher
   } finally {
-    Remove-Item -Recurse -Force -LiteralPath $stage -ErrorAction SilentlyContinue
+    if ($stage) { Remove-Item -Recurse -Force -LiteralPath $stage -ErrorAction SilentlyContinue }
   }
 
   Write-Host "Installed spectron $version`: $launcher"
   $onWindows = $env:OS -eq 'Windows_NT'
   if ($onWindows -and $env:SPECTRON_NO_MODIFY_PATH -ne '1') {
-    $isBin = { param($entry) [Environment]::ExpandEnvironmentVariables($entry).TrimEnd('\') -ieq $binDir }
+    # Entries may be quoted, use /, or end in \.
+    $normal = { param($entry) [Environment]::ExpandEnvironmentVariables($entry).Trim().Trim('"').Replace('/', '\').TrimEnd('\') }
+    $isBin = { param($entry) (& $normal $entry) -ieq $binDir }
     # First in the user PATH, moved there if it was further down, so an
     # older spectron (an npm install) can't win. Read and written raw,
     # keeping it an expandable string: entries such as %USERPROFILE%\bin
@@ -141,10 +160,28 @@
     }
     # First in this window too, so the next command runs this CLI.
     $env:Path = (@($binDir) + @($env:Path.Split(';') | Where-Object { $_ -and -not (& $isBin $_) })) -join ';'
-    $found = Get-Command spectron -ErrorAction SilentlyContinue | Select-Object -First 1
-    if ($found -and $found.Source -ine $launcher) {
+    # New terminals search the system PATH before the user PATH, so look for
+    # spectron the way they will. In this window, an alias or function wins.
+    $found = $null
+    $search = "$([Environment]::GetEnvironmentVariable('Path', 'Machine'));$wanted".Split(';') | Where-Object { $_ }
+    $pathext = $env:PATHEXT
+    if (-not $pathext) { $pathext = '.COM;.EXE;.BAT;.CMD' }
+    foreach ($entry in $search) {
+      foreach ($extension in ($pathext.Split(';') | Where-Object { $_ })) {
+        # A malformed entry is skipped, as Windows skips it.
+        try { $candidate = [IO.Path]::Combine((& $normal $entry), 'spectron' + $extension) } catch { continue }
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) { $found = $candidate; break }
+      }
+      if ($found) { break }
+    }
+    if ($found -and $found -ine $launcher) {
       Write-Host ''
-      Write-Host "spectron here runs $($found.CommandType) $($found.Name) ($($found.Source)), not this install. Remove it, or run $launcher."
+      Write-Host "New terminals will run $found, which comes first on PATH, not this install. Remove it (for an npm install: npm uninstall -g @spectron/cli)."
+    }
+    $here = Get-Command spectron -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($here -and $here.CommandType -ne 'Application') {
+      Write-Host ''
+      Write-Host "In this window, spectron is a $($here.CommandType.ToString().ToLower()), which runs instead of this install. Remove it, or run $launcher."
     }
   }
   Write-Host ''

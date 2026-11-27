@@ -106,6 +106,30 @@ for (const shell of shells)
     const again = await ps(shell, install, env);
     assert.equal(again.code, 0, again.stderr);
 
+    // Spaces and wildcard characters in the path are just characters.
+    const odd = join(root, "with spaces [1]");
+    const oddInstall = await ps(shell, install, { ...env, SPECTRON_INSTALL_DIR: odd });
+    assert.equal(oddInstall.code, 0, oddInstall.stderr);
+    assert.deepEqual((await readdir(odd)).sort(), ["bin", "install.json", "spectron.mjs"]);
+    if (windows)
+      assert.match(
+        execFileSync("cmd", ["/d", "/c", join(odd, "bin", "spectron.cmd"), "--version"], { env: { ...process.env, ...env } }).toString(),
+        /^\d+\.\d+\.\d+\r?\n$/,
+      );
+
+    // A redirected download is refused, and nothing changes.
+    const installed = await readFile(join(dir, "spectron.mjs"), "utf8");
+    const redirectScript = await (await fetch(`${origin}/cli/install.ps1`)).text();
+    routes = new Hono();
+    routes.get("/cli/install.ps1", () => new Response(redirectScript));
+    routes.get("/cli/spectron.mjs", () => Response.redirect(`${origin}/elsewhere.mjs`, 302));
+    routes.get("/elsewhere.mjs", async () => new Response(await readFile(join(dist, "spectron.mjs"))));
+    const redirected = await ps(shell, install, env);
+    assert.notEqual(redirected.code, 0);
+    assert.match(redirected.stdout + redirected.stderr, /Couldn't download/);
+    assert.equal(await readFile(join(dir, "spectron.mjs"), "utf8"), installed);
+    routes = new Hono().route("/cli", createCliRoutes({ appURL: origin, dist }));
+
     // A relative SPECTRON_INSTALL_DIR is relative to the shell's location.
     const relative = await ps(shell, `Set-Location -LiteralPath '${root}'; ${install}`, { ...env, SPECTRON_INSTALL_DIR: "relative" });
     assert.equal(relative.code, 0, relative.stderr);
