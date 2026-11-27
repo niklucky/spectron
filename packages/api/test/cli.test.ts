@@ -90,7 +90,7 @@ test("CLI: login, issues, comments, files and raw API calls", async (t) => {
   const viaAPI: Fetch = async (target, init) => api.request(target, init);
   const cli = async (
     args: string[],
-    options: { stdin?: string; env?: Record<string, string>; fetch?: Fetch } = {},
+    options: { stdin?: string | NodeJS.ReadableStream; env?: Record<string, string>; fetch?: Fetch } = {},
   ) => {
     const sink = () => {
       const chunks: Buffer[] = [];
@@ -107,7 +107,10 @@ test("CLI: login, issues, comments, files and raw API calls", async (t) => {
     const code = await run(args, {
       env: { SPECTRON_CONFIG_DIR: home, ...options.env },
       cwd: work,
-      stdin: Readable.from(options.stdin === undefined ? [] : [options.stdin]),
+      stdin:
+        typeof options.stdin === "object"
+          ? options.stdin
+          : Readable.from(options.stdin === undefined ? [] : [options.stdin]),
       stdout: stdout.stream,
       stderr: stderr.stream,
       fetch: options.fetch ?? viaAPI,
@@ -153,11 +156,24 @@ test("CLI: login, issues, comments, files and raw API calls", async (t) => {
   assert.equal((await cli(["auth", "login", "--url", origin])).code, 2, "no terminal and no --with-token");
   assert.match(await ok(["auth", "login", "--url", `${origin}/`, "--with-token"], { stdin: `${token}\n` }), /as owner <owner@example\.test> with token "Terminal"/);
   const config = join(home, "config.json");
-  assert.equal((await stat(config)).mode & 0o777, 0o600);
+  const privateMode = async () => {
+    // POSIX modes only; Windows relies on the profile directory's ACL.
+    if (process.platform !== "win32") assert.equal((await stat(config)).mode & 0o777, 0o600);
+  };
+  await privateMode();
   assert.deepEqual(await readdir(home), ["config.json"], "no temporary files left behind");
   // Logging in again replaces the file and keeps it private.
+  await ok(["auth", "login", "--url", ` ${origin} `, "--with-token"], { stdin: token });
+  await privateMode();
+  // A corrupt config never blocks signing in again, which replaces it.
+  await writeFile(config, "{ broken");
   await ok(["auth", "login", "--url", origin, "--with-token"], { stdin: token });
-  assert.equal((await stat(config)).mode & 0o777, 0o600);
+  assert.deepEqual(JSON.parse(await readFile(config, "utf8")), { url: origin, token });
+  // Ctrl-D at an interactive prompt cancels instead of exiting silently.
+  const terminal = Object.assign(Readable.from([]), { isTTY: true });
+  const cancelled = await cli(["auth", "login"], { stdin: terminal, env: { SPECTRON_CONFIG_DIR: join(root, "empty") } });
+  assert.equal(cancelled.code, 2);
+  assert.match(cancelled.err, /Cancelled/);
   assert.deepEqual(JSON.parse(await readFile(config, "utf8")), { url: origin, token });
   const me = await json<{ url: string; user: { email: string }; projects: { key: string }[] }>(["whoami"]);
   assert.equal(me.url, origin);
@@ -349,6 +365,88 @@ test("CLI: login, issues, comments, files and raw API calls", async (t) => {
   assert.equal(posted.key, "SP-4");
   assert.equal((await cli(["api", "/issues", "-d", "{nope"])).code, 2);
   assert.equal((await cli(["api", "/nothing-here"])).code, 1);
+
+  // Arguments the command does not take, empty values and flag-like values.
+  assert.match((await cli(["issue", "list", "SP"])).err, /Unexpected argument "SP"/);
+  assert.equal((await cli(["issue", "view", "SP-1", "SP-2"])).code, 2);
+  assert.equal((await cli(["issue", "assign", "SP-1", "alice", "bob"])).code, 2);
+  assert.equal((await cli(["file", "download", "SP", alpha.id, "extra"])).code, 2);
+  const empty = await cli(["issue", "list", "--project", "", "--json"]);
+  assert.equal(empty.code, 2);
+  assert.deepEqual(JSON.parse(empty.err), { error: { message: "--project needs a value.", code: "usage" } });
+  assert.equal((await cli(["issue", "edit", "SP-1", "-t", "x", "--expected-updated-at", ""])).code, 2);
+  assert.equal((await cli(["issue", "comment", "SP-1", "--reply-to", "", "hi"])).code, 2);
+  assert.equal((await json<Issue>(["issue", "edit", "SP-1", "--description", ""])).description, "");
+  assert.equal((await cli(["issue", "create", "-p", "SP", "--title", "--status=Done"])).code, 2);
+  assert.equal((await cli(["issue", "edit", "SP-1", "-d", "--"])).code, 2);
+  assert.equal((await json<Issue>(["issue", "edit", "SP-1", "--estimate", " 3600 "])).estimateSeconds, 3600);
+
+  // Comments addressed by issue id echo the id as given.
+  assert.match(await ok(["issue", "comment", first.id, "By id"]), new RegExp(`^Commented on ${first.id} `));
+
+  // Uploads check every local file first, so nothing is orphaned.
+  const before = (await json<{ attachments: StoredFile[] }>(["issue", "attachments", "SP-1"])).attachments.length;
+  assert.match((await cli(["issue", "attach", "SP-1", "b.txt", "missing.txt"])).err, /Couldn't read missing\.txt/);
+  assert.equal((await json<{ attachments: StoredFile[] }>(["issue", "attachments", "SP-1"])).attachments.length, before);
+
+  // Address forms: API-prefixed paths, any scheme case; never credentials.
+  assert.equal(
+    (await cli(["file", "download", `/api/v1/projects/${p.id}/files/${alpha.id}`, "-o", "-"])).bytes.toString(),
+    "alpha",
+  );
+  assert.equal((await json<{ user: { email: string } }>(["api", "HTTP://LOCALHOST:5173/api/v1/me"])).user.email, owner.email);
+  const withCredentials = await cli(["api", "http://user:secret@localhost:5173/api/v1/me", "--json"]);
+  assert.equal(withCredentials.code, 1);
+  assert.equal(JSON.parse(withCredentials.err).error.code, "invalid_url");
+  assert.equal(JSON.parse((await cli(["api", "http://[bad", "--json"])).err).error.code, "invalid_url");
+
+  // --force really replaces an existing file; served names are reduced to a bare name.
+  await writeFile(join(work, "copy.txt"), "old");
+  await ok(["file", "download", "SP", alpha.id, "--force", "-o", "copy.txt"]);
+  assert.equal(await readFile(join(work, "copy.txt"), "utf8"), "alpha");
+  const named = (disposition: string): Fetch => async () =>
+    new Response("named", { headers: { "content-disposition": disposition } });
+  assert.equal(
+    await ok(["file", "download", "SP", alpha.id], {
+      fetch: named(`attachment; filename="..\\..\\evil.txt"; filename*=UTF-8''..%2F..%2F%C3%A9t%C3%A9.txt`),
+    }),
+    "Saved été.txt.\n",
+  );
+  assert.equal(await readFile(join(work, "été.txt"), "utf8"), "named");
+  assert.equal(await ok(["file", "download", "SP", alpha.id], { fetch: named('attachment; filename="../evil.txt"') }), "Saved evil.txt.\n");
+  await assert.rejects(stat(join(root, "evil.txt")));
+
+  // Pagination spans pages of at most 200 and stops at --limit.
+  const limits: string[] = [];
+  const paged: Fetch = async (target) => {
+    const query = new URL(target).searchParams;
+    limits.push(query.get("limit")!);
+    const offset = Number(query.get("cursor") ?? 0);
+    const size = Number(query.get("limit"));
+    const issues = Array.from({ length: size }, (_, i) => ({ key: `SP-${offset + i + 1}` }));
+    return Response.json({ issues, nextCursor: String(offset + size) });
+  };
+  const many = await json<{ issues: Issue[]; nextCursor: string }>(["issue", "list", "-L", "450"], { fetch: paged });
+  assert.equal(many.issues.length, 450);
+  assert.equal(many.issues.at(-1)!.key, "SP-450");
+  assert.equal(many.nextCursor, "450");
+  assert.deepEqual(limits, ["200", "200", "50"]);
+
+  // Tag changes refuse to overwrite an edit made after they read the issue.
+  const racing: Fetch = async (target, init) => {
+    if (init.method === "PATCH") {
+      await new Promise((done) => setTimeout(done, 5));
+      await api.request(`${origin}/api/v1/issues/SP-1`, {
+        method: "PATCH",
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+        body: JSON.stringify({ title: "Changed meanwhile" }),
+      });
+    }
+    return api.request(target, init);
+  };
+  const raced = await cli(["issue", "edit", "SP-1", "--add-tag", "backend", "--json"], { fetch: racing });
+  assert.equal(raced.code, 1);
+  assert.equal(JSON.parse(raced.err).error.code, "conflict");
 
   // Environment overrides the saved login; logout forgets it.
   assert.equal((await cli(["whoami"], { env: { SPECTRON_TOKEN: "spk_wrong" } })).code, 4);

@@ -76,7 +76,8 @@ const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
  * The server's origin. Tokens travel in a header, so plain http is allowed
  * only for a server on this machine.
  */
-export function normalizeURL(value: string) {
+export function normalizeURL(raw: string) {
+  const value = raw.trim();
   let url: URL;
   try {
     url = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(value) ? value : `https://${value}`);

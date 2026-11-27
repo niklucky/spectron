@@ -27,13 +27,23 @@ export function createClient({
   userAgent: string;
 }) {
   const base = `${url}/api/v1`;
+  /**
+   * Resolves /issues, issues, /api/v1/issues or an absolute URL. Only
+   * addresses under this server's /api/v1/ ever receive the token.
+   */
   function endpoint(path: string, query?: Query) {
-    // Absolute URLs from responses (file links) must point at the same server.
-    const target = /^https?:\/\//.test(path) ? new URL(path) : new URL(`${base}${path.startsWith("/") ? "" : "/"}${path}`);
-    if (target.origin !== url || !target.pathname.startsWith("/api/v1/"))
+    let target: URL;
+    try {
+      target = /^https?:\/\//i.test(path)
+        ? new URL(path)
+        : new URL(`${base}/${path.replace(/^\/?(api\/v1(\/|$))?\/?/i, "")}`);
+    } catch {
+      throw new ApiFailure(0, "invalid_url", `${path} is not a valid address.`);
+    }
+    if (target.origin !== url || target.username || target.password || !target.pathname.startsWith("/api/v1/"))
       throw new ApiFailure(0, "invalid_url", `${path} is not an API address on ${url}.`);
     for (const [key, value] of Object.entries(query ?? {}))
-      if (value !== undefined && value !== "") target.searchParams.set(key, String(value));
+      if (value !== undefined) target.searchParams.set(key, String(value));
     return target.toString();
   }
 

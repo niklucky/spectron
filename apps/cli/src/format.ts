@@ -57,7 +57,8 @@ export function duration(seconds: number | null) {
 }
 
 /** `1h30m`, `90m`, `2h`, `45s`, or a bare number of seconds; null if unreadable or out of range. */
-export function parseDuration(value: string) {
+export function parseDuration(raw: string) {
+  const value = raw.trim();
   let seconds: number;
   if (/^\d+$/.test(value)) seconds = Number(value);
   else {

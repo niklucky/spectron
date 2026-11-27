@@ -5,9 +5,9 @@
  * own response shapes for scripts and agents.
  */
 import { createReadStream, createWriteStream } from "node:fs";
-import { link, readFile, rename, rm, stat } from "node:fs/promises";
+import { access, constants, link, readFile, rename, rm, stat } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
-import { basename, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { Readable, type Writable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { parseArgs } from "node:util";
@@ -66,6 +66,8 @@ type Context = {
 type Command = {
   name: string;
   args?: string;
+  /** Most positional arguments accepted; defaults to the count in `args` (unlimited with `...`). */
+  maxArgs?: number;
   summary: string;
   group: string;
   options?: Record<string, OptionSpec>;
@@ -112,6 +114,8 @@ function prompt(io: IO, question: string, hidden = false) {
     let value = "";
     const finish = (settle: () => void) => {
       stdin.off("data", onData);
+      stdin.off("end", onEnd);
+      stdin.off("error", onError);
       if (raw) {
         stdin.setRawMode!(false);
         io.stderr.write("\n");
@@ -127,27 +131,42 @@ function prompt(io: IO, question: string, hidden = false) {
         else value += ch;
       }
     };
+    // Ctrl-D on a line-mode terminal ends the stream instead of sending a byte.
+    const onEnd = () => finish(() => fail(new UsageError("Cancelled.")));
+    const onError = (error: Error) => finish(() => fail(error));
     if (raw) stdin.setRawMode!(true);
     stdin.on("data", onData);
+    stdin.on("end", onEnd);
+    stdin.on("error", onError);
     stdin.resume();
   });
 }
 
-/** Streams a local file to an upload endpoint. */
-async function uploadFile(ctx: Context, endpoint: string, file: string) {
-  const full = resolve(ctx.io.cwd, file);
-  let info;
-  try {
-    info = await stat(full);
-  } catch {
-    throw new UsageError(`Couldn't read ${file}.`);
+/** Checks every local file before any upload, so a typo can't leave earlier files orphaned. */
+async function readableFiles(ctx: Context, files: string[]) {
+  const checked: { full: string; size: number }[] = [];
+  for (const file of files) {
+    const full = resolve(ctx.io.cwd, file);
+    let info;
+    try {
+      info = await stat(full);
+      await access(full, constants.R_OK);
+    } catch {
+      throw new UsageError(`Couldn't read ${file}.`);
+    }
+    if (!info.isFile()) throw new UsageError(`${file} is not a file.`);
+    checked.push({ full, size: info.size });
   }
-  if (!info.isFile()) throw new UsageError(`${file} is not a file.`);
+  return checked;
+}
+
+/** Streams a checked local file to an upload endpoint. */
+async function uploadFile(ctx: Context, endpoint: string, { full, size }: { full: string; size: number }) {
   const client = await ctx.client();
   return client.json<StoredFile>("POST", endpoint, {
     query: { filename: basename(full) },
     body: Readable.toWeb(createReadStream(full)) as ReadableStream<Uint8Array>,
-    length: info.size,
+    length: size,
     headers: { "content-type": "application/octet-stream" },
   });
 }
@@ -241,9 +260,10 @@ const commands: Command[] = [
     },
     async run(ctx) {
       const { io } = ctx;
-      const saved = await readConfig(io.env);
       const interactive = io.stdin.isTTY === true && !flag(ctx, "with-token");
-      let url = str(ctx, "url") ?? io.env.SPECTRON_URL ?? saved.url;
+      // A broken config file must not block signing in again, which replaces it.
+      let url =
+        str(ctx, "url") ?? io.env.SPECTRON_URL ?? (await readConfig(io.env).catch(() => ({ url: undefined }))).url;
       if (!url && interactive) url = await prompt(io, "Spectron address (e.g. https://spectron.example.com): ");
       if (!url) throw new UsageError("Pass the server address with --url.");
       url = normalizeURL(url);
@@ -414,7 +434,7 @@ const commands: Command[] = [
       const body = await issueFields(ctx);
       if (!body.title) throw new UsageError("Pass a title with --title.");
       const attachments: string[] = [];
-      for (const file of strings(ctx, "attach"))
+      for (const file of await readableFiles(ctx, strings(ctx, "attach")))
         attachments.push((await uploadFile(ctx, `/projects/${path(project)}/files`, file)).id);
       const issue = await (await ctx.client()).json<Issue>("POST", "/issues", {
         json: { project, ...body, ...(attachments.length ? { attachments } : {}) },
@@ -453,7 +473,7 @@ const commands: Command[] = [
         body[entry[0]] = entry[1];
       }
       const expected = str(ctx, "expected-updated-at");
-      if (expected) body.expectedUpdatedAt = expected;
+      if (expected !== undefined) body.expectedUpdatedAt = expected;
       const client = await ctx.client();
       const add = strings(ctx, "add-tag");
       const remove = strings(ctx, "remove-tag");
@@ -477,7 +497,7 @@ const commands: Command[] = [
   },
   {
     name: "issue status",
-    args: "<issue> <status>",
+    args: "<issue> <status...>",
     group: "Issues",
     summary: "Move an issue to another status",
     async run(ctx) {
@@ -507,7 +527,7 @@ const commands: Command[] = [
   },
   {
     name: "issue comment",
-    args: "<issue> [text]",
+    args: "<issue> [text...]",
     group: "Issues",
     summary: "Comment on an issue; mention people with <@email>",
     options: {
@@ -521,7 +541,7 @@ const commands: Command[] = [
       const inline = ctx.args.slice(1).join(" ");
       if (file !== undefined && inline) throw new UsageError("Pass the comment as text or with --body-file, not both.");
       const body = file !== undefined ? await readText(ctx.io, file) : inline;
-      const files = strings(ctx, "attach");
+      const files = await readableFiles(ctx, strings(ctx, "attach"));
       if (!body.trim() && !files.length) throw new UsageError("Write a comment, or attach a file.");
       const client = await ctx.client();
       const attachments: string[] = [];
@@ -531,10 +551,11 @@ const commands: Command[] = [
       }
       const reply = str(ctx, "reply-to");
       const comment = await client.json<Comment>("POST", `/issues/${path(ref)}/comments`, {
-        json: { body, attachments, ...(reply ? { parentId: reply } : {}) },
+        json: { body, attachments, ...(reply !== undefined ? { parentId: reply } : {}) },
       });
       if (ctx.json) return ctx.data(comment);
-      ctx.out(`Commented on ${ref.toUpperCase()} (${comment.id}).`);
+      // Keys are case-insensitive and shown upper-case; ids are printed as given.
+      ctx.out(`Commented on ${/^[a-z][a-z0-9_]*-\d+$/i.test(ref) ? ref.toUpperCase() : ref} (${comment.id}).`);
     },
   },
   {
@@ -560,7 +581,8 @@ const commands: Command[] = [
       need(ctx, 2, "issue key and at least one file");
       const [ref, ...files] = ctx.args as [string, ...string[]];
       const attached: StoredFile[] = [];
-      for (const file of files) attached.push(await uploadFile(ctx, `/issues/${path(ref)}/attachments`, file));
+      for (const file of await readableFiles(ctx, files))
+        attached.push(await uploadFile(ctx, `/issues/${path(ref)}/attachments`, file));
       if (ctx.json) return ctx.data({ attachments: attached });
       ctx.out(fileTable(attached, ctx.width));
     },
@@ -590,7 +612,8 @@ const commands: Command[] = [
       need(ctx, 2, "project key and at least one file");
       const [project, ...files] = ctx.args as [string, ...string[]];
       const uploaded: StoredFile[] = [];
-      for (const file of files) uploaded.push(await uploadFile(ctx, `/projects/${path(project)}/files`, file));
+      for (const file of await readableFiles(ctx, files))
+        uploaded.push(await uploadFile(ctx, `/projects/${path(project)}/files`, file));
       if (ctx.json) return ctx.data({ files: uploaded });
       ctx.out(fileTable(uploaded, ctx.width));
     },
@@ -598,6 +621,7 @@ const commands: Command[] = [
   {
     name: "file download",
     args: "<file-url | project file-id>",
+    maxArgs: 2,
     group: "Files",
     summary: "Download a file",
     options: {
@@ -612,6 +636,16 @@ const commands: Command[] = [
       const response = await client.send("GET", target, { headers: { accept: "*/*" } });
       if (!response.body) throw new ApiFailure(0, "empty_response", "The server sent no file.");
       const output = str(ctx, "output");
+      const fallback = basename(new URL(response.url || "http://x/file").pathname);
+      const name =
+        output ?? dispositionName(response.headers.get("content-disposition")) ?? (fallback || "download");
+      const destination = resolve(ctx.io.cwd, name);
+      const exists = () =>
+        new UsageError(`${name} already exists. Pass --force to overwrite it, or -o to choose another name.`);
+      if (output !== "-" && !flag(ctx, "force") && (await stat(destination).catch(() => null))) {
+        await response.body.cancel().catch(() => {});
+        throw exists();
+      }
       // Iterating the web stream directly: Readable.fromWeb reports a broken
       // transfer as an uncaught error on top of rejecting the pipeline.
       const body = Readable.from(response.body as unknown as AsyncIterable<Uint8Array>, { objectMode: false });
@@ -619,18 +653,13 @@ const commands: Command[] = [
         await pipeline(body, ctx.io.stdout, { end: false });
         return;
       }
-      const name = output ?? dispositionName(response.headers.get("content-disposition")) ?? basename(new URL(response.url || "http://x/file").pathname);
-      const destination = resolve(ctx.io.cwd, name);
-      const exists = () =>
-        new UsageError(`${name} already exists. Pass --force to overwrite it, or -o to choose another name.`);
-      if (!flag(ctx, "force") && (await stat(destination).catch(() => null))) throw exists();
       // Download beside the destination and publish it only once complete,
       // so an interrupted transfer never leaves or clobbers a partial file.
-      const partial = `${destination}.${randomBytes(6).toString("hex")}.part`;
+      const partial = join(dirname(destination), `.spectron-${randomBytes(6).toString("hex")}.part`);
       try {
         await pipeline(body, createWriteStream(partial, { flags: "wx" }));
         if (flag(ctx, "force")) await rename(partial, destination);
-        else await link(partial, destination); // fails if the name was taken meanwhile
+        else await publishNew(partial, destination);
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === "EEXIST") throw exists();
         throw error;
@@ -663,10 +692,8 @@ const commands: Command[] = [
         }
       }
       const method = (str(ctx, "method") ?? (json === undefined ? "GET" : "POST")).toUpperCase();
-      const target = ctx.args[0]!;
-      // Accepts /issues, issues, /api/v1/issues or a full URL on this server.
-      const route = /^https?:\/\//.test(target) ? target : `/${target.replace(/^\/?(api\/v1\/?)?/, "")}`;
-      const response = await (await ctx.client()).send(method, route, {
+      // The client accepts /issues, issues, /api/v1/issues or a full URL on this server.
+      const response = await (await ctx.client()).send(method, ctx.args[0]!, {
         ...(json === undefined ? {} : { json }),
         headers: { accept: "*/*" },
       });
@@ -694,6 +721,23 @@ async function allComments(client: Client, ref: string, parentId?: string) {
     return { items: page.comments, nextCursor: page.nextCursor };
   });
   return items;
+}
+
+/**
+ * Moves a finished download into place without replacing an existing file.
+ * A hard link fails atomically if the name was taken meanwhile; filesystems
+ * without hard links fall back to a checked rename.
+ */
+async function publishNew(partial: string, destination: string) {
+  try {
+    await link(partial, destination);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== "EPERM" && code !== "ENOTSUP" && code !== "EOPNOTSUPP" && code !== "ENOSYS") throw error;
+    if (await stat(destination).catch(() => null))
+      throw Object.assign(new Error("exists"), { code: "EEXIST" });
+    await rename(partial, destination);
+  }
 }
 
 /** The file name from Content-Disposition, reduced to a bare name. */
@@ -735,7 +779,8 @@ function attachDashValues(args: string[], specs: Record<string, OptionSpec>) {
       break;
     }
     const name = valueOption(arg);
-    if (name && next !== undefined && next.startsWith("-") && next !== "-" && !flags.has(next)) {
+    const looksLikeFlag = next !== undefined && (next === "--" || flags.has(next.split("=")[0]!));
+    if (name && next !== undefined && next.startsWith("-") && next !== "-" && !looksLikeFlag) {
       // `-d=-x` would parse as "=-x"; the long form keeps the value intact.
       out.push(`--${name}=${next}`);
       i++;
@@ -743,6 +788,8 @@ function attachDashValues(args: string[], specs: Record<string, OptionSpec>) {
   }
   return out;
 }
+
+const ALLOW_EMPTY = new Set(["description"]);
 
 const userAgent = () => `spectron-cli/${VERSION} node/${process.versions.node}`;
 
@@ -792,7 +839,7 @@ export async function run(argv: string[], io: IO): Promise<number> {
   // Until the arguments are parsed, a --json before any `--` decides how errors print.
   const terminator = argv.indexOf("--");
   let json = (terminator === -1 ? argv : argv.slice(0, terminator)).includes("--json");
-  const fail = (code: number, message: string, details?: { status?: number; code?: string }) => {
+  const fail = (code: number, message: string, details: { status?: number; code: string } = { code: code === 2 ? "usage" : "error" }) => {
     io.stderr.write(json ? `${JSON.stringify({ error: { message, ...details } })}\n` : `error: ${message}\n`);
     return code;
   };
@@ -840,6 +887,18 @@ export async function run(argv: string[], io: IO): Promise<number> {
     io.stdout.write(`${commandHelp(command)}\n`);
     return 0;
   }
+  // An empty value (often an unset shell variable) would silently widen a
+  // filter or drop a safety check, so it is an error. Only text may be empty.
+  for (const [name, value] of Object.entries(parsed.values))
+    if ((value === "" || (Array.isArray(value) && value.includes(""))) && !ALLOW_EMPTY.has(name))
+      return fail(2, `--${name} needs a value.`);
+  const maxArgs =
+    command.maxArgs ?? (command.args?.includes("...") ? Infinity : (command.args?.match(/[<[]/g) ?? []).length);
+  if (parsed.positionals.length > maxArgs)
+    return fail(
+      2,
+      `Unexpected argument "${parsed.positionals[maxArgs]}". Usage: spectron ${command.name}${command.args ? ` ${command.args}` : ""}. Quote values that contain spaces.`,
+    );
   const width = io.stdout.isTTY ? io.stdout.columns : undefined;
   const ctx: Context = {
     io,
