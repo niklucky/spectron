@@ -155,6 +155,8 @@ async function readableFiles(ctx: Context, files: string[]) {
       throw new UsageError(`Couldn't read ${file}.`);
     }
     if (!info.isFile()) throw new UsageError(`${file} is not a file.`);
+    // The server refuses empty files; finding out before uploading the rest keeps the batch all-or-nothing.
+    if (info.size === 0) throw new UsageError(`${file} is empty. Spectron doesn't accept empty files.`);
     checked.push({ full, size: info.size });
   }
   return checked;

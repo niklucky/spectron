@@ -391,6 +391,9 @@ test("CLI: login, issues, comments, files and raw API calls", async (t) => {
   const before = (await json<{ attachments: StoredFile[] }>(["issue", "attachments", "SP-1"])).attachments.length;
   assert.match((await cli(["issue", "attach", "SP-1", "b.txt", "missing.txt"])).err, /Couldn't read missing\.txt/);
   assert.equal((await json<{ attachments: StoredFile[] }>(["issue", "attachments", "SP-1"])).attachments.length, before);
+  await writeFile(join(work, "empty.txt"), "");
+  assert.match((await cli(["issue", "attach", "SP-1", "b.txt", "empty.txt"])).err, /empty\.txt is empty/);
+  assert.equal((await json<{ attachments: StoredFile[] }>(["issue", "attachments", "SP-1"])).attachments.length, before);
 
   // Address forms: API-prefixed paths, any scheme case; never credentials.
   assert.equal(
