@@ -5,7 +5,7 @@
  * own response shapes for scripts and agents.
  */
 import { createReadStream, createWriteStream } from "node:fs";
-import { access, constants, link, readFile, rename, rm, stat } from "node:fs/promises";
+import { access, constants, copyFile, link, lstat, readFile, rename, rm, stat } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import { basename, dirname, join, resolve } from "node:path";
 import { Readable, type Writable } from "node:stream";
@@ -467,7 +467,7 @@ const commands: Command[] = [
       const ref = issueRef(ctx);
       const body = await issueFields(ctx);
       for (const name of strings(ctx, "clear")) {
-        const entry = CLEARABLE[name];
+        const entry = Object.hasOwn(CLEARABLE, name) ? CLEARABLE[name] : undefined;
         if (!entry) throw new UsageError(`Can't clear "${name}". Clearable: ${Object.keys(CLEARABLE).join(", ")}.`);
         if (entry[0] in body) throw new UsageError(`--clear ${name} conflicts with setting it.`);
         body[entry[0]] = entry[1];
@@ -642,7 +642,8 @@ const commands: Command[] = [
       const destination = resolve(ctx.io.cwd, name);
       const exists = () =>
         new UsageError(`${name} already exists. Pass --force to overwrite it, or -o to choose another name.`);
-      if (output !== "-" && !flag(ctx, "force") && (await stat(destination).catch(() => null))) {
+      // lstat: a dangling symlink still occupies the name.
+      if (output !== "-" && !flag(ctx, "force") && (await lstat(destination).catch(() => null))) {
         await response.body.cancel().catch(() => {});
         throw exists();
       }
@@ -724,9 +725,10 @@ async function allComments(client: Client, ref: string, parentId?: string) {
 }
 
 /**
- * Moves a finished download into place without replacing an existing file.
- * A hard link fails atomically if the name was taken meanwhile; filesystems
- * without hard links fall back to a checked rename.
+ * Moves a finished download into place without replacing anything at the
+ * destination, a dangling symlink included. A hard link fails atomically if
+ * the name is taken; filesystems without hard links get an exclusive copy,
+ * which fails the same way.
  */
 async function publishNew(partial: string, destination: string) {
   try {
@@ -734,9 +736,7 @@ async function publishNew(partial: string, destination: string) {
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
     if (code !== "EPERM" && code !== "ENOTSUP" && code !== "EOPNOTSUPP" && code !== "ENOSYS") throw error;
-    if (await stat(destination).catch(() => null))
-      throw Object.assign(new Error("exists"), { code: "EEXIST" });
-    await rename(partial, destination);
+    await copyFile(partial, destination, constants.COPYFILE_EXCL);
   }
 }
 
@@ -900,6 +900,7 @@ export async function run(argv: string[], io: IO): Promise<number> {
       `Unexpected argument "${parsed.positionals[maxArgs]}". Usage: spectron ${command.name}${command.args ? ` ${command.args}` : ""}. Quote values that contain spaces.`,
     );
   const width = io.stdout.isTTY ? io.stdout.columns : undefined;
+  let clientPromise: Promise<Client> | undefined;
   const ctx: Context = {
     io,
     values: parsed.values as Values,
@@ -909,13 +910,21 @@ export async function run(argv: string[], io: IO): Promise<number> {
     out: (text) => void io.stdout.write(`${text}\n`),
     data: (value) => void io.stdout.write(`${JSON.stringify(value, null, 2)}\n`),
     note: (text) => void io.stderr.write(`${text}\n`),
-    async client() {
-      const { url, token, problem } = await resolveCredentials(io.env);
-      if (problem) throw new ApiFailure(401, "not_signed_in", problem);
-      if (!url || !token) throw new ApiFailure(401, "not_signed_in", `Not signed in. Run \`spectron auth login\` with a personal access token. ${TOKEN_HELP}`);
-      return createClient({ url, token, fetch: io.fetch, userAgent: userAgent() });
-    },
+    // Resolved once, so every request of one command goes to the same server
+    // even if another terminal signs in elsewhere meanwhile.
+    client: () => (clientPromise ??= resolveClient()),
   };
+  async function resolveClient() {
+    const { url, token, problem } = await resolveCredentials(io.env);
+    if (problem) throw new ApiFailure(401, "not_signed_in", problem);
+    if (!url || !token)
+      throw new ApiFailure(
+        401,
+        "not_signed_in",
+        `Not signed in. Run \`spectron auth login\` with a personal access token. ${TOKEN_HELP}`,
+      );
+    return createClient({ url, token, fetch: io.fetch, userAgent: userAgent() });
+  }
   try {
     await command.run(ctx);
     return 0;

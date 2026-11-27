@@ -287,6 +287,9 @@ test("CLI: login, issues, comments, files and raw API calls", async (t) => {
   assert.deepEqual(edited.tags, []);
   assert.equal((await cli(["issue", "edit", "SP-1"])).code, 2);
   assert.equal((await cli(["issue", "edit", "SP-1", "--clear", "title"])).code, 2);
+  // Inherited property names are not fields, and nothing is written.
+  assert.equal((await cli(["issue", "edit", "SP-1", "-t", "Never saved", "--clear", "constructor"])).code, 2);
+  assert.notEqual((await json<Issue>(["issue", "view", "SP-1"])).title, "Never saved");
   assert.equal((await cli(["issue", "edit", "SP-1", "--clear", "due", "--due", "2026-12-01"])).code, 2);
   assert.equal((await cli(["issue", "edit", "SP-1", "--tag", "x", "--add-tag", "y"])).code, 2);
   const stale = await cli(["issue", "edit", "SP-1", "-t", "Stale", "--expected-updated-at", "2000-01-01T00:00:00.000Z", "--json"]);
@@ -415,6 +418,24 @@ test("CLI: login, issues, comments, files and raw API calls", async (t) => {
   assert.equal(await readFile(join(work, "été.txt"), "utf8"), "named");
   assert.equal(await ok(["file", "download", "SP", alpha.id], { fetch: named('attachment; filename="../evil.txt"') }), "Saved evil.txt.\n");
   await assert.rejects(stat(join(root, "evil.txt")));
+  // A dangling symlink occupies its name too.
+  if (process.platform !== "win32") {
+    const { symlink } = await import("node:fs/promises");
+    await symlink(join(root, "nowhere.txt"), join(work, "dangling.txt"));
+    assert.match((await cli(["file", "download", "SP", alpha.id, "-o", "dangling.txt"])).err, /already exists/);
+    await assert.rejects(stat(join(root, "nowhere.txt")));
+  }
+
+  // One command talks to one server, even if the saved login changes midway.
+  const servers = new Set<string>();
+  const switching: Fetch = async (target, init) => {
+    servers.add(new URL(target).origin);
+    if (servers.size === 1) await writeFile(config, JSON.stringify({ url: "https://elsewhere.example", token: "spk_other" }));
+    return api.request(target, init);
+  };
+  await ok(["issue", "comment", "SP-1", "Same server", "--attach", "b.txt"], { fetch: switching });
+  assert.deepEqual([...servers], [origin]);
+  await writeFile(config, JSON.stringify({ url: origin, token }));
 
   // Pagination spans pages of at most 200 and stops at --limit.
   const limits: string[] = [];
