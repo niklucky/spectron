@@ -1,0 +1,23 @@
+{
+  "name": "@spectron/cli",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Command-line client for Spectron issues, built on the public REST API.",
+  "type": "module",
+  "bin": {
+    "spectron": "./dist/main.js"
+  },
+  "files": ["dist"],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json",
+    "start": "tsx src/main.ts"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.3",
+    "tsx": "4.23.13"
+  }
+}
