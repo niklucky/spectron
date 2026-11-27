@@ -19,6 +19,7 @@ import {
   createVerificationEmailSender,
   createInvitationEmailSender,
 } from "@spectron/backend";
+import { attachFlowEvents } from "./flow-events";
 import { createAPI } from "./index";
 
 config({
@@ -155,8 +156,10 @@ const server = serve(
     console.info(`Spectron API listening on port ${port}`);
   },
 );
+const stopFlowEvents = await attachFlowEvents(server, pool, auth, APP_URL);
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.once(signal, () => {
+    stopFlowEvents();
     server.close(() => {
       void Promise.all([stopScheduler(), stopExports(), stopAgents(), stopGitWorkflow()])
         .then(() => pool.end())

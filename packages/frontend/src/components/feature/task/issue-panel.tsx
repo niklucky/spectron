@@ -4,6 +4,7 @@ import { AttachmentGallery } from "./attachment-gallery";
 import { ISSUE_TITLE_MAX_LENGTH, ISSUE_DESCRIPTION_MAX_LENGTH } from "@spectron/shared";
 import { Menu } from "../../ui/menu";
 import { MessageMarkdown } from "../../ui/message-markdown";
+import { useFlowRevision } from "./flow-updates";
 import { IssueChat } from "./issue-chat";
 import type { IssueActivityPage } from "@spectron/shared";
 import { useEffect, useRef, useState } from "react";
@@ -64,6 +65,7 @@ export type IssuePanelActions = {
 };
 export function IssuePanel({
   issue,
+  live,
   settings,
   issues,
   actions,
@@ -73,6 +75,7 @@ export function IssuePanel({
   onActivityChange,
 }: {
   issue: IssueSummary;
+  live?: import("@spectron/shared").SubscribeToFlow;
   settings: IssueSettings;
   issues: IssueSummary[];
   actions: IssuePanelActions;
@@ -130,7 +133,9 @@ export function IssuePanel({
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [more, setMore] = useState(false);
-  const [reload, setReload] = useState(0);
+  const [localRevision, setReload] = useState(0);
+  const issueRevision = useFlowRevision(live, issue.id, "issue");
+  const reload = localRevision + issueRevision;
   const state = settings.states.find((s) => s.id === issue.stateId);
   const priority = settings.priorities.find((s) => s.id === issue.priorityId);
   const parent = issues.find((i) => i.id === issue.parentId);
@@ -164,7 +169,7 @@ export function IssuePanel({
     return () => {
       active = false;
     };
-  }, [issue.id, issue.projectId, issue.updatedAt, actions, reload]);
+  }, [issue.id, issue.projectId, issue.updatedAt, issue.readState?.activityAt, actions, reload]);
   const identityPeople = (settings.externalIdentities ?? []).map((i) => ({
     id: i.id,
     name: i.localUserId
@@ -415,7 +420,8 @@ export function IssuePanel({
           showHistory={detail === "dev"}
           tool={chatTool}
           setTool={setChatTool}
-          revision={reload}
+          live={live}
+          revision={localRevision}
           onChange={() => { setReload((n) => n + 1); onActivityChange?.(); }}
           onSelect={onSelect}
           valueLabel={valueLabel}

@@ -1,6 +1,6 @@
 import { trackerImages } from "@spectron/shared";
-import React, { type ReactNode } from "react";
-import Markdown from "react-markdown";
+import React, { createContext, useContext, type ReactNode } from "react";
+import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 type MarkdownNode = {
@@ -40,26 +40,41 @@ function remarkTrackerImages() {
 
 export type MarkdownMention = { href: string; label: string; title: string };
 
+type MarkdownImage = ReturnType<typeof trackerImages>[number];
+type MarkdownOptions = {
+  images: MarkdownImage[];
+  renderImage?: ((image: MarkdownImage) => ReactNode) | undefined;
+  mentions: MarkdownMention[];
+};
+
+const MarkdownContext = createContext<MarkdownOptions>({ images: [], mentions: [] });
+
+// Keep the component types stable so a chat update preserves link focus and loaded images.
+const components: Components = {
+  a: function MarkdownLink({ href, children }) {
+    const { mentions } = useContext(MarkdownContext);
+    const mention = mentions.find(item => item.href === href);
+    return mention
+      ? <span className="mention rounded-sm bg-accent-soft px-1.5 py-px font-semibold text-accent-ink" title={mention.title}>@{mention.label}</span>
+      : <a href={href} target="_blank" rel="noreferrer">{children}</a>;
+  },
+  img: function MarkdownAttachment({ src, alt }) {
+    const { images, renderImage } = useContext(MarkdownContext);
+    const id = typeof src === "string" ? src.match(/^\/ajax\/v2\/attachments\/(\d+)/)?.[1] : undefined;
+    const image = id ? images.find(image => image.id === id) : undefined;
+    return image ? renderImage?.(image) ?? image.markup : <span>{alt || "Image"}</span>;
+  },
+};
+
 export function MessageMarkdown({ text, renderImage, mentions = [] }: {
   text: string;
-  renderImage?: (image: ReturnType<typeof trackerImages>[number]) => ReactNode;
+  renderImage?: (image: MarkdownImage) => ReactNode;
   mentions?: MarkdownMention[];
 }) {
   const images = trackerImages(text);
   return <div className="prose-chat">
-    <Markdown remarkPlugins={[remarkGfm, remarkTrackerImages]} components={{
-      a: ({ href, children }) => {
-        const mention = mentions.find(item => item.href === href);
-        return mention
-          ? <span className="mention rounded-sm bg-accent-soft px-1.5 py-px font-semibold text-accent-ink" title={mention.title}>@{mention.label}</span>
-          : <a href={href} target="_blank" rel="noreferrer">{children}</a>;
-      },
-      img: ({ src, alt }) => {
-        const id = typeof src === "string" ? src.match(/^\/ajax\/v2\/attachments\/(\d+)/)?.[1] : undefined;
-        const image = id ? images.find(image => image.id === id) : undefined;
-        // Resolve imported images through authenticated local attachments.
-        return image ? renderImage?.(image) ?? image.markup : <span>{alt || "Image"}</span>;
-      },
-    }}>{text}</Markdown>
+    <MarkdownContext.Provider value={{ images, renderImage, mentions }}>
+      <Markdown remarkPlugins={[remarkGfm, remarkTrackerImages]} components={components}>{text}</Markdown>
+    </MarkdownContext.Provider>
   </div>;
 }

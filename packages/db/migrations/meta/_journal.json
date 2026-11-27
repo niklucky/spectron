@@ -250,8 +250,15 @@
     {
       "idx": 35,
       "version": "7",
-      "when": 1795812097238,
-      "tag": "0035_profile_avatars",
+      "when": 1795811115538,
+      "tag": "0035_flow_notifications",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1795812781586,
+      "tag": "0036_profile_avatars",
       "breakpoints": true
     }
   ]

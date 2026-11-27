@@ -1,6 +1,8 @@
+import { watchFlowQuery } from "./flow-updates";
 import { useEffect, useState } from "react";
 import {
   createId,
+  equalJson,
   type AgentIdentity,
   type AgentRunActions,
   type AgentRunScope,
@@ -8,6 +10,7 @@ import {
   type GitReplyDraft,
   type GitWorkflowActions,
   type GitWorkspaceView,
+  type SubscribeToFlow,
 } from "@spectron/shared";
 import { Button } from "../../ui/button";
 import { Icon } from "../../ui/icon";
@@ -26,6 +29,7 @@ export function GitActivityCards({
   agents,
   currentUserId,
   active,
+  live,
   revision,
   closed,
   changed,
@@ -36,6 +40,7 @@ export function GitActivityCards({
   currentUserId: string;
   active: boolean;
   revision: number;
+  live?: SubscribeToFlow | undefined;
   closed: boolean;
   changed: () => void;
 }) {
@@ -45,36 +50,26 @@ export function GitActivityCards({
   const [reload, setReload] = useState(0);
   useEffect(() => {
     if (!active) return;
-    let live = true,
-      timer: ReturnType<typeof setTimeout>;
-    async function load() {
-      try {
-        const next = await actions.list(scope);
-        if (live) {
-          setRows(next);
-          setError("");
-        }
-      } catch (e) {
-        if (live)
-          setError(
-            e instanceof Error ? e.message : "Could not load Git activity.",
-          );
-      } finally {
-        if (live) timer = setTimeout(() => void load(), 10000);
-      }
-    }
-    void load();
+    return watchFlowQuery(live, scope.issueId, "git",
+      () => actions.list(scope),
+      next => {
+        setRows(previous => equalJson(previous, next) ? previous : next);
+        setError("");
+      },
+      cause => setError(cause instanceof Error ? cause.message : "Could not load Git activity."),
+    );
+  }, [active, actions, scope.projectId, scope.issueId, revision, live, reload]);
+  useEffect(() => {
+    if (!active) return;
+    let live = true;
     void agents.available(scope.projectId).then(
       (a) => {
         if (live) setAvailable(a);
       },
       () => {},
     );
-    return () => {
-      live = false;
-      clearTimeout(timer);
-    };
-  }, [active, actions, agents, scope.projectId, scope.issueId, revision, reload]);
+    return () => { live = false; };
+  }, [active, agents, scope.projectId, revision]);
   if (!rows.length && !error) return null;
   return (
     <section aria-label="Current Git activity" className="flex flex-col gap-2 py-2">

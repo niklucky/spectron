@@ -67,7 +67,7 @@ The pinned CLI emits JSON events; `step_start` is the observed delivery boundary
 - Prior context includes at most 10 result excerpts (1,000-character summaries, 4,000-character details) and 20 steering excerpts, with a disclosure in the prompt; oldest history is omitted first when necessary. Full results remain in chat.
 - Context windows are model-specific. UTF-8 prompt bytes, including instructions and command text, are bounded to half the input capacity after reserving output, capped at 2 MB. This conservative text allowance leaves room for tool schemas, native images and repository reads; it is not a tokenizer estimate. Output stays capped at 16,384 tokens for verified models.
 - Current limits: model-dependent initial context, 100 MB total attachment files, 32 MB proxy request/response, bounded CLI output, 300 brief activity events, 5-minute clone timeout, and a 20-minute per-provider-request timeout. These are bounded-resource limits, not an idle timeout for active tools. Oversize/unavailable inputs fail visibly.
-- Run cards poll every two seconds while queued/preparing/working, every 30 seconds for Needs input, and stop polling when idle; focus, local mutations, and issue revision changes refresh them. Activity is persisted in durable storage; activity is streamed from CLI events into storage, rather than a raw token stream in the browser.
+- Run cards refresh when the Flow WebSocket announces a change to the open issue’s runs. Reconnecting also refreshes the current snapshot. Activity is persisted in durable storage; activity is streamed from CLI events into storage, rather than a raw token stream in the browser.
 
 ## Verification and continuation
 
