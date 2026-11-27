@@ -74,7 +74,9 @@
       }
       # No redirects: the address is exactly the server that served this.
       # The system proxy applies, as it did for this script.
-      Invoke-WebRequest -Uri "$server/cli/spectron.mjs" -OutFile $part -UseBasicParsing -MaximumRedirection 0 -TimeoutSec 120
+      $response = Invoke-WebRequest -Uri "$server/cli/spectron.mjs" -UseBasicParsing -MaximumRedirection 0 -TimeoutSec 120
+      # The raw bytes, written with .NET: 5.1's -OutFile reads [ ] in a path as wildcards.
+      [IO.File]::WriteAllBytes($part, $response.RawContentStream.ToArray())
     } catch {
       throw "Couldn't download $server/cli/spectron.mjs: $($_.Exception.Message)"
     } finally {
