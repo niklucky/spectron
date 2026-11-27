@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { TRPCClientError } from "@trpc/client";
-import type { CreateProjectInput, ProjectSummary } from "@spectron/shared";
+import { equalJson, type CreateProjectInput, type ProjectSummary } from "@spectron/shared";
 import { trpc } from "../lib/trpc";
 
 export function useProjects(sessionId: string) {
@@ -22,7 +22,7 @@ export function useProjects(sessionId: string) {
     try {
       const rows = await trpc.projects.list.query();
       if (request !== version.current) return;
-      setProjects(rows);
+      setProjects(previous => equalJson(previous, rows) ? previous : rows);
       setError("");
     } catch (cause) {
       if (request !== version.current) return;

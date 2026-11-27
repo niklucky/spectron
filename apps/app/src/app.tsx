@@ -49,6 +49,7 @@ import {
   AuthPreview,
   DesignSystemPage,
 } from "@spectron/frontend/components/feature/design-system";
+import { useFlowEvents } from "./hooks/use-flow-events";
 import { useProjects } from "./hooks/use-projects";
 import { useWorkspace } from "./hooks/use-workspace";
 import { AuthGate } from "./auth-gate";
@@ -210,6 +211,7 @@ function Workspace({
   );
   const project = projects.find((item) => item.id === workspace.project);
   const task = workspace.task;
+  const live = useFlowEvents(workspace.refresh, projectState.refresh);
   const [commandOpen, setCommandOpen] = useState(false);
   useHotkey("Mod+K", () => setCommandOpen((open) => !open), { ignoreInputs: false });
   const commandGroups = useMemo<CommandGroup[]>(() => {
@@ -566,6 +568,7 @@ function Workspace({
       ) : task && project ? (
         <IssuePanel
           key={task.id}
+          live={live}
           issue={task}
           settings={
             workspace.settings[task.projectId] ?? {

@@ -1,12 +1,13 @@
+import { useFlowRevision, watchFlowQuery } from "./flow-updates";
 import { GitActivityCards } from "./git-activity";
 import { AgentRunCard } from "./agent-run-card";
 import { ChatComposer } from "./chat-composer";
 import { LocalHandoffCard } from "./local-handoff-card";
 import type { LocalHandoffView } from "@spectron/shared";
-import { agentRunPollDelay, type AgentRunView } from "@spectron/shared";
+import { equalJson, type AgentRunView, type SubscribeToFlow } from "@spectron/shared";
 import { formatDateTime } from "../../../lib/date-format";
 import { AttachmentMarkdown, nonInlineFiles } from "./issue-comments";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "react";
 import type {
   IssueActivityEvent,
   IssueActivityPage,
@@ -57,6 +58,7 @@ export function IssueChat({
   showHistory,
   tool,
   setTool,
+  live,
   revision,
   onChange,
   onSelect,
@@ -72,74 +74,55 @@ export function IssueChat({
   tool: "files" | "worklog" | null;
   setTool: (tool: "files" | "worklog" | null) => void;
   revision: number;
+  live?: SubscribeToFlow | undefined;
   onChange: () => void;
   onSelect: (id: string, projectId: string) => void;
   valueLabel: (field: string, value: unknown) => string;
 }) {
+  const issueRevision = useFlowRevision(live, issue.id, "issue");
+  const activityRevision = useFlowRevision(live, issue.id, "activity");
   void issues;
   void onSelect;
   const [runs, setRuns] = useState<AgentRunView[]>([]);
   const [handoffs, setHandoffs] = useState<LocalHandoffView[]>([]);
   const [handoffError, setHandoffError] = useState("");
   useEffect(() => {
-    if (!active || !actions.handoffs) return;
-    let alive = true;
-    const refresh = () => {
-      void actions.handoffs!.list({ projectId: issue.projectId, issueId: issue.id }).then(rows => { if (alive) { setHandoffs(rows); setHandoffError(""); } }, cause => { if (alive) setHandoffError(cause instanceof Error ? cause.message : "Could not load local handoffs."); });
-    };
-    refresh(); window.addEventListener("focus", refresh);
-    return () => { alive = false; window.removeEventListener("focus", refresh); };
-  }, [active, actions.handoffs, issue.id, issue.projectId, revision]);
+    const handoffs = actions.handoffs;
+    if (!active || !handoffs) return;
+    return watchFlowQuery(live, issue.id, "handoffs",
+      () => handoffs.list({ projectId: issue.projectId, issueId: issue.id }),
+      rows => {
+        setHandoffs(previous => equalJson(previous, rows) ? previous : rows);
+        setHandoffError("");
+      },
+      cause => setHandoffError(cause instanceof Error ? cause.message : "Could not load local handoffs."),
+    );
+  }, [active, actions.handoffs, issue.id, issue.projectId, revision, live]);
   const [runError, setRunError] = useState("");
-  const [events, setEvents] = useState<IssueActivityEvent[]>([]),
+  const [events, setEvents] = useState<IssueActivityEvent[] | null>(null),
     [cursor, setCursor] = useState<string | null>(null),
     [loading, setLoading] = useState(true),
     [error, setError] = useState(""),
-    [reload, setReload] = useState(0);
+    [activityReload, setActivityReload] = useState(0);
   useEffect(() => {
-    if (!active || !actions.runs) return;
-    let alive = true;
-    let timer: number | undefined;
-    let refreshing = false;
-    const refresh = async () => {
-      if (refreshing) return;
-      refreshing = true;
-      try {
-        const rows = await actions.runs!.list({ projectId: issue.projectId, issueId: issue.id });
-        if (alive) {
-          setRuns(rows);
-          setRunError("");
-          const delay = agentRunPollDelay(rows);
-          if (delay !== null) timer = window.setTimeout(() => void refresh(), delay);
-        }
-      } catch (e) {
-        if (alive) {
-          setRunError(e instanceof Error ? e.message : "Could not load agent runs.");
-          timer = window.setTimeout(() => void refresh(), 30000);
-        }
-      } finally {
-        refreshing = false;
-      }
-    };
-    void refresh();
-    const refocus = () => {
-      window.clearTimeout(timer);
-      void refresh();
-    };
-    window.addEventListener("focus", refocus);
-    return () => {
-      alive = false;
-      window.clearTimeout(timer);
-      window.removeEventListener("focus", refocus);
-    };
-  }, [active, actions.runs, issue.id, issue.projectId, revision, reload]);
+    const runs = actions.runs;
+    if (!active || !runs) return;
+    return watchFlowQuery(live, issue.id, "runs",
+      () => runs.list({ projectId: issue.projectId, issueId: issue.id }),
+      rows => {
+        setRuns(previous => equalJson(previous, rows) ? previous : rows);
+        setRunError("");
+      },
+      cause => setRunError(cause instanceof Error ? cause.message : "Could not load agent runs."),
+    );
+  }, [active, actions.runs, issue.id, issue.projectId, revision, live]);
   const [expandedHistory, setExpandedHistory] = useState<Set<string>>(new Set());
+  const activityAt = issue.readState?.activityAt;
   const [attachments, setAttachments] = useState<IssueAttachmentSummary[]>([]);
   const [attachmentError, setAttachmentError] = useState("");
   useEffect(() => {
     if (!active) return;
     let alive = true;
-    setAttachments([]);
     setAttachmentError("");
     void actions.files.list(issue.projectId, issue.id).then(
       (files) => {
@@ -152,50 +135,50 @@ export function IssueChat({
     return () => {
       alive = false;
     };
-  }, [actions.files, issue.projectId, issue.id, issue.updatedAt, active, revision, reload]);
-  const activityAt = issue.readState?.activityAt;
+  }, [actions.files, issue.projectId, issue.id, issue.updatedAt, activityAt, active, revision, issueRevision]);
   const [loadedActivity, setLoadedActivity] = useState<string>();
   const composer = useRef<HTMLDivElement>(null);
   const stream = useRef<HTMLDivElement>(null),
     generation = useRef(0),
     pages = useRef(1),
-    loaded = useRef(false),
     scroll = useRef<{ top: number; height: number } | "bottom" | null>("bottom");
+
+  const applyEvents = useEffectEvent((next: IssueActivityEvent[]) => {
+    if (equalJson(events, next)) return;
+    const el = stream.current;
+    if (!events || (el && el.scrollHeight - el.scrollTop - el.clientHeight < 80)) scroll.current = "bottom";
+    setEvents(next);
+  });
+  const loadActivity = useCallback(async () => {
+    const version = ++generation.current;
+    try {
+      let next: string | null = null;
+      let collected: IssueActivityEvent[] = [];
+      for (let n = 0; n < pages.current; n++) {
+        const page: IssueActivityPage = await actions.activity({ projectId: issue.projectId, issueId: issue.id, ...(next ? { cursor: next } : {}) });
+        if (version !== generation.current) return;
+        collected = [...page.events, ...collected];
+        next = page.nextCursor;
+        if (!next) break;
+      }
+      applyEvents(collected);
+      setLoadedActivity(activityAt);
+      setCursor(next);
+      setError("");
+    } catch (cause) {
+      if (version === generation.current) setError(cause instanceof Error ? cause.message : "Could not load chat.");
+    } finally {
+      if (version === generation.current) setLoading(false);
+    }
+  }, [actions.activity, issue.id, issue.projectId, activityAt]);
+
   useEffect(() => {
     if (!active) return;
-    let alive = true;
-    const version = ++generation.current;
     setLoading(true);
     setError("");
-    const el = stream.current;
-    if (!loaded.current || (el && el.scrollHeight - el.scrollTop - el.clientHeight < 80)) scroll.current = "bottom";
-    void (async () => {
-      try {
-        let next: string | null = null;
-        let collected: IssueActivityEvent[] = [];
-        for (let n = 0; n < pages.current; n++) {
-          const page: IssueActivityPage = await actions.activity({ projectId: issue.projectId, issueId: issue.id, ...(next ? { cursor: next } : {}) });
-          collected = [...page.events, ...collected];
-          next = page.nextCursor;
-          if (!next) break;
-        }
-        if (alive && version === generation.current) {
-          setLoadedActivity(activityAt);
-          setEvents(collected);
-          setCursor(next);
-          loaded.current = true;
-        }
-      } catch (cause) {
-        if (alive && version === generation.current) setError(cause instanceof Error ? cause.message : "Could not load chat.");
-      } finally {
-        if (alive && version === generation.current) setLoading(false);
-      }
-    })();
-    return () => {
-      alive = false;
-      generation.current++;
-    };
-  }, [actions, issue.id, issue.projectId, issue.updatedAt, activityAt, active, revision, reload]);
+    void loadActivity();
+    return () => { generation.current++; };
+  }, [active, loadActivity, issue.updatedAt, revision, activityReload, activityRevision, issueRevision]);
 
   const markRead = actions.markRead;
   const seenThrough = issue.readState?.seenThrough;
@@ -225,11 +208,6 @@ export function IssueChat({
       window.removeEventListener("online", acknowledge);
     };
   }, [active, markRead, issue.id, issue.projectId, activityAt, loadedActivity, seenThrough]);
-  useEffect(() => {
-    if (!active || !events.some((e) => e.comment?.jiraSync === "pending" || e.comment?.jiraSync === "syncing")) return;
-    const timer = window.setTimeout(() => setReload((n) => n + 1), 3000);
-    return () => window.clearTimeout(timer);
-  }, [active, events]);
   useLayoutEffect(() => {
     const element = composer.current;
     const messages = stream.current;
@@ -271,7 +249,7 @@ export function IssueChat({
     !!issue.deletedAt ||
     settings.states.some((s) => s.id === issue.stateId && ["finished", "cancelled"].includes(s.trigger));
   const timeline = [
-    ...events.map((event) => ({ handoff: null as LocalHandoffView | null, run: null as AgentRunView | null, event, file: null as IssueAttachmentSummary | null, date: event.comment?.createdAt ?? event.entry.createdAt })),
+    ...(events ?? []).map((event) => ({ handoff: null as LocalHandoffView | null, run: null as AgentRunView | null, event, file: null as IssueAttachmentSummary | null, date: event.comment?.createdAt ?? event.entry.createdAt })),
     ...attachments
       .filter((f) => !f.inDescription && !f.commentIds?.length)
       .map((file) => ({ handoff: null as LocalHandoffView | null, run: null as AgentRunView | null, event: null, file, date: file.attachedAt ?? file.createdAt })),
@@ -319,7 +297,7 @@ export function IssueChat({
           {cursor && (
             <div className="flex justify-center py-2">
               <Button variant="ghost" size="sm" disabled={loading} onClick={async () => {
-                const version = generation.current;
+                const version = ++generation.current;
                 setLoading(true);
                 setError("");
                 try {
@@ -328,7 +306,7 @@ export function IssueChat({
                     const el = stream.current;
                     if (el) scroll.current = { top: el.scrollTop, height: el.scrollHeight };
                     pages.current++;
-                    setEvents((old) => [...page.events, ...old]);
+                    setEvents((old) => [...page.events, ...(old ?? [])]);
                     setCursor(page.nextCursor);
                   }
                 } catch (cause) {
@@ -348,9 +326,10 @@ export function IssueChat({
               agents={actions.runs}
               currentUserId={me}
               active={active}
-              revision={revision + reload}
+              revision={revision}
+              live={live}
               closed={closed}
-              changed={() => { setReload((n) => n + 1); changed(); }}
+              changed={changed}
             />
           )}
           {runError && <p role="alert" className="text-sm text-bad">{runError}</p>}
@@ -366,7 +345,7 @@ export function IssueChat({
               return (
                 <div key={run.id} className="contents">
                   {separator}
-                  <AgentRunCard run={run} actions={actions.runs} closed={closed} changed={() => { setReload((n) => n + 1); changed(); }} />
+                  <AgentRunCard run={run} actions={actions.runs} closed={closed} changed={changed} />
                 </div>
               );
             }
@@ -454,11 +433,11 @@ export function IssueChat({
               </div>
             );
           })}
-          {loading && <p role="status" className="py-4 text-center text-sm text-ink-3">Loading chat…</p>}
+          {loading && !events && <p role="status" className="py-4 text-center text-sm text-ink-3">Loading chat…</p>}
           {error && (
             <p className="flex items-center justify-center gap-2 py-4 text-sm text-bad" role="alert">
               {error}
-              <Button variant="ghost" size="sm" onClick={() => setReload((n) => n + 1)}>Retry</Button>
+              <Button variant="ghost" size="sm" onClick={() => setActivityReload((n) => n + 1)}>Retry</Button>
             </p>
           )}
         </div>

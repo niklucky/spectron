@@ -1,4 +1,4 @@
-import { firstMessageFields } from "@spectron/shared";
+import { equalJson, firstMessageFields } from "@spectron/shared";
 import {
   defaultTaskFiltersForView,
   matchesResolvedDatePeriod,
@@ -152,11 +152,11 @@ export function useWorkspace(
       if (request !== generation.current) return;
       setIssues(previous => {
         const receipts = new Map(previous.map(i => [i.id, i.readState?.seenThrough]));
-        return rows.flatMap(r => r.issues.map(i => withReadReceipt(i, receipts.get(i.id))));
+        const next = rows.flatMap(r => r.issues.map(i => withReadReceipt(i, receipts.get(i.id))));
+        return equalJson(previous, next) ? previous : next;
       });
-      setSettings(
-        Object.fromEntries(rows.map((r) => [r.projectId, r.settings])),
-      );
+      const nextSettings = Object.fromEntries(rows.map(r => [r.projectId, r.settings]));
+      setSettings(previous => equalJson(previous, nextSettings) ? previous : nextSettings);
       setError("");
     } catch {
       if (request === generation.current)

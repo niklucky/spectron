@@ -1,4 +1,8 @@
 import assert from "node:assert/strict";
+import { once } from "node:events";
+import { createServer } from "node:http";
+import { WebSocket } from "ws";
+import { attachFlowEvents } from "../src/flow-events";
 import { randomUUID } from "node:crypto";
 import { test } from "node:test";
 import { createDatabase, migrateDatabase } from "@spectron/db";
@@ -110,6 +114,57 @@ test("Unified issue activity preserves access, history and pagination", async (t
     ),
   );
   const scope = { projectId: p.id, issueId: issue.id };
+  await t.test("WebSocket delivers committed changes only to current project members", async () => {
+    const server = createServer();
+    const stop = await attachFlowEvents(server, pool, auth, origin);
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const endpoint = `ws://127.0.0.1:${(server.address() as import("node:net").AddressInfo).port}/api/flow/events`;
+    const connect = async (cookie: string) => {
+      const ws = new WebSocket(endpoint, { origin, headers: { cookie } });
+      const [ready] = await once(ws, "message", { signal: AbortSignal.timeout(3000) });
+      assert.deepEqual(JSON.parse(ready.toString()), { type: "ready" });
+      return ws;
+    };
+    const next = async (ws: WebSocket) => {
+      const [event] = await once(ws, "message", { signal: AbortSignal.timeout(3000) });
+      return JSON.parse(event.toString());
+    };
+    try {
+      for (const [cookie, from, status] of [["", origin, 401], [owner.cookie, "https://elsewhere.test", 403]] as const) {
+        const denied = new WebSocket(endpoint, { origin: from, headers: { cookie } });
+        await assert.rejects(once(denied, "open"), new RegExp(String(status)));
+      }
+      const a = await connect(owner.cookie);
+      const b = await connect(member.cookie);
+      const c = await connect(outsider.cookie);
+      const unauthorized: string[] = [];
+      c.on("message", frame => unauthorized.push(frame.toString()));
+      const ownerEvent = next(a), memberEvent = next(b);
+      // Independent writer connection, like a worker. A rolled-back write
+      // must never wake clients, even if it targeted another accessible issue.
+      const writer = await pool.connect();
+      try {
+        await writer.query("BEGIN");
+        await writer.query("UPDATE issues SET title = title WHERE id = $1", [other.id]);
+        await writer.query("ROLLBACK");
+        await writer.query("UPDATE issues SET title = title WHERE id = $1", [issue.id]);
+      } finally { writer.release(); }
+      const expected = { type: "changes", changes: [{ ...scope, kind: "issue" }] };
+      assert.deepEqual(await ownerEvent, expected);
+      assert.deepEqual(await memberEvent, expected);
+      await pool.query("DELETE FROM project_members WHERE project_id = $1 AND user_id = $2", [p.id, member.id]);
+      b.on("message", frame => unauthorized.push(frame.toString()));
+      const ownerAfterRemoval = next(a);
+      await pool.query("UPDATE issues SET title = title WHERE id = $1", [issue.id]);
+      assert.deepEqual(await ownerAfterRemoval, expected);
+      await pool.query("INSERT INTO project_members(project_id,user_id,role) VALUES ($1,$2,'member')", [p.id, member.id]);
+      assert.deepEqual(unauthorized, []);
+    } finally {
+      stop();
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    }
+  });
   const activity = (extra: Record<string, unknown> = {}) =>
     call("issues.activity", owner, { ...scope, ...extra });
   const f = createId(),
