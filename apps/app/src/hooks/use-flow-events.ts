@@ -55,9 +55,16 @@ export function useFlowEvents(refreshIssues: () => Promise<boolean>, refreshProj
       const url = new URL("/api/flow/events", location.href);
       url.protocol = location.protocol === "https:" ? "wss:" : "ws:";
       socket = new WebSocket(url);
+      let newlyConnected = true;
       socket.onmessage = event => {
         const message: FlowMessage = JSON.parse(event.data);
         if (message.type === "ready") {
+          if (newlyConnected) {
+            newlyConnected = false;
+            window.clearTimeout(snapshotRetry);
+            snapshotRetry = undefined;
+            snapshotDelay = 1000;
+          }
           delay = 500;
           needsSnapshot = true;
         } else {

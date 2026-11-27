@@ -121,20 +121,15 @@ export function IssueChat({
   const [attachmentError, setAttachmentError] = useState("");
   useEffect(() => {
     if (!active) return;
-    let alive = true;
-    setAttachmentError("");
-    void actions.files.list(issue.projectId, issue.id).then(
-      (files) => {
-        if (alive) setAttachments(files);
+    return watchFlowQuery(live, issue.id, "issue",
+      () => actions.files.list(issue.projectId, issue.id),
+      files => {
+        setAttachments(previous => equalJson(previous, files) ? previous : files);
+        setAttachmentError("");
       },
-      (cause) => {
-        if (alive) setAttachmentError(cause instanceof Error ? cause.message : "Could not load attachments.");
-      },
+      cause => setAttachmentError(cause instanceof Error ? cause.message : "Could not load attachments."),
     );
-    return () => {
-      alive = false;
-    };
-  }, [actions.files, issue.projectId, issue.id, issue.updatedAt, activityAt, active, revision, issueRevision]);
+  }, [active, actions.files, issue.projectId, issue.id, revision, live]);
   const [loadedActivity, setLoadedActivity] = useState<string>();
   const composer = useRef<HTMLDivElement>(null);
   const stream = useRef<HTMLDivElement>(null),
