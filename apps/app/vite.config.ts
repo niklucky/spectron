@@ -12,6 +12,9 @@ export default defineConfig(({ mode }) => {
       strictPort: true,
       proxy: {
         "/api": { target: `http://127.0.0.1:${env.API_PORT || 3001}` },
+        // The CLI installer (`pnpm --filter @spectron/cli build` first).
+        // Only /cli, /cli/… and /cli?…, not /clients. Matched against the raw URL.
+        "^/cli(?:[/?]|$)": { target: `http://127.0.0.1:${env.API_PORT || 3001}` },
         // OAuth discovery for MCP clients is served by the API at the site root.
         "^/\\.well-known/(oauth-authorization-server|oauth-protected-resource|openid-configuration)": {
           target: `http://127.0.0.1:${env.API_PORT || 3001}`,

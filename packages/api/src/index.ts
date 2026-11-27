@@ -39,6 +39,7 @@ import { createContext } from "./trpc/context";
 import { createV1Routes } from "./v1";
 import { createOperations } from "./operations";
 import { createMcpRoute, MCP_MAX_BODY_BYTES } from "./mcp";
+import { createCliRoutes } from "./cli-install";
 
 export function createAPI(
   auth: Auth,
@@ -53,6 +54,7 @@ export function createAPI(
     gitAdapterFactory,
     gitlabAllowedPrivateOrigins = [],
     gitProviderDNS = "system",
+    cliDist,
     sendInvitationEmail = async () => {
       throw new Error("Invitation email is unavailable.");
     },
@@ -67,6 +69,8 @@ export function createAPI(
     gitAdapterFactory?: GitAdapterFactory;
     gitlabAllowedPrivateOrigins?: string[];
     gitProviderDNS?: "system" | "cloudflare";
+    /** Built CLI (apps/cli/dist), served with its installer at /cli/. */
+    cliDist?: string;
     sendInvitationEmail?: InvitationConfig["sendInvitationEmail"];
   },
 ) {
@@ -149,6 +153,7 @@ export function createAPI(
     "/api/v1",
     createV1Routes({ tokens: apiTokens, operations, files }),
   );
+  if (cliDist) api.route("/cli", createCliRoutes({ appURL, dist: cliDist }));
   api.post("/api/git/webhooks/:connectionId", async c => {
     try { await gitWorkflow.webhook(c.req.param("connectionId"), c.req.raw.headers, await c.req.text()); return c.json({ accepted: true }); }
     catch { return c.json({ error: "Webhook rejected" }, 403); }

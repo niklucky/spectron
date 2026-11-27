@@ -5,19 +5,22 @@
   "description": "Command-line client for Spectron issues, built on the public REST API.",
   "type": "module",
   "bin": {
-    "spectron": "./dist/main.js"
+    "spectron": "./dist/spectron.mjs"
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "engines": {
     "node": ">=22"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "node build.mjs",
     "typecheck": "tsc -p tsconfig.json",
     "start": "tsx src/main.ts"
   },
   "devDependencies": {
     "@types/node": "24.13.3",
+    "esbuild": "0.28.2",
     "tsx": "4.23.13"
   }
 }

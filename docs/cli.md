@@ -6,12 +6,47 @@ Agents that speak MCP can use the [MCP server](mcp.md) instead. The CLI suits ag
 
 ## Install
 
-Requires Node.js 22 or later. From a checkout of this repository:
+Requires Node.js 22 or later. Every Spectron server serves a CLI that matches its API:
+
+```sh
+curl -fsSL https://app.spectron.dev/cli/install.sh | sh
+```
+
+On a self-hosted server, use its address instead. The script needs no sudo. It downloads the CLI from that server and checks it against a SHA-256 checksum, which the server fills into the script when serving it. It then installs to `~/.local/share/spectron` and links `~/.local/bin/spectron`. If that directory isn't on your `PATH`, it says what to add. `SPECTRON_INSTALL_DIR` and `SPECTRON_BIN_DIR` change the two locations. For example, to install for every user of a container image:
+
+```sh
+curl -fsSL https://app.spectron.dev/cli/install.sh -o /tmp/install-spectron.sh &&
+  SPECTRON_INSTALL_DIR=/usr/local/lib/spectron SPECTRON_BIN_DIR=/usr/local/bin sh /tmp/install-spectron.sh &&
+  rm /tmp/install-spectron.sh
+```
+
+This downloads first, then runs, as described for scripts below: a Dockerfile `RUN` has no `pipefail`, so a pipe would let a failed download build an image without the CLI.
+
+In scripts and CI, download the installer first and then run it. With a pipe, the shell reports only `sh`'s status, so a failed download still looks like success:
+
+```sh
+curl -fsSL https://app.spectron.dev/cli/install.sh -o install-spectron.sh && sh install-spectron.sh
+```
+
+Behind an HTTP proxy, the installer and the CLI use `HTTPS_PROXY`, `HTTP_PROXY` and `NO_PROXY`, as curl does. On Node 22, also set `NODE_USE_ENV_PROXY=1` for the CLI (Node 22.21 or later); Node 24 needs nothing extra.
+
+Run the install command again to upgrade. It only ever replaces its own `spectron` link: if another program already has that name, it stops and says so.
+
+To uninstall, sign out first with `spectron auth logout`. Then remove what the installer added: the `spectron` link in the bin directory you installed to (`~/.local/bin` by default, or your `SPECTRON_BIN_DIR`), and `spectron.mjs` and `install.json` in the install directory. The install directory is `~/.local/share/spectron` by default, `$XDG_DATA_HOME/spectron` when that is set, or your `SPECTRON_INSTALL_DIR`. With the defaults:
+
+```sh
+rm ~/.local/bin/spectron ~/.local/share/spectron/spectron.mjs ~/.local/share/spectron/install.json
+rmdir ~/.local/share/spectron
+```
+
+In local development, run `pnpm --filter @spectron/cli build` first. Your local server then serves it at `$APP_URL/cli/install.sh`.
+
+From a checkout of this repository instead:
 
 ```sh
 pnpm install
-pnpm --filter @spectron/cli build
-npm install -g ./apps/cli    # puts `spectron` on your PATH
+pnpm --filter @spectron/cli build    # bundles dist/spectron.mjs
+npm install -g ./apps/cli            # puts `spectron` on your PATH
 ```
 
 ## Sign in
@@ -19,10 +54,18 @@ npm install -g ./apps/cli    # puts `spectron` on your PATH
 Create a personal access token in Spectron: account menu → **AI connections & agents** → **API tokens**. Then:
 
 ```sh
-spectron auth login --url https://spectron.example.com    # prompts for the token
-echo "$TOKEN" | spectron auth login --url https://spectron.example.com --with-token
+spectron auth login                     # prompts for the token
+echo "$TOKEN" | spectron auth login --with-token
 spectron auth status
 ```
+
+`auth login` picks the server in this order:
+1. `--url`
+2. `SPECTRON_URL`
+3. the server you're already signed in to
+4. the server the CLI was installed from
+
+To switch servers, pass `--url`. A CLI built from source has no install server, so it needs `--url` the first time. When prompting, `auth login` names the server before asking for the token.
 
 The URL and token are saved to `~/.config/spectron/config.json`, readable only by you (on Windows, `%APPDATA%\spectron\config.json` in your profile, where file modes are advisory). `$XDG_CONFIG_HOME` and `$SPECTRON_CONFIG_DIR` move it. `spectron auth logout` deletes the file. The token stays valid until you revoke it in Spectron.
 
