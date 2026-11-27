@@ -94,13 +94,6 @@ export type AgentRewritePreview = {
     changedSinceInvocation: boolean;
   }[];
 };
-export function agentRunPollDelay(
-  runs: Pick<AgentRunView, "state">[],
-): number | null {
-  if (runs.some((r) => ["queued", "preparing", "working"].includes(r.state)))
-    return 2000;
-  return runs.some((r) => r.state === "needs_input") ? 30000 : null;
-}
 export type AgentRunActions = {
   takeover: (
     input: AgentRunScope & {

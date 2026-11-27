@@ -1,4 +1,4 @@
-import { firstMessageFields } from "@spectron/shared";
+import { equalJson, firstMessageFields } from "@spectron/shared";
 import {
   defaultTaskFiltersForView,
   matchesResolvedDatePeriod,
@@ -132,14 +132,14 @@ export function useWorkspace(
     .map((p) => p.id)
     .sort()
     .join(",");
-  const refresh = useCallback(async () => {
+  const refreshSnapshot = useCallback(async () => {
     const request = ++generation.current;
     const ids = projectIds ? projectIds.split(",") : [];
     if (!ids.length) {
       setIssues([]);
       setSettings({});
       setLoading(false);
-      return;
+      return true;
     }
     try {
       const rows = await Promise.all(
@@ -149,22 +149,25 @@ export function useWorkspace(
           settings: await trpc.issues.settings.query({ projectId }),
         })),
       );
-      if (request !== generation.current) return;
+      if (request !== generation.current) return false;
       setIssues(previous => {
         const receipts = new Map(previous.map(i => [i.id, i.readState?.seenThrough]));
-        return rows.flatMap(r => r.issues.map(i => withReadReceipt(i, receipts.get(i.id))));
+        const next = rows.flatMap(r => r.issues.map(i => withReadReceipt(i, receipts.get(i.id))));
+        return equalJson(previous, next) ? previous : next;
       });
-      setSettings(
-        Object.fromEntries(rows.map((r) => [r.projectId, r.settings])),
-      );
+      const nextSettings = Object.fromEntries(rows.map(r => [r.projectId, r.settings]));
+      setSettings(previous => equalJson(previous, nextSettings) ? previous : nextSettings);
       setError("");
+      return true;
     } catch {
       if (request === generation.current)
         setError("Couldn’t load issues. Please retry.");
+      return false;
     } finally {
       if (request === generation.current) setLoading(false);
     }
   }, [projectIds]);
+  const refresh = useCallback(async () => { await refreshSnapshot(); }, [refreshSnapshot]);
   useEffect(() => {
     setLoading(true);
     void refresh();
@@ -342,6 +345,7 @@ export function useWorkspace(
     loading,
     error,
     refresh,
+    refreshSnapshot,
     markRead,
     saveIssue,
     setDeleted,

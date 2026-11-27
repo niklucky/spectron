@@ -6,7 +6,6 @@ import { randomUUID } from "node:crypto";
 import { createDatabase, migrateDatabase, schema } from "@spectron/db";
 import {
   createId,
-  agentRunPollDelay,
   type AgentInvocation,
   type AgentResult,
   type GitPullRequest,
@@ -67,14 +66,7 @@ test("text part snapshots replace previous updates and preserve distinct parts",
   assert.equal(parts.update("two", "Result"), "ABC\n\nResult");
   assert.equal(parts.update("two", "Final result"), "ABC\n\nFinal result");
 });
-test("polling stops when idle and model input budgets respect smaller windows", () => {
-  assert.equal(agentRunPollDelay([]), null);
-  assert.equal(
-    agentRunPollDelay([{ state: "completed" }, { state: "failed" }]),
-    null,
-  );
-  assert.equal(agentRunPollDelay([{ state: "needs_input" }]), 30000);
-  assert.equal(agentRunPollDelay([{ state: "working" }]), 2000);
+test("model input budgets respect smaller windows", () => {
   const large = modelLimits({ provider: "openai", model: "gpt-5.6-sol" });
   const small = modelLimits({
     provider: "anthropic",

@@ -19,7 +19,7 @@
     "test:files": "tsx --test test/files.test.ts",
     "test:comments": "tsx --test test/comments.test.ts",
     "test:worklogs": "tsx --test test/worklogs.test.ts",
-    "test:activity": "tsx --test test/activity.test.ts",
+    "test:activity": "tsx --test test/activity.test.ts ../../apps/app/test/flow-snapshots.test.ts",
     "test:jira": "tsx --test test/jira.test.ts ../../apps/app/test/jira-mapping-rows.test.ts",
     "test:integrations": "node --import tsx --test test/tracker.test.ts test/jira.test.ts test/export-sync.test.ts ../../apps/app/test/jira-mapping-rows.test.ts",
     "test:exports": "node --import tsx --test test/export-sync.test.ts",
@@ -39,10 +39,12 @@
     "dotenv": "17.4.2",
     "hono": "4.13.7",
     "tsx": "4.23.13",
+    "ws": "8.23.1",
     "zod": "4.5.4"
   },
   "devDependencies": {
     "@types/node": "24.13.3",
+    "@types/ws": "8.18.2",
     "drizzle-orm": "0.45.2"
   }
 }

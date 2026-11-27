@@ -3,6 +3,7 @@ import { drizzle } from "drizzle-orm/node-postgres";
 import * as schema from "./schema";
 
 export { schema };
+export { Client as PostgresClient } from "pg";
 export { migrateDatabase } from "./migrations";
 export type {
   User,
