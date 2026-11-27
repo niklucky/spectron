@@ -49,7 +49,9 @@ In PowerShell (Windows PowerShell 5.1 or PowerShell 7):
 irm https://app.spectron.dev/cli/install.ps1 | iex
 ```
 
-It needs no administrator rights, and checks the download against its SHA-256 the same way. It installs to `%LOCALAPPDATA%\Programs\spectron` with a `spectron.cmd` launcher in its `bin` folder, adds that folder to your user `PATH`, and works in the current window right away. Other terminals see it once reopened. Downloads use the system proxy. `SPECTRON_INSTALL_DIR` changes the location. `SPECTRON_NO_MODIFY_PATH=1` leaves `PATH` alone, for example in CI. Run the same command again to upgrade.
+It needs no administrator rights, and checks the download against its SHA-256 the same way. It installs to `%LOCALAPPDATA%\Programs\spectron` with a `spectron.cmd` launcher in its `bin` folder, puts that folder first in your user `PATH`, and works in the current window right away. Other terminals see it once reopened. Downloads use the system proxy. `SPECTRON_INSTALL_DIR` changes the location. `SPECTRON_NO_MODIFY_PATH=1` leaves `PATH` alone, for example in CI. Run the same command again to upgrade.
+
+`spectron` runs through a `.cmd` launcher, so PowerShell passes its arguments the way it passes them to batch files: an empty argument is dropped. Write an empty value with `=`, as in `--description=` rather than `--description ''`. Text with double quotes is safest in a file: `--description-file notes.md`, `--body-file notes.md`.
 
 To uninstall, run `spectron auth logout`. Then delete `%LOCALAPPDATA%\Programs\spectron` and remove its `bin` folder from your user `PATH` (Settings → System → About → Advanced system settings → Environment Variables).
 

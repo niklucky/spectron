@@ -33,7 +33,8 @@
     if (-not $env:LOCALAPPDATA) { throw 'LOCALAPPDATA isn''t set. Set SPECTRON_INSTALL_DIR to choose where to install.' }
     $installDir = Join-Path $env:LOCALAPPDATA 'Programs\spectron'
   }
-  $installDir = [IO.Path]::GetFullPath($installDir)
+  # Relative to the shell's current location, not the process's start directory.
+  $installDir = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($installDir)
   $binDir = Join-Path $installDir 'bin'
   $target = Join-Path $installDir 'spectron.mjs'
   $meta = Join-Path $installDir 'install.json'
@@ -51,15 +52,21 @@
   New-Item -ItemType Directory -Path $stage | Out-Null
   try {
     Write-Host "Downloading the Spectron CLI from $server"
-    # Windows PowerShell 5.1 may not offer TLS 1.2 by default.
-    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
     $part = Join-Path $stage 'spectron.mjs'
-    # No redirects: the address is exactly the server that served this.
-    # The system proxy applies, as it did for this script.
+    # Windows PowerShell 5.1 on an older .NET may not offer TLS 1.2. Add it only
+    # then (SystemDefault, 0, lets the OS choose), and only for this download.
+    $protocols = [Net.ServicePointManager]::SecurityProtocol
     try {
+      if ([int]$protocols -ne 0 -and -not ($protocols -band [Net.SecurityProtocolType]::Tls12)) {
+        [Net.ServicePointManager]::SecurityProtocol = $protocols -bor [Net.SecurityProtocolType]::Tls12
+      }
+      # No redirects: the address is exactly the server that served this.
+      # The system proxy applies, as it did for this script.
       Invoke-WebRequest -Uri "$server/cli/spectron.mjs" -OutFile $part -UseBasicParsing -MaximumRedirection 0
     } catch {
       throw "Couldn't download $server/cli/spectron.mjs: $($_.Exception.Message)"
+    } finally {
+      [Net.ServicePointManager]::SecurityProtocol = $protocols
     }
     # .NET rather than Get-FileHash: 5.1 loads that from a module file, which a
     # PSModulePath inherited from PowerShell 7 hides.
@@ -77,11 +84,34 @@
     # The CLI reads install.json beside itself: auth login signs in here unless told otherwise.
     # WriteAllText writes UTF-8 without a byte-order mark, which JSON.parse needs.
     [IO.File]::WriteAllText((Join-Path $stage 'install.json'), (ConvertTo-Json @{ url = $server } -Compress) + "`n")
-    # Finds node at run time and passes every argument through.
-    [IO.File]::WriteAllText((Join-Path $stage 'spectron.cmd'), "@echo off`r`nnode `"%~dp0..\spectron.mjs`" %*`r`n")
+    # Finds node on PATH at run time, never in the current folder (where cmd
+    # looks first), and passes every argument through.
+    [IO.File]::WriteAllText((Join-Path $stage 'spectron.cmd'), (@(
+      '@echo off'
+      'setlocal'
+      'set NoDefaultCurrentDirectoryInExePath=1'
+      'node "%~dp0..\spectron.mjs" %*'
+    ) -join "`r`n") + "`r`n")
 
-    Move-Item -Force -LiteralPath (Join-Path $stage 'install.json') -Destination $meta
-    Move-Item -Force -LiteralPath $part -Destination $target
+    # The CLI and install.json change together: if either can't be replaced
+    # (a file in use), the previous CLI is put back.
+    $previous = Join-Path $stage 'previous.mjs'
+    $hadPrevious = Test-Path -LiteralPath $target -PathType Leaf
+    if ($hadPrevious) {
+      try { Move-Item -LiteralPath $target -Destination $previous }
+      catch { throw "Couldn't replace $target, so nothing was installed: $($_.Exception.Message)" }
+    }
+    try {
+      Move-Item -LiteralPath $part -Destination $target
+      Move-Item -Force -LiteralPath (Join-Path $stage 'install.json') -Destination $meta
+    } catch {
+      $reason = $_.Exception.Message
+      if ($hadPrevious) {
+        Remove-Item -Force -LiteralPath $target -ErrorAction SilentlyContinue
+        Move-Item -LiteralPath $previous -Destination $target
+      }
+      throw "Couldn't finish installing, so the previous version was kept: $reason"
+    }
     Move-Item -Force -LiteralPath (Join-Path $stage 'spectron.cmd') -Destination $launcher
   } finally {
     Remove-Item -Recurse -Force -LiteralPath $stage -ErrorAction SilentlyContinue
@@ -90,28 +120,31 @@
   Write-Host "Installed spectron $version`: $launcher"
   $onWindows = $env:OS -eq 'Windows_NT'
   if ($onWindows -and $env:SPECTRON_NO_MODIFY_PATH -ne '1') {
-    # Read and written raw, keeping it an expandable string: entries such as
-    # %USERPROFILE%\bin must stay unexpanded.
+    $isBin = { param($entry) [Environment]::ExpandEnvironmentVariables($entry).TrimEnd('\') -ieq $binDir }
+    # First in the user PATH, moved there if it was further down, so an
+    # older spectron (an npm install) can't win. Read and written raw,
+    # keeping it an expandable string: entries such as %USERPROFILE%\bin
+    # must stay unexpanded.
     $key = Get-Item -LiteralPath 'HKCU:\Environment'
     $userPath = $key.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
     $entries = @($userPath.Split(';') | Where-Object { $_ })
-    if (-not ($entries | Where-Object { [Environment]::ExpandEnvironmentVariables($_).TrimEnd('\') -ieq $binDir })) {
-      Set-ItemProperty -LiteralPath 'HKCU:\Environment' -Name Path -Type ExpandString -Value ((@($binDir) + $entries) -join ';')
-      # Setting any user variable this way tells open programs (Explorer,
-      # new terminals) that the environment changed.
+    $wanted = (@($binDir) + @($entries | Where-Object { -not (& $isBin $_) })) -join ';'
+    if ($wanted -ne ($entries -join ';')) {
+      Set-ItemProperty -LiteralPath 'HKCU:\Environment' -Name Path -Type ExpandString -Value $wanted
+      # Setting and removing a user variable through .NET tells open programs
+      # (Explorer, new terminals) that the environment changed. NullString,
+      # because PowerShell 7.5+ turns $null into an empty string here.
       [Environment]::SetEnvironmentVariable('SPECTRON_INSTALL_REFRESH', '1', 'User')
-      [Environment]::SetEnvironmentVariable('SPECTRON_INSTALL_REFRESH', $null, 'User')
+      [Environment]::SetEnvironmentVariable('SPECTRON_INSTALL_REFRESH', [NullString]::Value, 'User')
       Write-Host ''
-      Write-Host "Added $binDir to your user PATH. Open a new terminal to use spectron there."
+      Write-Host "Put $binDir first in your user PATH. Open a new terminal to use spectron there."
     }
-    # This window too, so the next command works right away.
-    if (-not (($env:Path.Split(';')) | Where-Object { $_.TrimEnd('\') -ieq $binDir })) {
-      $env:Path = "$binDir;$env:Path"
-    }
+    # First in this window too, so the next command runs this CLI.
+    $env:Path = (@($binDir) + @($env:Path.Split(';') | Where-Object { $_ -and -not (& $isBin $_) })) -join ';'
     $found = Get-Command spectron -ErrorAction SilentlyContinue | Select-Object -First 1
-    if ($found -and $found.Source -and ($found.Source -ine $launcher)) {
+    if ($found -and $found.Source -ine $launcher) {
       Write-Host ''
-      Write-Host "Another spectron comes first on your PATH: $($found.Source). Remove it (for an npm install: npm uninstall -g @spectron/cli), or move $binDir before it."
+      Write-Host "spectron here runs $($found.CommandType) $($found.Name) ($($found.Source)), not this install. Remove it, or run $launcher."
     }
   }
   Write-Host ''
