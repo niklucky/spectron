@@ -77,7 +77,9 @@ export function createClient({
       } as RequestInit);
     } catch (error) {
       if (error instanceof ApiFailure) throw error;
-      const reason = error instanceof Error ? ((error.cause as Error | undefined)?.message ?? error.message) : String(error);
+      // Dual-stack refusals arrive as an AggregateError with an empty message and a code.
+      const cause = error instanceof Error ? (error.cause as (Error & { code?: string }) | undefined) : undefined;
+      const reason = cause?.message || cause?.code || (error instanceof Error ? error.message : String(error));
       throw new ApiFailure(0, "network_error", `Couldn't reach ${url}: ${reason}`);
     }
     if (response.type === "opaqueredirect" || (response.status >= 300 && response.status < 400))
