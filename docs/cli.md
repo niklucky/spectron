@@ -6,13 +6,15 @@ Agents that speak MCP can use the [MCP server](mcp.md) instead. The CLI suits ag
 
 ## Install
 
-Requires Node.js 22 or later. Every Spectron server serves a CLI that matches its API:
+Requires Node.js 22 or later. Every Spectron server serves a CLI that matches its API. On a self-hosted server, use its address instead of `app.spectron.dev`.
+
+### macOS and Linux
 
 ```sh
 curl -fsSL https://app.spectron.dev/cli/install.sh | sh
 ```
 
-On a self-hosted server, use its address instead. The script needs no sudo. It downloads the CLI from that server and checks it against a SHA-256 checksum, which the server fills into the script when serving it. It then installs to `~/.local/share/spectron` and links `~/.local/bin/spectron`. If that directory isn't on your `PATH`, it says what to add. `SPECTRON_INSTALL_DIR` and `SPECTRON_BIN_DIR` change the two locations. For example, to install for every user of a container image:
+The script needs no sudo. It downloads the CLI from that server and checks it against a SHA-256 checksum, which the server fills into the script when serving it. It then installs to `~/.local/share/spectron` and links `~/.local/bin/spectron`. If that directory isn't on your `PATH`, it says what to add. `SPECTRON_INSTALL_DIR` and `SPECTRON_BIN_DIR` change the two locations. For example, to install for every user of a container image:
 
 ```sh
 curl -fsSL https://app.spectron.dev/cli/install.sh -o /tmp/install-spectron.sh &&
@@ -39,7 +41,21 @@ rm ~/.local/bin/spectron ~/.local/share/spectron/spectron.mjs ~/.local/share/spe
 rmdir ~/.local/share/spectron
 ```
 
-In local development, run `pnpm --filter @spectron/cli build` first. Your local server then serves it at `$APP_URL/cli/install.sh`.
+### Windows
+
+In PowerShell (Windows PowerShell 5.1 or PowerShell 7):
+
+```powershell
+irm https://app.spectron.dev/cli/install.ps1 | iex
+```
+
+It needs no administrator rights, and checks the download against its SHA-256 the same way. It installs to `%LOCALAPPDATA%\Programs\spectron` with a `spectron.cmd` launcher in its `bin` folder, adds that folder to your user `PATH`, and works in the current window right away. Other terminals see it once reopened. Downloads use the system proxy. `SPECTRON_INSTALL_DIR` changes the location. `SPECTRON_NO_MODIFY_PATH=1` leaves `PATH` alone, for example in CI. Run the same command again to upgrade.
+
+To uninstall, run `spectron auth logout`. Then delete `%LOCALAPPDATA%\Programs\spectron` and remove its `bin` folder from your user `PATH` (Settings → System → About → Advanced system settings → Environment Variables).
+
+### From source
+
+In local development, run `pnpm --filter @spectron/cli build` first. Your local server then serves the CLI at `$APP_URL/cli/install.sh` and `$APP_URL/cli/install.ps1`.
 
 From a checkout of this repository instead:
 

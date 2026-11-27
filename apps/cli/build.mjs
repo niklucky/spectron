@@ -1,5 +1,5 @@
-// Bundles the CLI into one file, dist/spectron.mjs, and copies install.sh
-// beside it. The Spectron server serves both at /cli/ (see
+// Bundles the CLI into one file, dist/spectron.mjs, and copies install.sh and
+// install.ps1 beside it. The Spectron server serves them at /cli/ (see
 // packages/api/src/cli-install.ts). `node build.mjs <dir>` writes elsewhere.
 import { build } from "esbuild";
 import { copyFile, mkdir, rm } from "node:fs/promises";
@@ -24,4 +24,4 @@ await build({
   legalComments: "none",
   logLevel: "warning",
 });
-await copyFile(join(here, "install.sh"), join(out, "install.sh"));
+for (const script of ["install.sh", "install.ps1"]) await copyFile(join(here, script), join(out, script));
