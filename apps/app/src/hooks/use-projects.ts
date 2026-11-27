@@ -21,19 +21,21 @@ export function useProjects(sessionId: string) {
     const request = ++version.current;
     try {
       const rows = await trpc.projects.list.query();
-      if (request !== version.current) return;
+      if (request !== version.current) return false;
       setProjects(previous => equalJson(previous, rows) ? previous : rows);
       setError("");
+      return true;
     } catch (cause) {
-      if (request !== version.current) return;
+      if (request !== version.current) return false;
       if (
         cause instanceof TRPCClientError &&
         cause.data?.code === "UNAUTHORIZED"
       ) {
         window.location.replace("/login");
-        return;
+        return false;
       }
       setError("Couldn’t load your projects. Please try again.");
+      return false;
     } finally {
       if (request === version.current) setLoading(false);
     }

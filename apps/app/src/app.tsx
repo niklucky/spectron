@@ -211,7 +211,7 @@ function Workspace({
   );
   const project = projects.find((item) => item.id === workspace.project);
   const task = workspace.task;
-  const live = useFlowEvents(workspace.refresh, projectState.refresh);
+  const live = useFlowEvents(workspace.refreshSnapshot, projectState.refresh);
   const [commandOpen, setCommandOpen] = useState(false);
   useHotkey("Mod+K", () => setCommandOpen((open) => !open), { ignoreInputs: false });
   const commandGroups = useMemo<CommandGroup[]>(() => {

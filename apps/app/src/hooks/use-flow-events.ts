@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useEffectEvent, useRef } from "react";
 import type { FlowChange, FlowMessage, SubscribeToFlow } from "@spectron/shared";
 
-export function useFlowEvents(refreshIssues: () => Promise<void>, refreshProjects: () => Promise<void>) {
+export function useFlowEvents(refreshIssues: () => Promise<boolean>, refreshProjects: () => Promise<boolean>) {
   const listeners = useRef(new Set<(message: FlowMessage) => void>());
   const subscribe = useCallback<SubscribeToFlow>(listener => {
     listeners.current.add(listener);
@@ -15,13 +15,15 @@ export function useFlowEvents(refreshIssues: () => Promise<void>, refreshProject
     let retry: number | undefined;
     let delay = 500;
     let refreshing = false;
+    let snapshotRetry: number | undefined;
+    let snapshotDelay = 1000;
     let needsSnapshot = false;
     const issues = new Map<string, FlowChange>();
     const deliver = (message: FlowMessage) => {
       for (const listener of listeners.current) listener(message);
     };
     async function updateIssues() {
-      if (refreshing) return;
+      if (refreshing || snapshotRetry !== undefined) return;
       refreshing = true;
       try {
         while (!stopped && (needsSnapshot || issues.size)) {
@@ -29,8 +31,21 @@ export function useFlowEvents(refreshIssues: () => Promise<void>, refreshProject
           needsSnapshot = false;
           issues.clear();
           // Deliver the detail invalidation together with the fresh list watermark.
-          await refresh();
-          if (!stopped) deliver(message);
+          const projectsLoaded = message.type !== "ready" || await refreshProjectList();
+          const issuesLoaded = await refresh();
+          if (stopped) return;
+          if (!projectsLoaded || !issuesLoaded) {
+            if (message.type === "ready") needsSnapshot = true;
+            else for (const change of message.changes) issues.set(change.issueId, change);
+            snapshotRetry = window.setTimeout(() => {
+              snapshotRetry = undefined;
+              void updateIssues();
+            }, snapshotDelay);
+            snapshotDelay = Math.min(30000, snapshotDelay * 2);
+            return;
+          }
+          snapshotDelay = 1000;
+          deliver(message);
         }
       } finally {
         refreshing = false;
@@ -45,7 +60,6 @@ export function useFlowEvents(refreshIssues: () => Promise<void>, refreshProject
         if (message.type === "ready") {
           delay = 500;
           needsSnapshot = true;
-          void refreshProjectList();
         } else {
           const detail = message.changes.filter(change => change.kind !== "issue");
           if (detail.length) deliver({ type: "changes", changes: detail });
@@ -65,6 +79,7 @@ export function useFlowEvents(refreshIssues: () => Promise<void>, refreshProject
     return () => {
       stopped = true;
       window.clearTimeout(retry);
+      window.clearTimeout(snapshotRetry);
       socket.onmessage = null;
       socket.close();
     };

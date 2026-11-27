@@ -102,8 +102,7 @@ export function IssueChat({
   const [events, setEvents] = useState<IssueActivityEvent[] | null>(null),
     [cursor, setCursor] = useState<string | null>(null),
     [loading, setLoading] = useState(true),
-    [error, setError] = useState(""),
-    [activityReload, setActivityReload] = useState(0);
+    [error, setError] = useState("");
   useEffect(() => {
     const runs = actions.runs;
     if (!active || !runs) return;
@@ -139,7 +138,7 @@ export function IssueChat({
   const [loadedActivity, setLoadedActivity] = useState<string>();
   const composer = useRef<HTMLDivElement>(null);
   const stream = useRef<HTMLDivElement>(null),
-    requestActivity = useRef<((earlier?: boolean) => void) | null>(null),
+    requestActivity = useRef<((mode?: "earlier" | "retry") => void) | null>(null),
     nextCursor = useRef<string | null>(null),
     pages = useRef(1),
     scroll = useRef<{ top: number; height: number } | "bottom" | null>("bottom");
@@ -177,8 +176,10 @@ export function IssueChat({
       }
       setCursor(nextCursor.current);
       setError("");
+      return true;
     } catch (cause) {
       if (isCurrent()) setError(cause instanceof Error ? cause.message : "Could not load chat.");
+      return false;
     }
   });
 
@@ -188,26 +189,37 @@ export function IssueChat({
     let running = false;
     let refresh = false;
     let loadEarlier = false;
-    const enqueue = async (earlier = false) => {
+    let retry: number | undefined;
+    let retryDelay = 1000;
+    const enqueue = async (mode?: "earlier" | "retry") => {
+      const earlier = mode === "earlier";
+      if (mode === "retry") { window.clearTimeout(retry); retry = undefined; }
       if (earlier) { loadEarlier = true; setLoading(true); }
       else refresh = true;
-      if (running) return;
+      if (running || (!earlier && retry !== undefined)) return;
       running = true;
-      while (current && (loadEarlier || refresh)) {
+      while (current && (loadEarlier || (refresh && retry === undefined))) {
         const prepend = loadEarlier;
         if (prepend) loadEarlier = false;
         else refresh = false;
-        await loadActivity(prepend, () => current);
+        const loaded = await loadActivity(prepend, () => current);
+        if (current && !prepend && loaded === false) {
+          retry = window.setTimeout(() => {
+            retry = undefined;
+            void enqueue();
+          }, retryDelay);
+          retryDelay = Math.min(30000, retryDelay * 2);
+        } else if (!prepend) retryDelay = 1000;
         if (current && !loadEarlier) setLoading(false);
       }
       running = false;
     };
     requestActivity.current = enqueue;
-    return () => { current = false; requestActivity.current = null; };
+    return () => { current = false; window.clearTimeout(retry); requestActivity.current = null; };
   }, [active, issue.projectId, issue.id]);
   useEffect(() => {
     requestActivity.current?.();
-  }, [active, issue.projectId, issue.id, actions.activity, activityAt, issue.updatedAt, revision, activityReload, activityRevision, issueRevision]);
+  }, [active, issue.projectId, issue.id, actions.activity, activityAt, issue.updatedAt, revision, activityRevision, issueRevision]);
 
   const markRead = actions.markRead;
   const seenThrough = issue.readState?.seenThrough;
@@ -325,7 +337,7 @@ export function IssueChat({
           {attachmentError && <p role="alert" className="text-sm text-bad">{attachmentError}</p>}
           {cursor && (
             <div className="flex justify-center py-2">
-              <Button variant="ghost" size="sm" disabled={loading} onClick={() => requestActivity.current?.(true)}>
+              <Button variant="ghost" size="sm" disabled={loading} onClick={() => requestActivity.current?.("earlier")}>
                 Load earlier activity
               </Button>
             </div>
@@ -448,7 +460,7 @@ export function IssueChat({
           {error && (
             <p className="flex items-center justify-center gap-2 py-4 text-sm text-bad" role="alert">
               {error}
-              <Button variant="ghost" size="sm" onClick={() => setActivityReload((n) => n + 1)}>Retry</Button>
+              <Button variant="ghost" size="sm" onClick={() => requestActivity.current?.("retry")}>Retry</Button>
             </p>
           )}
         </div>

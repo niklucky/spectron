@@ -78,3 +78,14 @@ CREATE TRIGGER flow_run_change AFTER INSERT OR DELETE OR UPDATE OF
   state, result, error, stop_requested, container_retained, applied_at, context,
   implementation, review, repositories, agent, message, requester_name, command, handoff_from_id
 ON agent_runs FOR EACH ROW EXECUTE FUNCTION notify_flow_change('runs');
+--> statement-breakpoint
+CREATE FUNCTION notify_flow_project_state() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  PERFORM pg_notify('spectron_flow_membership', user_id)
+    FROM project_members WHERE project_id = NEW.id;
+  RETURN NULL;
+END;
+$$;
+--> statement-breakpoint
+CREATE TRIGGER flow_project_state_change AFTER UPDATE OF state ON projects
+FOR EACH ROW WHEN (OLD.state IS DISTINCT FROM NEW.state) EXECUTE FUNCTION notify_flow_project_state();
