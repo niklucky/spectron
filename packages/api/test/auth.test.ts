@@ -168,10 +168,12 @@ test("Postgres auth lifecycle", async (t) => {
     assert.equal(bytes.subarray(0, 8).toString("hex"), "89504e470d0a1a0a");
     const etag = photo.headers.get("etag");
     assert.ok(etag);
-    const revalidate = () => api.request(`${origin}${normalized}`, {
-      headers: { cookie, "if-none-match": etag },
+    const revalidate = (validator: string) => api.request(`${origin}${normalized}`, {
+      headers: { cookie, "if-none-match": validator },
     });
-    assert.equal((await revalidate()).status, 304);
+    for (const validator of [etag, `W/${etag}`, `"other,tag", W/${etag}`, "*"])
+      assert.equal((await revalidate(validator)).status, 304);
+    assert.equal((await revalidate('"different,tag"')).status, 200);
 
     assert.equal((await update({ name: "Updated name" })).status, 200);
     assert.equal((await update({ image: "data:image/png;base64,aW52YWxpZA==" })).status, 400);
@@ -182,7 +184,8 @@ test("Postgres auth lifecycle", async (t) => {
     const replacement = await savedImage();
     assert.ok(replacement);
     assert.notEqual(replacement, normalized);
-    assert.equal((await revalidate()).status, 404);
+    assert.equal((await revalidate(etag)).status, 404);
+    assert.equal((await revalidate("*")).status, 404);
 
     assert.equal((await update({ image: null })).status, 200);
     assert.equal(await savedImage(), null);

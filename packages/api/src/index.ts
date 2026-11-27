@@ -169,7 +169,11 @@ export function createAPI(
 
     const key = c.req.param("key");
     const etag = `"${key}"`;
-    const revalidate = c.req.header("If-None-Match") === etag;
+    const validators = c.req.header("If-None-Match")?.trim();
+    const revalidate = validators === "*" || (validators?.split(",").some((value) => {
+      const tag = value.trim();
+      return tag === etag || tag === `W/${etag}`;
+    }) ?? false);
     const avatar = await readProfileAvatar(db, key, revalidate);
     if (!avatar) return c.notFound();
 
