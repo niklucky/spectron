@@ -767,6 +767,7 @@ function Workspace({
           });
           if (error)
             throw new Error(error.message || "Could not save your profile.");
+          if (image !== undefined) void workspace.refresh();
         }}
         onCreateTask={workspace.createTask}
         onClose={() => workspace.setModal(null)}

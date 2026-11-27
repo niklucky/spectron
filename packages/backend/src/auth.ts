@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { betterAuth } from "better-auth";
 import {
   createDpopReplayStore,
@@ -59,6 +60,26 @@ export type AuthConfig = {
   sendVerificationEmail: (email: VerificationEmail) => Promise<void>;
 };
 
+export const profileAvatarPath = "/api/profile-avatars";
+
+async function storeProfileAvatar({ image }: { image?: unknown }) {
+  if (image === undefined) return;
+  if (image === null) return { data: { image: null, avatarData: null } };
+  try {
+    const png = await normalizeLogoDataURL(typeof image === "string" ? image : null);
+    if (!png) throw new LogoError();
+    return {
+      data: {
+        image: `${profileAvatarPath}/${randomUUID()}`,
+        avatarData: png.slice("data:image/png;base64,".length),
+      },
+    };
+  } catch (error) {
+    if (!(error instanceof LogoError)) throw error;
+    throw new APIError("BAD_REQUEST", { message: "Choose a valid avatar image." });
+  }
+}
+
 export function createAuth(db: Database, config: AuthConfig) {
   return betterAuth({
     appName: "Spectron",
@@ -105,22 +126,15 @@ export function createAuth(db: Database, config: AuthConfig) {
       }),
     },
     database: drizzleAdapter(db, { provider: "pg", schema, transaction: true }),
+    user: {
+      additionalFields: {
+        avatarData: { type: "string", required: false, input: false, returned: false },
+      },
+    },
     databaseHooks: {
       user: {
-        update: {
-          before: async ({ image }) => {
-            if (typeof image !== "string" || !/^data:/i.test(image.trimStart()))
-              return;
-            try {
-              return { data: { image: await normalizeLogoDataURL(image) } };
-            } catch (error) {
-              if (!(error instanceof LogoError)) throw error;
-              throw new APIError("BAD_REQUEST", {
-                message: "Choose a valid avatar image.",
-              });
-            }
-          },
-        },
+        create: { before: storeProfileAvatar },
+        update: { before: storeProfileAvatar },
       },
     },
     emailAndPassword: {

@@ -30,8 +30,10 @@ import {
   createPublicApiService,
   createOAuthAppService,
   createOAuthResume,
+  profileAvatarPath,
 } from "@spectron/backend";
-import type { Database } from "@spectron/db";
+import { schema, type Database } from "@spectron/db";
+import { and, eq, isNotNull } from "drizzle-orm";
 import { fetchRequestHandler } from "@trpc/server/adapters/fetch";
 import { appRouter } from "./trpc/router";
 import { createFileRoutes } from "./files";
@@ -161,6 +163,27 @@ export function createAPI(
     catch { return c.json({ error: "Webhook rejected" }, 403); }
   });
   api.get("/api/health", (c) => c.json({ status: "ok" }));
+  api.get(`${profileAvatarPath}/:key`, async (c) => {
+    const session = await auth.api.getSession({ headers: c.req.raw.headers });
+    if (!session) return c.body(null, 401);
+
+    const key = c.req.param("key");
+    const { user } = schema;
+    const [avatar] = await db
+      .select({ data: user.avatarData })
+      .from(user)
+      .where(and(eq(user.image, `${profileAvatarPath}/${key}`), isNotNull(user.avatarData)));
+    if (!avatar?.data) return c.notFound();
+
+    const etag = `"${key}"`;
+    c.header("ETag", etag);
+    c.header("Cache-Control", "private, no-cache");
+    c.header("Vary", "Cookie");
+    if (c.req.header("If-None-Match") === etag) return c.body(null, 304);
+    c.header("Content-Type", "image/png");
+    c.header("X-Content-Type-Options", "nosniff");
+    return c.body(Buffer.from(avatar.data, "base64"));
+  });
   api.on(["GET", "POST"], "/api/auth/*", (c) => {
     const headers = new Headers(c.req.raw.headers);
     // Trust X-Real-IP only when deployed behind our private Nginx proxy.
