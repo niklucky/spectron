@@ -95,22 +95,26 @@ export async function installUpgrade(options: Options & { checked: string; insta
   // .mjs, so node runs it as a module before it takes over.
   const staged = join(dirname(options.bundle), `.spectron-upgrade-${randomBytes(6).toString("hex")}.mjs`);
   try {
-    // Private until it has been checked: nobody else can change what runs.
-    await writeFile(staged, bytes, { flag: "wx", mode: 0o600 });
+    // Private until it has been checked (owner only): nobody else can change
+    // what runs. Run as the installed command will run it: through its
+    // shebang on POSIX (the launcher is a link to it), through node on Windows.
+    await writeFile(staged, bytes, { flag: "wx", mode: 0o700 });
+    const [command, args] = process.platform === "win32" ? [process.execPath, [staged, "--version"]] : [staged, ["--version"]];
     const printed = await new Promise<string>((resolve, reject) =>
-      execFile(process.execPath, [staged, "--version"], { timeout: 30_000 }, (error, stdout) => (error ? reject(error) : resolve(stdout.trim()))),
+      execFile(command, args, { timeout: 30_000 }, (error, stdout) => (error ? reject(error) : resolve(stdout.trim()))),
     ).catch(() => null);
     if (printed !== manifest.version)
       throw new ApiFailure(0, "upgrade_failed", `The new CLI doesn't run with this Node.js (${process.version}), so nothing changed.`);
-    // Still the install that was checked? A reinstall meanwhile (perhaps from
-    // another server) wins; this upgrade then changes nothing.
-    const [installed, server] = await Promise.all([readFile(options.bundle).then(sha256, () => null), installServerOf(options.bundle)]);
-    if (installed !== options.checked || server !== options.installServer)
-      throw new ApiFailure(0, "upgrade_failed", "This CLI was reinstalled while updating, so the update was dropped. Run `spectron upgrade` again if needed.");
     await chmod(staged, 0o755);
     // Windows refuses to replace a file another process (an antivirus scan,
     // another spectron starting) has open for a moment; try a few times.
     for (let attempt = 1; ; attempt++) {
+      // Still the install that was checked? A reinstall meanwhile (perhaps
+      // from another server) wins; this upgrade then changes nothing. Checked
+      // before every attempt, since a retry waits.
+      const [installed, server] = await Promise.all([readFile(options.bundle).then(sha256, () => null), installServerOf(options.bundle)]);
+      if (installed !== options.checked || server !== options.installServer)
+        throw new ApiFailure(0, "upgrade_failed", "This CLI was reinstalled while updating, so the update was dropped. Run `spectron upgrade` again if needed.");
       try {
         await rename(staged, options.bundle);
         break;

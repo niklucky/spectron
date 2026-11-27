@@ -49,6 +49,11 @@ jobs:
             echo "::error::$GITHUB_REF_NAME is not a release tag like v1.2.3."
             exit 1
           fi
+          # Image tags are at most 128 characters, and <sha>- takes 41.
+          if [ "${#version}" -gt 87 ]; then
+            echo "::error::Version $version is longer than 87 characters."
+            exit 1
+          fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
   build:

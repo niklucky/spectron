@@ -155,6 +155,12 @@ test("CLI installer: curl | sh installs, upgrades and refuses bad downloads", { 
   assert.equal(busy.code, 1);
   assert.match(busy.stderr, /is rebuilding its CLI/);
   await writeFile(join(dist, "spectron.mjs"), bundleBefore);
+  // Only one of the two files there (the build has written the bundle but
+  // not yet the manifest): also a retryable 503. Neither there: a 404.
+  const manifestBefore = await readFile(join(dist, "manifest.json"));
+  await rm(join(dist, "manifest.json"));
+  assert.equal((await fetch(`${origin}/cli/manifest.json`)).status, 503);
+  await writeFile(join(dist, "manifest.json"), manifestBefore);
 
   // The upgrade routes take no token: a 401 from them (say, a proxy) is not
   // "token rejected" (exit 4) but an unavailable update.
@@ -186,13 +192,18 @@ test("CLI installer: curl | sh installs, upgrades and refuses bad downloads", { 
     assert.match(error.message, expected.message);
     await intact();
   };
-  const next = "console.log('1.2.0')";
+  const next = "#!/usr/bin/env node\nconsole.log('1.2.0')\n";
   // The download doesn't match the manifest.
   offer({ version: "1.2.0", sha256: hash("something else") }, () => next);
   await failure({ code: "checksum_mismatch", message: /doesn't match the server's checksum/ });
   // It matches, but doesn't run (prints another version).
-  const broken = "console.log('9.9.9')";
+  const broken = "#!/usr/bin/env node\nconsole.log('9.9.9')\n";
   offer({ version: "1.2.0", sha256: hash(broken) }, () => broken);
+  await failure({ code: "upgrade_failed", message: /doesn't run with this Node\.js/ });
+  // It runs with node, but not as the installed command runs it (through its
+  // shebang, via the spectron link).
+  const noShebang = "console.log('1.2.0')\n";
+  offer({ version: "1.2.0", sha256: hash(noShebang) }, () => noShebang);
   await failure({ code: "upgrade_failed", message: /doesn't run with this Node\.js/ });
   // The connection drops halfway through the download.
   offer({ version: "1.2.0", sha256: hash(next) }, () =>
