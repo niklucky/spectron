@@ -118,6 +118,8 @@ export function createAPI(
               ? MCP_MAX_BODY_BYTES
               : c.req.path.startsWith("/api/trpc/") || c.req.path.startsWith("/api/v1/")
               ? 3 * 1024 * 1024
+              // A 128×128 RGBA PNG can exceed the small default once base64-encoded.
+              : c.req.path === "/api/auth/update-user" ? 128 * 1024
               : c.req.path.startsWith("/api/git/webhooks/") ? 1024 * 1024 : 16 * 1024,
           // Hono's default throws, which the error handler below would turn into a 500.
           onError: (c: Context) =>

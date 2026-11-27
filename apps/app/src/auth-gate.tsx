@@ -10,7 +10,12 @@ import { useTheme } from "@spectron/frontend/hooks/use-theme";
 import { Button } from "@spectron/frontend/components/ui/button";
 import { authClient } from "./lib/auth-client";
 
-type AuthUser = { id: string; name: string; email: string };
+export type AuthUser = {
+  id: string;
+  name: string;
+  email: string;
+  image?: string | null | undefined;
+};
 
 /*
  * MCP clients (Claude, Codex, …) connect through OAuth. Spectron's authorize

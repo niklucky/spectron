@@ -107,7 +107,7 @@
   font-size: 13px;
   font-weight: 500;
 }
-.ai-dialog input:not([type="checkbox"]),
+.ai-dialog input:not([type="checkbox"], [type="range"], [type="file"]),
 .ai-dialog select,
 .ai-dialog textarea,
 .ai-settings-page select {
@@ -119,9 +119,6 @@
   color: var(--color-text-primary);
   padding: 10px 12px;
   font: inherit;
-}
-.ai-dialog input[type="file"] {
-  max-width: 300px;
 }
 .ai-dialog textarea {
   resize: vertical;

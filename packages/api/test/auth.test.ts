@@ -139,6 +139,32 @@ test("Postgres auth lifecycle", async (t) => {
       cookie = sessionCookie(response);
     },
   );
+  await t.test("profile avatars are normalized, preserved on name edits, and removable", async () => {
+    // An encoded crop can exceed the default 16 KiB auth body limit.
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128"><!--${" ".repeat(16_384)}--><circle cx="64" cy="64" r="64" fill="red"/></svg>`;
+    const image = `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;
+    const update = (values: { name?: string; image?: string | null }) =>
+      call("/api/auth/update-user", values);
+    const savedImage = async () => {
+      const profile = (await (await call("/api/me")).json()) as {
+        user: { image: string | null };
+      };
+      return profile.user.image;
+    };
+
+    const saved = await update({ image });
+    assert.equal(saved.status, 200, await saved.text());
+    const normalized = await savedImage();
+    assert.ok(normalized);
+    assert.match(normalized, /^data:image\/png;base64,/);
+
+    assert.equal((await update({ name: "Updated name" })).status, 200);
+    assert.equal((await update({ image: "data:image/png;base64,aW52YWxpZA==" })).status, 400);
+    assert.equal(await savedImage(), normalized);
+
+    assert.equal((await update({ image: null })).status, 200);
+    assert.equal(await savedImage(), null);
+  });
   await t.test(
     "rejects cross-origin mutations and external reset redirects",
     async () => {

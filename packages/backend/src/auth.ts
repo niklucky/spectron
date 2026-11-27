@@ -16,6 +16,7 @@ import { cimd } from "@better-auth/cimd";
 import { verifyOAuthQueryParams } from "@better-auth/oauth-provider";
 import { fetchClientMetadataResource } from "@better-auth/cimd/node";
 import { schema, type Database } from "@spectron/db";
+import { LogoError, normalizeLogoDataURL } from "./project-logo/images";
 
 export type ResetEmail = { to: string; url: string };
 export type MagicLinkEmail = { to: string; url: string };
@@ -104,6 +105,24 @@ export function createAuth(db: Database, config: AuthConfig) {
       }),
     },
     database: drizzleAdapter(db, { provider: "pg", schema, transaction: true }),
+    databaseHooks: {
+      user: {
+        update: {
+          before: async ({ image }) => {
+            if (typeof image !== "string" || !/^data:/i.test(image.trimStart()))
+              return;
+            try {
+              return { data: { image: await normalizeLogoDataURL(image) } };
+            } catch (error) {
+              if (!(error instanceof LogoError)) throw error;
+              throw new APIError("BAD_REQUEST", {
+                message: "Choose a valid avatar image.",
+              });
+            }
+          },
+        },
+      },
+    },
     emailAndPassword: {
       enabled: true,
       minPasswordLength: 8,

@@ -51,7 +51,7 @@ import {
 } from "@spectron/frontend/components/feature/design-system";
 import { useProjects } from "./hooks/use-projects";
 import { useWorkspace } from "./hooks/use-workspace";
-import { AuthGate } from "./auth-gate";
+import { AuthGate, type AuthUser } from "./auth-gate";
 import { authClient } from "./lib/auth-client";
 import { trpc } from "./lib/trpc";
 import "@spectron/frontend/workspace.css";
@@ -88,7 +88,7 @@ function Workspace({
   user,
   sessionId,
 }: {
-  user: { id: string; name: string; email: string };
+  user: AuthUser;
   sessionId: string;
 }) {
   const projectState = useProjects(sessionId);
@@ -102,7 +102,8 @@ function Workspace({
         })),
     [projectState.projects],
   );
-  const workspace = useWorkspace(user.name, projects, user.id);
+  const workspace = useWorkspace(projects, user.id);
+  const profileImage = user.image ?? null;
   const [integrationBusy, setIntegrationBusy] = useState(false);
   const settingsId =
     workspace.view === "project" && workspace.section === "settings"
@@ -621,7 +622,8 @@ function Workspace({
         onOpenAgents={() => { if (!integrationBusy) setAISettings(true); }}
         accountMenu={
           <AccountMenu
-            name={workspace.name}
+            name={user.name}
+            image={profileImage}
             email={user.email}
             collapsed={workspace.collapsed}
             theme={workspace.theme}
@@ -752,16 +754,19 @@ function Workspace({
         project={workspace.project}
         projects={projects}
         isFlow={workspace.isFlow}
-        name={workspace.name}
-        image={workspace.image}
+        name={user.name}
+        profileImage={profileImage}
+        image=""
         media={previewMedia}
         theme={workspace.theme}
         setTheme={workspace.setTheme}
-        onProfileSave={async (name) => {
-          const { error } = await authClient.updateUser({ name });
+        onProfileSave={async (name, image) => {
+          const { error } = await authClient.updateUser({
+            name,
+            ...(image === undefined ? {} : { image }),
+          });
           if (error)
             throw new Error(error.message || "Could not save your profile.");
-          workspace.setName(name);
         }}
         onCreateTask={workspace.createTask}
         onClose={() => workspace.setModal(null)}
