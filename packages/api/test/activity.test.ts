@@ -153,13 +153,15 @@ test("Unified issue activity preserves access, history and pagination", async (t
       const expected = { type: "changes", changes: [{ ...scope, kind: "issue" }] };
       assert.deepEqual(await ownerEvent, expected);
       assert.deepEqual(await memberEvent, expected);
+      const membershipChanged = next(b);
       await pool.query("DELETE FROM project_members WHERE project_id = $1 AND user_id = $2", [p.id, member.id]);
+      assert.deepEqual(await membershipChanged, { type: "ready" });
       b.on("message", frame => unauthorized.push(frame.toString()));
       const ownerAfterRemoval = next(a);
       await pool.query("UPDATE issues SET title = title WHERE id = $1", [issue.id]);
       assert.deepEqual(await ownerAfterRemoval, expected);
-      await pool.query("INSERT INTO project_members(project_id,user_id,role) VALUES ($1,$2,'member')", [p.id, member.id]);
       assert.deepEqual(unauthorized, []);
+      await pool.query("INSERT INTO project_members(project_id,user_id,role) VALUES ($1,$2,'member')", [p.id, member.id]);
     } finally {
       stop();
       await new Promise<void>(resolve => server.close(() => resolve()));

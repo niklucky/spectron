@@ -43,7 +43,7 @@ BEGIN
     ('issues', 'issue'), ('issue_history', 'issue'), ('issue_comments', 'issue'),
     ('issue_attachments', 'issue'), ('issue_worklogs', 'issue'), ('issue_tags', 'issue'),
     ('export_jobs', 'activity'), ('integration_records', 'activity'),
-    ('agent_runs', 'runs'), ('agent_run_events', 'runs'), ('agent_run_inputs', 'runs'),
+    ('agent_run_events', 'runs'), ('agent_run_inputs', 'runs'),
     ('agent_review_findings', 'runs'), ('local_handoffs', 'handoffs'),
     ('agent_workspaces', 'git'), ('git_discussions', 'git'), ('git_operations', 'git'),
     ('git_reply_drafts', 'git')
@@ -58,3 +58,23 @@ $$;
 CREATE TRIGGER flow_run_workspace_change
 AFTER INSERT OR UPDATE OF owner_run_id, last_run_id, pending OR DELETE ON agent_workspaces
 FOR EACH ROW EXECUTE FUNCTION notify_flow_change('runs');
+--> statement-breakpoint
+-- The affected user's open tabs need fresh project membership and Git permissions
+-- even after losing access, when project-scoped updates can no longer reach them.
+CREATE FUNCTION notify_flow_membership() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  PERFORM pg_notify('spectron_flow_membership', COALESCE(NEW.user_id, OLD.user_id));
+  RETURN NULL;
+END;
+$$;
+--> statement-breakpoint
+CREATE TRIGGER flow_membership_change AFTER INSERT OR UPDATE OF role, can_merge OR DELETE ON project_members
+FOR EACH ROW EXECUTE FUNCTION notify_flow_membership();
+
+--> statement-breakpoint
+-- The worker's lease heartbeat also touches updated_at. Neither field alone
+-- changes the run card. Streamed output and input have their own triggers.
+CREATE TRIGGER flow_run_change AFTER INSERT OR DELETE OR UPDATE OF
+  state, result, error, stop_requested, container_retained, applied_at, context,
+  implementation, review, repositories, agent, message, requester_name, command, handoff_from_id
+ON agent_runs FOR EACH ROW EXECUTE FUNCTION notify_flow_change('runs');

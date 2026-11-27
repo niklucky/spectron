@@ -7,7 +7,7 @@ import type { LocalHandoffView } from "@spectron/shared";
 import { equalJson, type AgentRunView, type SubscribeToFlow } from "@spectron/shared";
 import { formatDateTime } from "../../../lib/date-format";
 import { AttachmentMarkdown, nonInlineFiles } from "./issue-comments";
-import { useCallback, useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "react";
 import type {
   IssueActivityEvent,
   IssueActivityPage,
@@ -139,7 +139,8 @@ export function IssueChat({
   const [loadedActivity, setLoadedActivity] = useState<string>();
   const composer = useRef<HTMLDivElement>(null);
   const stream = useRef<HTMLDivElement>(null),
-    generation = useRef(0),
+    requestActivity = useRef<((earlier?: boolean) => void) | null>(null),
+    nextCursor = useRef<string | null>(null),
     pages = useRef(1),
     scroll = useRef<{ top: number; height: number } | "bottom" | null>("bottom");
 
@@ -149,36 +150,64 @@ export function IssueChat({
     if (!events || (el && el.scrollHeight - el.scrollTop - el.clientHeight < 80)) scroll.current = "bottom";
     setEvents(next);
   });
-  const loadActivity = useCallback(async () => {
-    const version = ++generation.current;
+  const loadActivity = useEffectEvent(async (earlier: boolean, isCurrent: () => boolean) => {
     try {
-      let next: string | null = null;
-      let collected: IssueActivityEvent[] = [];
-      for (let n = 0; n < pages.current; n++) {
-        const page: IssueActivityPage = await actions.activity({ projectId: issue.projectId, issueId: issue.id, ...(next ? { cursor: next } : {}) });
-        if (version !== generation.current) return;
-        collected = [...page.events, ...collected];
-        next = page.nextCursor;
-        if (!next) break;
+      if (earlier) {
+        if (!nextCursor.current) return;
+        const page = await actions.activity({ projectId: issue.projectId, issueId: issue.id, cursor: nextCursor.current });
+        if (!isCurrent()) return;
+        const el = stream.current;
+        if (el) scroll.current = { top: el.scrollTop, height: el.scrollHeight };
+        pages.current++;
+        setEvents(old => [...page.events, ...(old ?? [])]);
+        nextCursor.current = page.nextCursor;
+      } else {
+        let next: string | null = null;
+        let collected: IssueActivityEvent[] = [];
+        for (let n = 0; n < pages.current; n++) {
+          const page: IssueActivityPage = await actions.activity({ projectId: issue.projectId, issueId: issue.id, ...(next ? { cursor: next } : {}) });
+          if (!isCurrent()) return;
+          collected = [...page.events, ...collected];
+          next = page.nextCursor;
+          if (!next) break;
+        }
+        applyEvents(collected);
+        setLoadedActivity(activityAt);
+        nextCursor.current = next;
       }
-      applyEvents(collected);
-      setLoadedActivity(activityAt);
-      setCursor(next);
+      setCursor(nextCursor.current);
       setError("");
     } catch (cause) {
-      if (version === generation.current) setError(cause instanceof Error ? cause.message : "Could not load chat.");
-    } finally {
-      if (version === generation.current) setLoading(false);
+      if (isCurrent()) setError(cause instanceof Error ? cause.message : "Could not load chat.");
     }
-  }, [actions.activity, issue.id, issue.projectId, activityAt]);
+  });
 
   useEffect(() => {
     if (!active) return;
-    setLoading(true);
-    setError("");
-    void loadActivity();
-    return () => { generation.current++; };
-  }, [active, loadActivity, issue.updatedAt, revision, activityReload, activityRevision, issueRevision]);
+    let current = true;
+    let running = false;
+    let refresh = false;
+    let loadEarlier = false;
+    const enqueue = async (earlier = false) => {
+      if (earlier) { loadEarlier = true; setLoading(true); }
+      else refresh = true;
+      if (running) return;
+      running = true;
+      while (current && (loadEarlier || refresh)) {
+        const prepend = loadEarlier;
+        if (prepend) loadEarlier = false;
+        else refresh = false;
+        await loadActivity(prepend, () => current);
+        if (current && !loadEarlier) setLoading(false);
+      }
+      running = false;
+    };
+    requestActivity.current = enqueue;
+    return () => { current = false; requestActivity.current = null; };
+  }, [active, issue.projectId, issue.id]);
+  useEffect(() => {
+    requestActivity.current?.();
+  }, [active, issue.projectId, issue.id, actions.activity, activityAt, issue.updatedAt, revision, activityReload, activityRevision, issueRevision]);
 
   const markRead = actions.markRead;
   const seenThrough = issue.readState?.seenThrough;
@@ -296,25 +325,7 @@ export function IssueChat({
           {attachmentError && <p role="alert" className="text-sm text-bad">{attachmentError}</p>}
           {cursor && (
             <div className="flex justify-center py-2">
-              <Button variant="ghost" size="sm" disabled={loading} onClick={async () => {
-                const version = ++generation.current;
-                setLoading(true);
-                setError("");
-                try {
-                  const page = await actions.activity({ projectId: issue.projectId, issueId: issue.id, cursor });
-                  if (version === generation.current) {
-                    const el = stream.current;
-                    if (el) scroll.current = { top: el.scrollTop, height: el.scrollHeight };
-                    pages.current++;
-                    setEvents((old) => [...page.events, ...(old ?? [])]);
-                    setCursor(page.nextCursor);
-                  }
-                } catch (cause) {
-                  if (version === generation.current) setError(cause instanceof Error ? cause.message : "Could not load earlier activity.");
-                } finally {
-                  if (version === generation.current) setLoading(false);
-                }
-              }}>
+              <Button variant="ghost" size="sm" disabled={loading} onClick={() => requestActivity.current?.(true)}>
                 Load earlier activity
               </Button>
             </div>

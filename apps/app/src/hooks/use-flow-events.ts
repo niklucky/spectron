@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useEffectEvent, useRef } from "react";
-import type { FlowMessage, SubscribeToFlow } from "@spectron/shared";
+import type { FlowChange, FlowMessage, SubscribeToFlow } from "@spectron/shared";
 
 export function useFlowEvents(refreshIssues: () => Promise<void>, refreshProjects: () => Promise<void>) {
   const listeners = useRef(new Set<(message: FlowMessage) => void>());
@@ -15,15 +15,22 @@ export function useFlowEvents(refreshIssues: () => Promise<void>, refreshProject
     let retry: number | undefined;
     let delay = 500;
     let refreshing = false;
-    let dirty = false;
+    let needsSnapshot = false;
+    const issues = new Map<string, FlowChange>();
+    const deliver = (message: FlowMessage) => {
+      for (const listener of listeners.current) listener(message);
+    };
     async function updateIssues() {
-      dirty = true;
       if (refreshing) return;
       refreshing = true;
       try {
-        while (dirty && !stopped) {
-          dirty = false;
+        while (!stopped && (needsSnapshot || issues.size)) {
+          const message: FlowMessage = needsSnapshot ? { type: "ready" } : { type: "changes", changes: [...issues.values()] };
+          needsSnapshot = false;
+          issues.clear();
+          // Deliver the detail invalidation together with the fresh list watermark.
           await refresh();
+          if (!stopped) deliver(message);
         }
       } finally {
         refreshing = false;
@@ -37,10 +44,16 @@ export function useFlowEvents(refreshIssues: () => Promise<void>, refreshProject
         const message: FlowMessage = JSON.parse(event.data);
         if (message.type === "ready") {
           delay = 500;
+          needsSnapshot = true;
           void refreshProjectList();
+        } else {
+          const detail = message.changes.filter(change => change.kind !== "issue");
+          if (detail.length) deliver({ type: "changes", changes: detail });
+          for (const change of message.changes) {
+            if (change.kind === "issue") issues.set(change.issueId, change);
+          }
         }
-        for (const listener of listeners.current) listener(message);
-        if (message.type === "ready" || message.changes.some(change => change.kind === "issue")) void updateIssues();
+        void updateIssues();
       };
       socket.onclose = () => {
         if (stopped) return;

@@ -26,27 +26,44 @@ export function watchFlowQuery<T>(
   let active = true;
   let running = false;
   let dirty = false;
-  async function refresh() {
+  let timer: number | undefined;
+  let nextLoad = 0;
+  let retryDelay = 1000;
+  function schedule() {
     dirty = true;
-    if (running) return;
-    running = true;
-    while (active && dirty) {
-      dirty = false;
-      try {
-        const value = await load();
-        if (active) apply(value);
-      } catch (cause) {
-        if (active) onError(cause);
-      }
-    }
-    running = false;
+    if (!active || running || timer !== undefined) return;
+    const delay = Math.max(0, nextLoad - performance.now());
+    timer = window.setTimeout(() => { void refresh(); }, delay);
   }
-  const unsubscribe = subscribeToChanges(subscribe, issueId, kind, refresh);
-  window.addEventListener("focus", refresh);
+  async function refresh() {
+    timer = undefined;
+    if (!active) return;
+    dirty = false;
+    running = true;
+    nextLoad = performance.now() + 750;
+    try {
+      const value = await load();
+      if (active) apply(value);
+      retryDelay = 1000;
+    } catch (cause) {
+      if (active) {
+        onError(cause);
+        dirty = true;
+        nextLoad = performance.now() + retryDelay;
+        retryDelay = Math.min(30000, retryDelay * 2);
+      }
+    } finally {
+      running = false;
+      if (dirty) schedule();
+    }
+  }
+  const unsubscribe = subscribeToChanges(subscribe, issueId, kind, schedule);
+  window.addEventListener("focus", schedule);
   void refresh();
   return () => {
     active = false;
+    window.clearTimeout(timer);
     unsubscribe?.();
-    window.removeEventListener("focus", refresh);
+    window.removeEventListener("focus", schedule);
   };
 }

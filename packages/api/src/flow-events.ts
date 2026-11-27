@@ -1,5 +1,5 @@
 import type { Auth } from "@spectron/backend";
-import type { createDatabase } from "@spectron/db";
+import { PostgresClient, type createDatabase } from "@spectron/db";
 import { flowChangeKinds, type FlowChange, type FlowMessage } from "@spectron/shared";
 import type { ServerType } from "@hono/node-server";
 import type { IncomingMessage } from "node:http";
@@ -10,7 +10,7 @@ type Pool = ReturnType<typeof createDatabase>["pool"];
 
 export async function attachFlowEvents(server: ServerType, pool: Pool, auth: Auth, origin: string) {
   const sockets = new WebSocketServer({ noServer: true, maxPayload: 1024, perMessageDeflate: false });
-  const sessions = new Map<WebSocket, string>();
+  const sessions = new Map<WebSocket, { id: string; userId: string }>();
   const waitingForPong = new Set<WebSocket>();
   let stopped = false;
   let listening = false;
@@ -42,7 +42,7 @@ export async function attachFlowEvents(server: ServerType, pool: Pool, auth: Aut
         `SELECT s.id, m.project_id FROM sessions s JOIN project_members m ON m.user_id = s.user_id
          JOIN projects p ON p.id = m.project_id AND p.state = 'active'
          WHERE s.id = ANY($1::text[]) AND s.expires_at > now() AND m.project_id = ANY($2::text[])`,
-        [[...new Set(sessions.values())], [...new Set(batch.map(c => c.projectId))]],
+        [[...new Set([...sessions.values()].map(s => s.id))], [...new Set(batch.map(c => c.projectId))]],
       );
       const allowed = new Map<string, Set<string>>();
       for (const row of rows) {
@@ -51,7 +51,7 @@ export async function attachFlowEvents(server: ServerType, pool: Pool, auth: Aut
         allowed.set(row.id, projects);
       }
       for (const [ws, session] of sessions) {
-        const projects = allowed.get(session);
+        const projects = allowed.get(session.id);
         if (!projects) continue;
         const changes = batch.filter(c => projects.has(c.projectId));
         if (changes.length > 256) send(ws, { type: "ready" });
@@ -70,14 +70,23 @@ export async function attachFlowEvents(server: ServerType, pool: Pool, auth: Aut
   }
 
   async function listen() {
-    const client = await pool.connect();
-    if (stopped) { client.release(); return; }
+    if (stopped) return;
+    const client = new PostgresClient({
+      connectionString: pool.options.connectionString,
+      application_name: "spectron_flow_listener",
+      keepAlive: true,
+      keepAliveInitialDelayMillis: 10000,
+      connectionTimeoutMillis: 5000,
+      query_timeout: 5000,
+    });
+    let healthCheck: ReturnType<typeof setInterval> | undefined;
     let released = false;
     const drop = () => {
       if (released) return;
       released = true;
       listening = false;
-      client.release(true);
+      clearInterval(healthCheck);
+      void client.end().catch(() => {});
       release = undefined;
       disconnect();
       if (!stopped) retry();
@@ -86,6 +95,12 @@ export async function attachFlowEvents(server: ServerType, pool: Pool, auth: Aut
     client.once("error", drop);
     client.once("end", drop);
     client.on("notification", ({ channel, payload }) => {
+      if (channel === "spectron_flow_membership") {
+        for (const [ws, session] of sessions) {
+          if (session.userId === payload) send(ws, { type: "ready" });
+        }
+        return;
+      }
       if (channel !== "spectron_flow" || !payload || !sessions.size) return;
       try {
         const change = JSON.parse(payload);
@@ -97,8 +112,12 @@ export async function attachFlowEvents(server: ServerType, pool: Pool, auth: Aut
       } catch { /* Ignore unrelated or malformed NOTIFY payloads. */ }
     });
     try {
+      await client.connect();
+      await client.query("LISTEN spectron_flow_membership");
       await client.query("LISTEN spectron_flow");
-      if (!released) listening = true;
+      if (released) return;
+      listening = true;
+      healthCheck = setInterval(() => { void client.query("SELECT 1").catch(drop); }, 25000);
     } catch {
       drop();
     }
@@ -116,7 +135,7 @@ export async function attachFlowEvents(server: ServerType, pool: Pool, auth: Aut
     if (!session) { reject("401 Unauthorized"); return; }
     if (stopped || !listening) { reject("503 Service Unavailable"); return; }
     sockets.handleUpgrade(req, socket, head, ws => {
-      sessions.set(ws, session.session.id);
+      sessions.set(ws, { id: session.session.id, userId: session.user.id });
       ws.on("pong", () => waitingForPong.delete(ws));
       ws.on("message", () => ws.close(1008, "Read-only stream"));
       ws.on("error", () => ws.terminate());
