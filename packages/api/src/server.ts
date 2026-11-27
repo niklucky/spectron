@@ -76,7 +76,11 @@ const apiOptions = {
   },
   sendInvitationEmail: createInvitationEmailSender(RESEND_API_KEY, EMAIL_FROM),
 };
-const api = createAPI(auth, apiOptions);
+const api = createAPI(auth, {
+  ...apiOptions,
+  // `curl -fsSL $APP_URL/cli/install.sh | sh`; built by Dockerfile.api.
+  cliDist: process.env.CLI_DIST || fileURLToPath(new URL("../../../apps/cli/dist", import.meta.url)),
+});
 const stopAgents = process.env.AGENT_RUNNER_ENABLED === 'true'
   ? createAgentWorker(db, createFileService(db, apiOptions.fileStorage), createDockerAgentRuntime({
       root: process.env.AGENT_WORKSPACES_ROOT || fileURLToPath(new URL('../../../data/agent-workspaces', import.meta.url)),

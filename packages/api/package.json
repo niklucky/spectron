@@ -27,7 +27,7 @@
     "test:agent-runs": "tsx --test test/agent-runs.test.ts test/agent-runtime.test.ts test/agent-proxy.test.ts test/agent-implementation.test.ts test/agent-reviews.test.ts test/git-workflow.test.ts test/git-activity-provider.test.ts",
     "test:public-api": "tsx --test test/public-api.test.ts",
     "test:mcp": "tsx --test test/mcp.test.ts",
-    "test:cli": "tsx --test test/cli.test.ts"
+    "test:cli": "tsx --test test/cli.test.ts test/cli-install.test.ts"
   },
   "dependencies": {
     "@hono/node-server": "2.1.1",

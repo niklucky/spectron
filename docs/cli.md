@@ -6,12 +6,26 @@ Agents that speak MCP can use the [MCP server](mcp.md) instead. The CLI suits ag
 
 ## Install
 
-Requires Node.js 22 or later. From a checkout of this repository:
+Requires Node.js 22 or later. Every Spectron server serves a CLI that matches its API:
+
+```sh
+curl -fsSL https://app.spectron.dev/cli/install.sh | sh
+```
+
+On a self-hosted server, use its address instead. The script needs no sudo. It downloads the CLI from that server and checks it against a SHA-256 checksum, which the server fills into the script when serving it. It then installs to `~/.local/share/spectron` and links `~/.local/bin/spectron`. If that directory isn't on your `PATH`, it says what to add. `SPECTRON_INSTALL_DIR` and `SPECTRON_BIN_DIR` change the two locations, for example in a container:
+
+```sh
+curl -fsSL https://app.spectron.dev/cli/install.sh | SPECTRON_BIN_DIR=/usr/local/bin sh
+```
+
+Run the same command again to upgrade. To uninstall, run `spectron auth logout`, then `rm -r ~/.local/share/spectron ~/.local/bin/spectron`.
+
+From a checkout of this repository instead:
 
 ```sh
 pnpm install
-pnpm --filter @spectron/cli build
-npm install -g ./apps/cli    # puts `spectron` on your PATH
+pnpm --filter @spectron/cli build    # bundles dist/spectron.mjs
+npm install -g ./apps/cli            # puts `spectron` on your PATH
 ```
 
 ## Sign in
@@ -19,10 +33,12 @@ npm install -g ./apps/cli    # puts `spectron` on your PATH
 Create a personal access token in Spectron: account menu → **AI connections & agents** → **API tokens**. Then:
 
 ```sh
-spectron auth login --url https://spectron.example.com    # prompts for the token
-echo "$TOKEN" | spectron auth login --url https://spectron.example.com --with-token
+spectron auth login                     # prompts for the token
+echo "$TOKEN" | spectron auth login --with-token
 spectron auth status
 ```
+
+`auth login` signs in to the server the CLI was installed from. `--url https://spectron.example.com` signs in elsewhere (and is required for a CLI built from source).
 
 The URL and token are saved to `~/.config/spectron/config.json`, readable only by you (on Windows, `%APPDATA%\spectron\config.json` in your profile, where file modes are advisory). `$XDG_CONFIG_HOME` and `$SPECTRON_CONFIG_DIR` move it. `spectron auth logout` deletes the file. The token stays valid until you revoke it in Spectron.
 

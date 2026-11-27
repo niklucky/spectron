@@ -6,6 +6,8 @@ RUN pnpm install --frozen-lockfile
 # The built SPA ships inside this image and is served by the API process, so
 # production runs one container instead of an API and an nginx beside it.
 RUN pnpm --filter @spectron/app build
+# The CLI and its installer, served at /cli/ (curl -fsSL $APP_URL/cli/install.sh | sh).
+RUN pnpm --filter @spectron/cli build
 ENV NODE_ENV=production
 ENV API_HOST=0.0.0.0
 ENV STATIC_ROOT=/workspace/apps/app/dist

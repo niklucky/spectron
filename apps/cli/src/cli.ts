@@ -48,6 +48,8 @@ export type IO = {
   stdout: Writable & { isTTY?: boolean; columns?: number };
   stderr: Writable;
   fetch: Fetch;
+  /** The server the CLI was installed from, if any. */
+  defaultURL?: string;
 };
 
 type OptionSpec = { type: "string" | "boolean"; short?: string; multiple?: boolean; help: string };
@@ -257,7 +259,7 @@ const commands: Command[] = [
     group: "Account",
     summary: "Sign in with a personal access token",
     options: {
-      url: { type: "string", help: "Spectron address, e.g. https://spectron.example.com" },
+      url: { type: "string", help: "Spectron address, e.g. https://spectron.example.com (default: the server you installed from)" },
       "with-token": { type: "boolean", help: "Read the token from stdin instead of prompting" },
     },
     async run(ctx) {
@@ -265,7 +267,8 @@ const commands: Command[] = [
       const interactive = io.stdin.isTTY === true && !flag(ctx, "with-token");
       // A broken config file must not block signing in again, which replaces it.
       let url =
-        str(ctx, "url") ?? io.env.SPECTRON_URL ?? (await readConfig(io.env).catch(() => ({ url: undefined }))).url;
+        str(ctx, "url") ?? io.env.SPECTRON_URL ?? (await readConfig(io.env).catch(() => ({ url: undefined }))).url ??
+        io.defaultURL;
       if (!url && interactive) url = await prompt(io, "Spectron address (e.g. https://spectron.example.com): ");
       if (!url) throw new UsageError("Pass the server address with --url.");
       url = normalizeURL(url);
