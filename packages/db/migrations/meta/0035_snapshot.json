@@ -1,5 +1,5 @@
 {
-  "id": "2072d2ac-3e1a-47ea-b3a1-3af497912354",
+  "id": "8b7728b5-ab73-4683-96f4-be57a99c07e5",
   "prevId": "ecddca2a-41a5-4777-929d-21e0190196c9",
   "version": "7",
   "dialect": "postgresql",
@@ -6581,6 +6581,59 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
+    "public.profile_avatars": {
+      "name": "profile_avatars",
+      "schema": "",
+      "columns": {
+        "user_id": {
+          "name": "user_id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "key": {
+          "name": "key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "data": {
+          "name": "data",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "profile_avatars_user_id_users_id_fk": {
+          "name": "profile_avatars_user_id_users_id_fk",
+          "tableFrom": "profile_avatars",
+          "tableTo": "users",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "profile_avatars_key_unique": {
+          "name": "profile_avatars_key_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "key"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
     "public.projects": {
       "name": "projects",
       "schema": "",
@@ -7769,12 +7822,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "avatar_data": {
-          "name": "avatar_data",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -7790,24 +7837,7 @@
           "default": "now()"
         }
       },
-      "indexes": {
-        "users_avatar_url_idx": {
-          "name": "users_avatar_url_idx",
-          "columns": [
-            {
-              "expression": "image",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "where": "\"users\".\"avatar_data\" is not null",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
+      "indexes": {},
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {

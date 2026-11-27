@@ -31,9 +31,9 @@ import {
   createOAuthAppService,
   createOAuthResume,
   profileAvatarPath,
+  readProfileAvatar,
 } from "@spectron/backend";
-import { schema, type Database } from "@spectron/db";
-import { and, eq, isNotNull } from "drizzle-orm";
+import type { Database } from "@spectron/db";
 import { fetchRequestHandler } from "@trpc/server/adapters/fetch";
 import { appRouter } from "./trpc/router";
 import { createFileRoutes } from "./files";
@@ -168,18 +168,15 @@ export function createAPI(
     if (!session) return c.body(null, 401);
 
     const key = c.req.param("key");
-    const { user } = schema;
-    const [avatar] = await db
-      .select({ data: user.avatarData })
-      .from(user)
-      .where(and(eq(user.image, `${profileAvatarPath}/${key}`), isNotNull(user.avatarData)));
-    if (!avatar?.data) return c.notFound();
-
     const etag = `"${key}"`;
+    const revalidate = c.req.header("If-None-Match") === etag;
+    const avatar = await readProfileAvatar(db, key, revalidate);
+    if (!avatar) return c.notFound();
+
     c.header("ETag", etag);
     c.header("Cache-Control", "private, no-cache");
     c.header("Vary", "Cookie");
-    if (c.req.header("If-None-Match") === etag) return c.body(null, 304);
+    if (avatar.data === null) return c.body(null, 304);
     c.header("Content-Type", "image/png");
     c.header("X-Content-Type-Options", "nosniff");
     return c.body(Buffer.from(avatar.data, "base64"));

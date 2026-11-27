@@ -42,13 +42,14 @@ export const user = pgTable("users", {
   email: text("email").notNull().unique(),
   emailVerified: boolean("email_verified").default(false).notNull(),
   image: text("image"),
-  avatarData: text("avatar_data"),
   ...dates(),
-}, (table) => [
-  uniqueIndex("users_avatar_url_idx")
-    .on(table.image)
-    .where(sql`${table.avatarData} is not null`),
-]);
+});
+
+export const profileAvatar = pgTable("profile_avatars", {
+  userId: text("user_id").primaryKey().references(() => user.id, { onDelete: "cascade" }),
+  key: text("key").notNull().unique(),
+  data: text("data").notNull(),
+});
 
 export const session = pgTable(
   "sessions",
