@@ -99,6 +99,8 @@ export async function installUpgrade(options: Options & { checked: string; insta
     // what runs. Run as the installed command will run it: through its
     // shebang on POSIX (the launcher is a link to it), through node on Windows.
     await writeFile(staged, bytes, { flag: "wx", mode: 0o700 });
+    // Explicitly: the mode above is reduced by the umask (177 leaves 0600).
+    await chmod(staged, 0o700);
     const [command, args] = process.platform === "win32" ? [process.execPath, [staged, "--version"]] : [staged, ["--version"]];
     const printed = await new Promise<string>((resolve, reject) =>
       execFile(command, args, { timeout: 30_000 }, (error, stdout) => (error ? reject(error) : resolve(stdout.trim()))),

@@ -232,7 +232,8 @@ test("CLI installer: curl | sh installs, upgrades and refuses bad downloads", { 
   assert.deepEqual(JSON.parse((await sh(`"${bin}" upgrade --check --json`, env)).stdout), {
     status: "available", version: "1.1.0", latest: "1.2.0", server: origin,
   });
-  assert.deepEqual(JSON.parse((await sh(`"${bin}" upgrade --json`, env)).stdout), {
+  // Under a strict umask too, which the installer supports.
+  assert.deepEqual(JSON.parse((await sh(`umask 177; "${bin}" upgrade --json`, env)).stdout), {
     status: "updated", version: "1.1.0", latest: "1.2.0", server: origin,
   });
   assert.equal(await readFile(join(share, "spectron.mjs"), "utf8"), next);
