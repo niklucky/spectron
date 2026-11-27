@@ -44,7 +44,7 @@ export type IssuePanelActions = {
     id: string,
     overwriteRemote?: boolean,
   ) => Promise<{ key: string }>;
-  reimportJira?: (projectId: string, id: string) => Promise<{ key: string }>;
+  reimportJira?: (projectId: string, id: string, expectedUpdatedAt: string) => Promise<{ key: string }>;
   activity: (input: {
     projectId: string;
     issueId: string;
@@ -121,7 +121,7 @@ export function IssuePanel({
   const [chatTool, setChatTool] = useState<"files" | "worklog" | null>(null);
   const [jiraFeedback, setJiraFeedback] = useState("");
   const [jiraError, setJiraError] = useState("");
-  const [reimportOpen, setReimportOpen] = useState(false);
+  const [reimportVersion, setReimportVersion] = useState<string | null>(null);
   const [reimportError, setReimportError] = useState("");
   const [editing, setEditing] = useState(false);
   const [entries, setEntries] = useState<IssueHistoryEntry[]>([]);
@@ -275,10 +275,11 @@ export function IssuePanel({
   const stateFill = state?.color ?? statusColor(state?.trigger ?? "opened");
   const canSyncJira = !issue.deletedAt && actions.canPublish?.(issue.projectId);
   const reimportJira = canSyncJira && issue.externalId ? actions.reimportJira : undefined;
+  const reimportStale = reimportVersion !== null && reimportVersion !== issue.updatedAt;
   const jiraConflict = jiraError.includes("Jira changed since");
   const openReimport = () => {
     setReimportError("");
-    setReimportOpen(true);
+    setReimportVersion(issue.updatedAt);
   };
   const pushJira = async (overwriteRemote = false) => {
     if (busy || !actions.pushJira) return;
@@ -297,15 +298,15 @@ export function IssuePanel({
     }
   };
   const confirmReimport = async () => {
-    if (busy || !reimportJira) return;
+    if (busy || !reimportJira || !reimportVersion || reimportStale) return;
     setBusy(true);
     setReimportError("");
     setJiraFeedback("");
     try {
-      const result = await reimportJira(issue.projectId, issue.id);
+      const result = await reimportJira(issue.projectId, issue.id, reimportVersion);
       setEditing(false);
       setJiraError("");
-      setReimportOpen(false);
+      setReimportVersion(null);
       setJiraFeedback(`Re-imported ${result.key} from Jira.`);
       setReload((n) => n + 1);
     } catch (cause) {
@@ -609,15 +610,18 @@ export function IssuePanel({
           )}
         </aside>
       )}
-      {reimportOpen && reimportJira && (
-        <Dialog title="Re-import from Jira" size="sm" onClose={() => { if (!busy) setReimportOpen(false); }}>
+      {reimportVersion && reimportJira && (
+        <Dialog title="Re-import from Jira" size="sm" onClose={() => { if (!busy) setReimportVersion(null); }}>
           <p className="text-sm text-ink-2">
             Import the latest Jira fields for {issue.externalKey ?? issue.key}. Jira values will replace local edits to synced fields.
           </p>
-          {reimportError && <p className="mt-2 text-sm text-bad" role="alert">{reimportError}</p>}
+          {editing && <p className="mt-2 text-sm text-ink-2">Re-importing also discards any unsaved changes in the issue editor.</p>}
+          {reimportStale ? (
+            <p className="mt-2 text-sm text-bad" role="alert">The issue changed. Close this dialog and review the latest version before re-importing.</p>
+          ) : reimportError && <p className="mt-2 text-sm text-bad" role="alert">{reimportError}</p>}
           <DialogFooter>
-            <Button variant="ghost" disabled={busy} onClick={() => setReimportOpen(false)}>Cancel</Button>
-            <Button variant="danger" disabled={busy} onClick={() => void confirmReimport()}>
+            <Button variant="ghost" disabled={busy} onClick={() => setReimportVersion(null)}>Cancel</Button>
+            <Button variant="danger" disabled={busy || reimportStale} onClick={() => void confirmReimport()}>
               {busy ? "Re-importing…" : "Re-import"}
             </Button>
           </DialogFooter>

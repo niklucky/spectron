@@ -516,12 +516,14 @@ export function createJiraService(
     api: JiraClient,
     remote: JiraIssue,
     pendingFields: PendingProjectField[],
-    { overwriteLocal, linkedIssueId }: { overwriteLocal: boolean; linkedIssueId?: string },
+    options: {
+      overwriteLocal: boolean;
+      linkedIssue?: { id: string; expectedUpdatedAt: string };
+    },
   ) {
     return db.transaction(async (tx) => {
       await api.checkpoint();
       const project = await issueAccess(tx, userId, c.projectId, true, true);
-      await createPendingFields(tx, c, userId, pendingFields);
       const rec = await record(tx, c.id, "issue", "externalId", remote.id);
       const existing = rec
         ? (
@@ -536,12 +538,17 @@ export function createJiraService(
               )
           )[0]
         : undefined;
-      if (linkedIssueId && existing?.id !== linkedIssueId)
-        throw new IssueConflictError("The local issue's Jira link changed. Reload the issue and try again.");
       if (existing?.deletedAt)
         throw new IssueConflictError(
           "Restore the local issue before importing it.",
         );
+      if (options.linkedIssue) {
+        if (existing?.id !== options.linkedIssue.id)
+          throw new IssueConflictError("The local issue's Jira link changed. Reload the issue and try again.");
+        if (existing.updatedAt.toISOString() !== options.linkedIssue.expectedUpdatedAt)
+          throw new IssueConflictError("The local issue changed. Reload the issue before re-importing.");
+      }
+      await createPendingFields(tx, c, userId, pendingFields);
       const author = await mappedUser(tx, c, remote.fields.reporter, userId);
       const assignee = await mappedUser(tx, c, remote.fields.assignee);
       const stateId = await option(tx, c, "statuses", remote.fields.status);
@@ -648,7 +655,7 @@ export function createJiraService(
       const snapshot = remoteIssue(remote, c.mappings);
       if (
         existing &&
-        !overwriteLocal &&
+        !options.overwriteLocal &&
         !shouldImport(rec, localIssue(existing, oldTagIds), snapshot)
       )
         return existing;
@@ -1446,7 +1453,7 @@ export function createJiraService(
         runId,
       );
     },
-    async reimportIssue(userId: string, projectId: string, id: string) {
+    async reimportIssue(userId: string, projectId: string, id: string, expectedUpdatedAt: string) {
       return locked(userId, projectId, async (c, api) => {
         const rec = await record(db, c.id, "issue", "localId", id);
         if (rec?.pendingCreate)
@@ -1457,7 +1464,7 @@ export function createJiraService(
         const pendingFields = await pendingProjectFields(c, api);
         const local = await importIssueFields(userId, c, api, remote, pendingFields, {
           overwriteLocal: true,
-          linkedIssueId: id,
+          linkedIssue: { id, expectedUpdatedAt },
         });
         return { id: local.id, key: remote.key };
       });
