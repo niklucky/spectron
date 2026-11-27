@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
+import { createServer, type IncomingMessage } from "node:http";
+import { connect, type Socket } from "node:net";
 import { once } from "node:events";
 import { appendFile, lstat, readdir, stat, mkdir, mkdtemp, readFile, readlink, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import type { AddressInfo } from "node:net";
@@ -175,6 +177,41 @@ test("CLI installer: curl | sh installs, upgrades and refuses bad downloads", { 
   assert.equal(blocked.code, 1);
   assert.match(blocked.stderr, /already exists and isn't a link/);
   assert.equal(await readFile(join(otherBin, "spectron"), "utf8"), "#!/bin/sh\n");
+  // Another spectron earlier on PATH is pointed out.
+  const earlier = join(root, "earlier-bin");
+  await mkdir(earlier);
+  await writeFile(join(earlier, "spectron"), "#!/bin/sh\n", { mode: 0o755 });
+  const shadowed = await sh(install, { ...env, PATH: `${earlier}:${join(home, ".local/bin")}:${env.PATH}` });
+  assert.equal(shadowed.code, 0, shadowed.stderr);
+  assert.match(shadowed.stdout, /Another spectron comes first on your PATH: .*earlier-bin\/spectron/);
+
+  // Behind an HTTP proxy, the download and the installed CLI both go through it.
+  const tunnels: string[] = [];
+  const proxy = createServer();
+  proxy.on("connect", (request: IncomingMessage, socket: Socket) => {
+    tunnels.push(request.url ?? "");
+    const [host, port] = (request.url ?? "").split(":");
+    const upstream = connect(Number(port), host, () => {
+      socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+      upstream.pipe(socket).pipe(upstream);
+    });
+    upstream.on("error", () => socket.destroy());
+    socket.on("error", () => upstream.destroy());
+  });
+  proxy.listen(0, "127.0.0.1");
+  await once(proxy, "listening");
+  t.after(() => {
+    proxy.closeAllConnections();
+    proxy.close();
+  });
+  const viaProxy = { ...env, HTTP_PROXY: `http://127.0.0.1:${(proxy.address() as AddressInfo).port}` };
+  const proxied = await sh("sh", { ...viaProxy, SPECTRON_INSTALL_DIR: join(root, "proxied"), SPECTRON_BIN_DIR: join(root, "proxied-bin") }, await (await fetch(`${origin}/cli/install.sh`)).text());
+  assert.equal(proxied.code, 0, proxied.stderr);
+  assert.deepEqual(tunnels, [origin.replace("http://", "")]);
+  const proxiedLogin = await sh(`"${join(root, "proxied-bin/spectron")}" auth login --with-token`, viaProxy, "spk_test\n");
+  assert.notEqual(proxiedLogin.code, 0);
+  assert.equal(tunnels.length, 2);
+
   // Nor is another program's link.
   const linkedBin = join(root, "linked-bin");
   await mkdir(linkedBin);
@@ -188,12 +225,17 @@ test("CLI installer: curl | sh installs, upgrades and refuses bad downloads", { 
   const stalledShare = join(root, "stalled");
   routes = new Hono();
   routes.get("/cli/install.sh", () => new Response(script));
-  routes.get("/cli/spectron.mjs", () => new Promise<Response>(() => {}));
+  let requested!: () => void;
+  const downloading = new Promise<void>((resolve) => (requested = resolve));
+  routes.get("/cli/spectron.mjs", () => {
+    requested();
+    return new Promise<Response>(() => {});
+  });
   await writeFile(join(root, "install.sh"), script);
   const child = spawn("sh", [join(root, "install.sh")], { env: { ...env, SPECTRON_INSTALL_DIR: stalledShare, SPECTRON_BIN_DIR: join(root, "stalled-bin") } });
   const exited = once(child, "exit");
-  // "Downloading…" is printed once the traps are set; an early exit fails the test.
-  await Promise.race([once(child.stdout, "data"), exited.then(() => assert.fail("The installer exited before downloading."))]);
+  // Signalled only once the download is in flight; an early exit fails the test.
+  await Promise.race([downloading, exited.then(() => assert.fail("The installer exited before downloading."))]);
   const started = Date.now();
   child.kill("SIGTERM");
   const [code] = (await exited) as [number | null];

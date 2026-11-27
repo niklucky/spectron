@@ -28,6 +28,8 @@ In scripts and CI, download the installer first and then run it. With a pipe, th
 curl -fsSL https://app.spectron.dev/cli/install.sh -o install-spectron.sh && sh install-spectron.sh
 ```
 
+Behind an HTTP proxy, the installer and the CLI use `HTTPS_PROXY`, `HTTP_PROXY` and `NO_PROXY`, as curl does. On Node 22, also set `NODE_USE_ENV_PROXY=1` for the CLI (Node 22.21 or later); Node 24 needs nothing extra.
+
 Run the install command again to upgrade. It only ever replaces its own `spectron` link: if another program already has that name, it stops and says so.
 
 To uninstall, sign out first with `spectron auth logout`. Then remove what the installer added: the `spectron` link in the bin directory you installed to (`~/.local/bin` by default, or your `SPECTRON_BIN_DIR`), and `spectron.mjs` and `install.json` in the install directory. The install directory is `~/.local/share/spectron` by default, `$XDG_DATA_HOME/spectron` when that is set, or your `SPECTRON_INSTALL_DIR`. With the defaults:

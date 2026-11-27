@@ -1,6 +1,13 @@
 #!/usr/bin/env node
 import { readFile } from "node:fs/promises";
+import http from "node:http";
 import { run } from "./cli.js";
+
+// Node's fetch ignores HTTPS_PROXY and friends unless asked. Where Node can
+// switch it on at runtime (24+), do so; on 22, NODE_USE_ENV_PROXY=1 does it.
+const PROXY_VARIABLES = ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"];
+if (!process.env.NODE_USE_ENV_PROXY && PROXY_VARIABLES.some((name) => process.env[name]))
+  (http as { setGlobalProxyFromEnv?: () => void }).setGlobalProxyFromEnv?.();
 
 // `spectron issue list | head` closes stdout early; that is not an error.
 process.stdout.on("error", (error: NodeJS.ErrnoException) => {

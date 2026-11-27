@@ -109,6 +109,12 @@ main() {
   trap 'stop 143' TERM
   trap 'stop 129' HUP
   say "Downloading the Spectron CLI from $server"
+  # Node's fetch uses HTTPS_PROXY, HTTP_PROXY and NO_PROXY only when asked,
+  # like curl did for this script. (On Node 22 this needs 22.21 or later.)
+  if [ -n "${HTTPS_PROXY:-}${https_proxy:-}${HTTP_PROXY:-}${http_proxy:-}" ]; then
+    NODE_USE_ENV_PROXY="${NODE_USE_ENV_PROXY:-1}"
+    export NODE_USE_ENV_PROXY
+  fi
   # In the background, so a signal is handled at once rather than after the download.
   node -e "$DOWNLOAD" "$server" "$stage" "$checksum" </dev/null &
   child=$!
@@ -132,14 +138,16 @@ main() {
     fail "$link changed during the install and doesn't point to $target. Check it, then run this again."
 
   say "Installed spectron $version: $link"
-  case ":$PATH:" in
-    *":$bin_dir:"*) ;;
-    *)
-      say ""
-      say "$bin_dir isn't on your PATH. Add this line to your shell profile (~/.zshrc, ~/.bashrc):"
-      say "  export PATH=\"$bin_dir:\$PATH\""
-      ;;
-  esac
+  # Which spectron a new shell would run, resolved like the link.
+  found=$(command -v spectron 2>/dev/null || :)
+  if [ -z "$found" ]; then
+    say ""
+    say "$bin_dir isn't on your PATH. Add this line to your shell profile (~/.zshrc, ~/.bashrc):"
+    say "  export PATH=\"$bin_dir:\$PATH\""
+  elif [ "$(absolute "$(dirname "$found")")/spectron" != "$link" ]; then
+    say ""
+    say "Another spectron comes first on your PATH: $found. Remove it (for an npm install: npm uninstall -g @spectron/cli), or put $bin_dir before it in PATH."
+  fi
   say ""
   say "Next: spectron auth login"
 }
