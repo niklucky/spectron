@@ -51,7 +51,12 @@ export function AttachmentGallery({ children, projectId, issueId, actions }: {
   return <GalleryContext.Provider value={open}>
     {children}
     {file && (
-      <div role="dialog" aria-modal="true" aria-label={file.filename} className="fixed inset-0 z-50 flex flex-col bg-black/90 text-white backdrop-blur-sm" onClick={(e) => { if (e.target === e.currentTarget) close(); }}>
+      <div role="dialog" aria-modal="true" aria-label={file.filename} className="fixed inset-0 z-50 flex flex-col bg-black/90 text-white backdrop-blur-sm" onClick={(event) => {
+        const { target, currentTarget } = event;
+        if (target === currentTarget || (kind === "image" && target instanceof Element && !target.closest("img, button, a"))) {
+          close();
+        }
+      }}>
         <div className="flex h-14 items-center gap-1 px-3">
           <span className="min-w-0 flex-1 truncate px-2 text-sm font-medium">{file.filename}</span>
           {kind === "image" && <>
