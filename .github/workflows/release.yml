@@ -66,6 +66,14 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # The release version, from the tag (v1.2.3 -> 1.2.3), built into the
+      # CLI and its manifest. A manual re-run without a tag gets a dev version.
+      - name: Set version
+        id: version
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then version="${GITHUB_REF_NAME#v}"; else version="0.0.0-${GITHUB_SHA::7}"; fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
       - name: Set image reference
         id: image
         run: |
@@ -82,7 +90,9 @@ jobs:
           file: ${{ matrix.file }}
           platforms: linux/amd64
           push: true
-          build-args: ${{ matrix.build_args }}
+          build-args: |
+            ${{ matrix.build_args }}
+            SPECTRON_VERSION=${{ steps.version.outputs.version }}
           tags: |
             ${{ steps.image.outputs.name }}:${{ github.sha }}
             ${{ steps.image.outputs.name }}:${{ github.ref_type == 'tag' && github.ref_name || 'edge' }}

@@ -5,6 +5,7 @@ import { connect, type Socket } from "node:net";
 import { once } from "node:events";
 import { appendFile, lstat, readdir, stat, mkdir, mkdtemp, readFile, readlink, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import type { AddressInfo } from "node:net";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -38,9 +39,14 @@ test("CLI installer: curl | sh installs, upgrades and refuses bad downloads", { 
   const dist = join(root, "dist");
   const home = join(root, "home");
   await mkdir(home);
-  await new Promise<void>((resolve, reject) =>
-    execFile(process.execPath, [join(cliDir, "build.mjs"), dist], (error) => (error ? reject(error) : resolve())),
-  );
+  // A release build, as release.yml makes from a vX.Y.Z tag.
+  const build = (version: string) =>
+    new Promise<void>((resolve, reject) =>
+      execFile(process.execPath, [join(cliDir, "build.mjs"), dist], { env: { ...process.env, SPECTRON_VERSION: version } }, (error) =>
+        error ? reject(error) : resolve(),
+      ),
+    );
+  await build("v1.0.0");
 
   // The routes need the server's own address, known once it listens.
   let routes = new Hono();
@@ -109,6 +115,34 @@ test("CLI installer: curl | sh installs, upgrades and refuses bad downloads", { 
   const login = await sh(`"${bin}" auth login --with-token`, env, "not-a-token\n");
   assert.equal(login.code, 2);
   assert.match(login.stderr, /doesn't look like a Spectron token/);
+
+  // spectron upgrade: up to date, then a newer release on the server. The
+  // manifest names the version and the SHA-256 of the bundle served now.
+  const manifest = async () => (await (await fetch(`${origin}/cli/manifest.json`)).json()) as { version: string; sha256: string; bundle: string };
+  assert.deepEqual(await manifest(), {
+    version: "1.0.0",
+    sha256: createHash("sha256").update(await readFile(join(dist, "spectron.mjs"))).digest("hex"),
+    bundle: `${origin}/cli/spectron.mjs`,
+  });
+  assert.equal((await sh(`"${bin}" --version`, env)).stdout, "1.0.0\n");
+  const current = await sh(`"${bin}" upgrade`, env);
+  assert.equal(current.code, 0, current.stderr);
+  assert.match(current.stdout, /spectron 1\.0\.0 is up to date with http:\/\/127\.0\.0\.1/);
+  await build("1.1.0");
+  assert.equal((await manifest()).version, "1.1.0");
+  const available = await sh(`"${bin}" upgrade --check`, env);
+  assert.match(available.stdout, /spectron 1\.1\.0 is available \(this is 1\.0\.0\)/);
+  assert.equal((await sh(`"${bin}" --version`, env)).stdout, "1.0.0\n");
+  const updated = await sh(`"${bin}" upgrade`, env);
+  assert.equal(updated.code, 0, updated.stderr);
+  assert.match(updated.stdout, /Updated spectron 1\.0\.0 → 1\.1\.0\./);
+  assert.equal((await sh(`"${bin}" --version`, env)).stdout, "1.1.0\n");
+  assert.equal(await readFile(join(share, "spectron.mjs"), "utf8"), await readFile(join(dist, "spectron.mjs"), "utf8"));
+  assert.ok(((await stat(join(share, "spectron.mjs"))).mode & 0o111) !== 0);
+  assert.deepEqual((await readdir(share)).sort(), ["install.json", "spectron.mjs"]);
+  const json = JSON.parse((await sh(`"${bin}" upgrade --json`, env)).stdout) as Record<string, string>;
+  assert.equal(json.status, "current");
+  assert.equal(json.latest, "1.1.0");
 
   // Running it again upgrades in place, and needs no PATH hint once on PATH.
   const again = await sh(install, { ...env, PATH: `${join(home, ".local/bin")}:${env.PATH}` });
@@ -254,6 +288,20 @@ test("shellQuote makes a POSIX shell literal", async () => {
     const { stdout } = await sh(`printf %s ${shellQuote(value)}`, { PATH: "/usr/bin:/bin" });
     assert.equal(stdout, value);
   }
+});
+
+test("CLI upgrade needs a CLI the installer put in place", async () => {
+  let stderr = "";
+  const code = await run(["upgrade"], {
+    env: {},
+    cwd: tmpdir(),
+    stdin: Readable.from([]),
+    stdout: new Writable({ write: (_chunk, _encoding, done) => done() }),
+    stderr: new Writable({ write: (chunk, _encoding, done) => ((stderr += chunk), done()) }),
+    fetch: async () => assert.fail("no request without an install server"),
+  });
+  assert.equal(code, 2);
+  assert.match(stderr, /wasn't installed with the Spectron installer/);
 });
 
 test("CLI login: --url, SPECTRON_URL, the saved server, then the install server", async (t) => {

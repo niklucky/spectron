@@ -12,6 +12,7 @@ import { Readable, type Writable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { parseArgs } from "node:util";
 import { ApiFailure, createClient, type Client, type Fetch, type Query } from "./client.js";
+import { checkForUpgrade, installUpgrade } from "./upgrade.js";
 import {
   deleteConfig,
   normalizeURL,
@@ -38,7 +39,9 @@ import {
   type StoredFile,
 } from "./format.js";
 
-export const VERSION = "0.1.0";
+declare const __SPECTRON_VERSION__: string | undefined;
+/** The release this CLI was built from (build.mjs stamps it); 0.0.0-dev from source. */
+export const VERSION = typeof __SPECTRON_VERSION__ === "string" ? __SPECTRON_VERSION__ : "0.0.0-dev";
 const TOKEN_HELP = "Create one in Spectron: account menu → AI connections & agents → API tokens.";
 
 export type IO = {
@@ -50,6 +53,8 @@ export type IO = {
   fetch: Fetch;
   /** The server the CLI was installed from, if any. */
   defaultURL?: string;
+  /** The running bundle, when the installer put it there (`spectron upgrade` replaces it). */
+  bundle?: string;
 };
 
 type OptionSpec = { type: "string" | "boolean"; short?: string; multiple?: boolean; help: string };
@@ -680,6 +685,30 @@ const commands: Command[] = [
       }
       if (ctx.json) return ctx.data({ path: destination });
       ctx.out(`Saved ${name}.`);
+    },
+  },
+  {
+    name: "upgrade",
+    group: "Advanced",
+    summary: "Update this CLI to the version its server serves",
+    options: {
+      check: { type: "boolean", help: "Only say whether an update is available" },
+    },
+    async run(ctx) {
+      const { io } = ctx;
+      if (!io.bundle || !io.defaultURL)
+        throw new UsageError(
+          "This CLI wasn't installed with the Spectron installer, so it can't update itself. Install it with `curl -fsSL <server>/cli/install.sh | sh` (Windows: `irm <server>/cli/install.ps1 | iex`), or rebuild it from source.",
+        );
+      const options = { server: normalizeURL(io.defaultURL), bundle: io.bundle, fetch: io.fetch, userAgent: userAgent() };
+      const { manifest, upToDate } = await checkForUpgrade(options);
+      const report = (status: "current" | "available" | "updated", text: string) =>
+        ctx.json ? ctx.data({ status, version: VERSION, latest: manifest.version, server: options.server }) : ctx.out(text);
+      if (upToDate) return report("current", `spectron ${VERSION} is up to date with ${options.server}.`);
+      if (flag(ctx, "check"))
+        return report("available", `spectron ${manifest.version} is available (this is ${VERSION}). Run \`spectron upgrade\`.`);
+      await installUpgrade(options, manifest);
+      report("updated", `Updated spectron ${VERSION} → ${manifest.version}.`);
     },
   },
   {

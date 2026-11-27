@@ -47,7 +47,7 @@ for (const shell of shells)
   test(`CLI installer for Windows: irm | iex with ${shell}`, async (t) => {
     const root = await realpath(await mkdtemp(join(tmpdir(), "spectron-cli-ps-")));
     const dist = join(root, "dist");
-    execFileSync(process.execPath, [join(cliDir, "build.mjs"), dist]);
+    execFileSync(process.execPath, [join(cliDir, "build.mjs"), dist], { env: { ...process.env, SPECTRON_VERSION: "1.0.0" } });
 
     let routes = new Hono();
     const app = new Hono();
@@ -121,6 +121,24 @@ for (const shell of shells)
     const again = await ps(shell, install, env);
     assert.equal(again.code, 0, again.stderr);
 
+    // spectron upgrade replaces the CLI in place with a newer release (on
+    // Windows through the .cmd launcher, renaming over the running file).
+    execFileSync(process.execPath, [join(cliDir, "build.mjs"), dist], { env: { ...process.env, SPECTRON_VERSION: "1.1.0" } });
+    // Async: the server answering it runs in this process.
+    const upgrade = (...args: string[]) =>
+      new Promise<string>((resolve, reject) =>
+        execFile(
+          windows ? "cmd" : process.execPath,
+          windows ? ["/d", "/c", launcher, "upgrade", ...args] : [join(dir, "spectron.mjs"), "upgrade", ...args],
+          { env: { ...process.env, ...env } },
+          (error, stdout, stderr) => (error ? reject(new Error(`${error.message}\n${stderr}`)) : resolve(stdout)),
+        ),
+      );
+    assert.match(await upgrade("--check"), /spectron 1\.1\.0 is available \(this is 1\.0\.0\)/);
+    assert.match(await upgrade(), /Updated spectron 1\.0\.0 → 1\.1\.0\./);
+    assert.match(await upgrade(), /spectron 1\.1\.0 is up to date/);
+    assert.deepEqual((await readdir(dir)).sort(), ["bin", "install.json", "spectron.mjs"]);
+
     // Node writing to stderr on every start (a shim, a NODE_OPTIONS preload)
     // doesn't stop the install, even on Windows PowerShell 5.1.
     const noisy = await ps(shell, install, { ...env, NODE_OPTIONS: "--import=data:text/javascript,process.stderr.write(String.fromCharCode(33))" });
@@ -191,7 +209,7 @@ for (const shell of shells)
       const kept = await readFile(join(dir, "spectron.mjs"), "utf8");
       const keptMeta = await readFile(join(dir, "install.json"), "utf8");
       const newer = join(root, "newer");
-      execFileSync(process.execPath, [join(cliDir, "build.mjs"), newer]);
+      execFileSync(process.execPath, [join(cliDir, "build.mjs"), newer], { env: { ...process.env, SPECTRON_VERSION: "1.0.0" } });
       await appendFile(join(newer, "spectron.mjs"), "\n// newer\n");
       routes = new Hono().route("/cli", createCliRoutes({ appURL: origin, dist: newer }));
       const locker = spawn(shell, ["-NoProfile", "-NonInteractive", "-Command",
@@ -273,7 +291,7 @@ test("Windows launchers follow the script policy, and Git Bash runs spectron", {
   const shell = shells[0]!;
   const root = await realpath(await mkdtemp(join(tmpdir(), "spectron-cli-ps-policy-")));
   const dist = join(root, "dist");
-  execFileSync(process.execPath, [join(cliDir, "build.mjs"), dist]);
+  execFileSync(process.execPath, [join(cliDir, "build.mjs"), dist], { env: { ...process.env, SPECTRON_VERSION: "1.0.0" } });
   const app = new Hono();
   const server = serve({ fetch: app.fetch, port: 0, hostname: "127.0.0.1" });
   await new Promise((resolve) => server.once("listening", resolve));
