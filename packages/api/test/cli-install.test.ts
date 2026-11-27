@@ -3,8 +3,9 @@ import { execFile, spawn } from "node:child_process";
 import { createServer, type IncomingMessage } from "node:http";
 import { connect, type Socket } from "node:net";
 import { once } from "node:events";
-import { appendFile, lstat, readdir, stat, mkdir, mkdtemp, readFile, readlink, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { appendFile, chmod, lstat, readdir, stat, mkdir, mkdtemp, readFile, readlink, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import type { AddressInfo } from "node:net";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -38,9 +39,14 @@ test("CLI installer: curl | sh installs, upgrades and refuses bad downloads", { 
   const dist = join(root, "dist");
   const home = join(root, "home");
   await mkdir(home);
-  await new Promise<void>((resolve, reject) =>
-    execFile(process.execPath, [join(cliDir, "build.mjs"), dist], (error) => (error ? reject(error) : resolve())),
-  );
+  // A release build, as release.yml makes from a vX.Y.Z tag.
+  const build = (version: string) =>
+    new Promise<void>((resolve, reject) =>
+      execFile(process.execPath, [join(cliDir, "build.mjs"), dist], { env: { ...process.env, SPECTRON_VERSION: version } }, (error) =>
+        error ? reject(error) : resolve(),
+      ),
+    );
+  await build("v1.0.0");
 
   // The routes need the server's own address, known once it listens.
   let routes = new Hono();
@@ -109,6 +115,130 @@ test("CLI installer: curl | sh installs, upgrades and refuses bad downloads", { 
   const login = await sh(`"${bin}" auth login --with-token`, env, "not-a-token\n");
   assert.equal(login.code, 2);
   assert.match(login.stderr, /doesn't look like a Spectron token/);
+
+  // spectron upgrade: up to date, then a newer release on the server. The
+  // manifest names the version and the SHA-256 of the bundle served now.
+  const manifest = async () => (await (await fetch(`${origin}/cli/manifest.json`)).json()) as { version: string; sha256: string; bundle: string };
+  assert.deepEqual(await manifest(), {
+    version: "1.0.0",
+    sha256: createHash("sha256").update(await readFile(join(dist, "spectron.mjs"))).digest("hex"),
+    bundle: `${origin}/cli/spectron.mjs`,
+  });
+  assert.equal((await sh(`"${bin}" --version`, env)).stdout, "1.0.0\n");
+  const current = await sh(`"${bin}" upgrade`, env);
+  assert.equal(current.code, 0, current.stderr);
+  assert.match(current.stdout, /spectron 1\.0\.0 matches http:\/\/127\.0\.0\.1/);
+  await build("1.1.0");
+  assert.equal((await manifest()).version, "1.1.0");
+  const available = await sh(`"${bin}" upgrade --check`, env);
+  assert.match(available.stdout, /serves spectron 1\.1\.0 \(this is 1\.0\.0\)/);
+  assert.equal((await sh(`"${bin}" --version`, env)).stdout, "1.0.0\n");
+  const updated = await sh(`"${bin}" upgrade`, env);
+  assert.equal(updated.code, 0, updated.stderr);
+  assert.match(updated.stdout, /Updated spectron 1\.0\.0 → 1\.1\.0\./);
+  assert.equal((await sh(`"${bin}" --version`, env)).stdout, "1.1.0\n");
+  assert.equal(await readFile(join(share, "spectron.mjs"), "utf8"), await readFile(join(dist, "spectron.mjs"), "utf8"));
+  assert.ok(((await stat(join(share, "spectron.mjs"))).mode & 0o111) !== 0);
+  assert.deepEqual((await readdir(share)).sort(), ["install.json", "spectron.mjs"]);
+  const json = JSON.parse((await sh(`"${bin}" upgrade --json`, env)).stdout) as Record<string, string>;
+  assert.equal(json.status, "current");
+  assert.equal(json.latest, "1.1.0");
+
+  // A version is only served with the bundle it was built with: mid-rebuild
+  // (bundle replaced, manifest not yet), the manifest is a 503.
+  const bundleBefore = await readFile(join(dist, "spectron.mjs"));
+  await appendFile(join(dist, "spectron.mjs"), "\n// mid-rebuild\n");
+  const rebuilding = await fetch(`${origin}/cli/manifest.json`);
+  assert.equal(rebuilding.status, 503);
+  assert.equal(rebuilding.headers.get("cache-control"), "no-store");
+  const busy = await sh(`"${bin}" upgrade`, env);
+  assert.equal(busy.code, 1);
+  assert.match(busy.stderr, /is rebuilding its CLI/);
+  await writeFile(join(dist, "spectron.mjs"), bundleBefore);
+  // Only one of the two files there (the build has written the bundle but
+  // not yet the manifest): also a retryable 503. Neither there: a 404.
+  const manifestBefore = await readFile(join(dist, "manifest.json"));
+  await rm(join(dist, "manifest.json"));
+  assert.equal((await fetch(`${origin}/cli/manifest.json`)).status, 503);
+  await writeFile(join(dist, "manifest.json"), manifestBefore);
+
+  // The upgrade routes take no token: a 401 from them (say, a proxy) is not
+  // "token rejected" (exit 4) but an unavailable update.
+  const saved = routes;
+  routes = new Hono();
+  routes.get("/cli/manifest.json", () => new Response("Unauthorized", { status: 401 }));
+  const behindAuth = await sh(`"${bin}" upgrade --check --json`, env);
+  routes = saved;
+  assert.equal(behindAuth.code, 1);
+  assert.equal(JSON.parse(behindAuth.stderr).error.code, "upgrade_unavailable");
+  assert.equal(JSON.parse(behindAuth.stderr).error.status, 401);
+
+  // Each failure leaves the installed CLI exactly as it was, and no staged file.
+  const hash = (data: string | Uint8Array) => createHash("sha256").update(data).digest("hex");
+  const offer = (manifest: object, bundle: () => ConstructorParameters<typeof Response>[0]) => {
+    routes = new Hono();
+    routes.get("/cli/manifest.json", (c) => c.json(manifest));
+    routes.get("/cli/spectron.mjs", () => new Response(bundle()));
+  };
+  const intact = async () => {
+    assert.equal(await readFile(join(share, "spectron.mjs"), "utf8"), await readFile(join(dist, "spectron.mjs"), "utf8"));
+    assert.deepEqual((await readdir(share)).sort(), ["install.json", "spectron.mjs"]);
+  };
+  const failure = async (expected: { code: string; message: RegExp }) => {
+    const result = await sh(`"${bin}" upgrade --json`, env);
+    assert.equal(result.code, 1, result.stdout);
+    const { error } = JSON.parse(result.stderr) as { error: { code: string; message: string } };
+    assert.equal(error.code, expected.code);
+    assert.match(error.message, expected.message);
+    await intact();
+  };
+  const next = "#!/usr/bin/env node\nconsole.log('1.2.0')\n";
+  // The download doesn't match the manifest.
+  offer({ version: "1.2.0", sha256: hash("something else") }, () => next);
+  await failure({ code: "checksum_mismatch", message: /doesn't match the server's checksum/ });
+  // It matches, but doesn't run (prints another version).
+  const broken = "#!/usr/bin/env node\nconsole.log('9.9.9')\n";
+  offer({ version: "1.2.0", sha256: hash(broken) }, () => broken);
+  await failure({ code: "upgrade_failed", message: /doesn't run with this Node\.js/ });
+  // It runs with node, but not as the installed command runs it (through its
+  // shebang, via the spectron link).
+  const noShebang = "console.log('1.2.0')\n";
+  offer({ version: "1.2.0", sha256: hash(noShebang) }, () => noShebang);
+  await failure({ code: "upgrade_failed", message: /doesn't run with this Node\.js/ });
+  // The connection drops halfway through the download.
+  offer({ version: "1.2.0", sha256: hash(next) }, () =>
+    new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("console"));
+        controller.error(new Error("dropped"));
+      },
+    }),
+  );
+  await failure({ code: "network_error", message: /broke off, so nothing changed/ });
+  // A manifest with no proper version is no manifest.
+  offer({ version: "", sha256: hash("") }, () => "");
+  await failure({ code: "upgrade_unavailable", message: /didn't answer with a CLI manifest/ });
+  // The install folder isn't writable (a shared install, another user).
+  offer({ version: "1.2.0", sha256: hash(next) }, () => next);
+  if (process.getuid?.() !== 0) {
+    await chmod(share, 0o555);
+    try {
+      await failure({ code: "upgrade_failed", message: /permission denied/ });
+    } finally {
+      await chmod(share, 0o755);
+    }
+  }
+  // And --json for an available and a done update.
+  assert.deepEqual(JSON.parse((await sh(`"${bin}" upgrade --check --json`, env)).stdout), {
+    status: "available", version: "1.1.0", latest: "1.2.0", server: origin,
+  });
+  // Under a strict umask too, which the installer supports.
+  assert.deepEqual(JSON.parse((await sh(`umask 177; "${bin}" upgrade --json`, env)).stdout), {
+    status: "updated", version: "1.1.0", latest: "1.2.0", server: origin,
+  });
+  assert.equal(await readFile(join(share, "spectron.mjs"), "utf8"), next);
+  assert.equal(((await stat(join(share, "spectron.mjs"))).mode & 0o777), 0o755);
+  routes = saved;
 
   // Running it again upgrades in place, and needs no PATH hint once on PATH.
   const again = await sh(install, { ...env, PATH: `${join(home, ".local/bin")}:${env.PATH}` });
@@ -254,6 +384,20 @@ test("shellQuote makes a POSIX shell literal", async () => {
     const { stdout } = await sh(`printf %s ${shellQuote(value)}`, { PATH: "/usr/bin:/bin" });
     assert.equal(stdout, value);
   }
+});
+
+test("CLI upgrade needs a CLI the installer put in place", async () => {
+  let stderr = "";
+  const code = await run(["upgrade"], {
+    env: {},
+    cwd: tmpdir(),
+    stdin: Readable.from([]),
+    stdout: new Writable({ write: (_chunk, _encoding, done) => done() }),
+    stderr: new Writable({ write: (chunk, _encoding, done) => ((stderr += chunk), done()) }),
+    fetch: async () => assert.fail("no request without an install server"),
+  });
+  assert.equal(code, 2);
+  assert.match(stderr, /wasn't installed with the Spectron installer/);
 });
 
 test("CLI login: --url, SPECTRON_URL, the saved server, then the install server", async (t) => {

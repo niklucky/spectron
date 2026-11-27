@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { readFile } from "node:fs/promises";
 import http from "node:http";
+import { fileURLToPath } from "node:url";
 import { run } from "./cli.js";
 
 // Node's fetch ignores HTTPS_PROXY and friends unless asked. Where Node can
@@ -28,5 +29,7 @@ process.exitCode = await run(process.argv.slice(2), {
   stdout: process.stdout,
   stderr: process.stderr,
   fetch: (url, init) => fetch(url, init),
-  ...(typeof installed === "string" ? { defaultURL: installed } : {}),
+  // Installed by install.sh or install.ps1: the server it came from, and the
+  // file `spectron upgrade` replaces.
+  ...(typeof installed === "string" ? { defaultURL: installed, bundle: fileURLToPath(import.meta.url) } : {}),
 });

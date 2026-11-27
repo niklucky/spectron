@@ -10,7 +10,7 @@ import { Hono } from "hono";
  *   curl -fsSL https://app.spectron.dev/cli/install.sh | sh      (macOS, Linux)
  *   irm https://app.spectron.dev/cli/install.ps1 | iex           (Windows)
  *
- * `dist` holds spectron.mjs, install.sh and install.ps1 from `pnpm --filter @spectron/cli
+ * `dist` holds spectron.mjs, manifest.json, install.sh and install.ps1 from `pnpm --filter @spectron/cli
  * build`. The installer is filled in with this server's address, which the
  * CLI then signs in to by default, and with the bundle's SHA-256, so a
  * damaged download is refused. Both are read per request: a rebuild needs no
@@ -41,6 +41,28 @@ export function createCliRoutes({ appURL, dist }: { appURL: string; dist: string
   installer("install.sh", shellQuote, `echo "The Spectron CLI isn't available on this server yet." >&2\nexit 1\n`);
   // throw, not exit: `exit` would close the window `iex` runs in.
   installer("install.ps1", powershellQuote, `throw "The Spectron CLI isn't available on this server yet."\n`);
+
+  // What `spectron upgrade` compares itself with: the release version and the
+  // SHA-256 of the bundle served right now.
+  routes.get("/manifest.json", async (c) => {
+    const [manifest, bundle] = await Promise.all([read("manifest.json"), read("spectron.mjs")]);
+    if (manifest === null && bundle === null) return notFound("The Spectron CLI isn't available on this server yet.\n");
+    let version: unknown, sha256: unknown;
+    try {
+      // One of the two missing means a rebuild is under way: retry, below.
+      ({ version, sha256 } = JSON.parse(manifest ?? "") as { version?: unknown; sha256?: unknown });
+    } catch {
+      // Half-written mid-rebuild: same as a mismatch below.
+    }
+    // A version is only ever paired with the bundle it was built with: while a
+    // rebuild has replaced one and not yet the other, there is no manifest.
+    if (typeof version !== "string" || bundle === null || sha256 !== createHash("sha256").update(bundle).digest("hex"))
+      return new Response("The Spectron CLI is being rebuilt. Try again in a moment.\n", {
+        status: 503,
+        headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store", "Retry-After": "5" },
+      });
+    return c.json({ version, sha256, bundle: `${appURL}/cli/spectron.mjs` }, 200, { "Cache-Control": "no-cache" });
+  });
 
   routes.get("/spectron.mjs", async (c) => {
     const bundle = await read("spectron.mjs");

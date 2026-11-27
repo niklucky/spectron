@@ -32,8 +32,32 @@ jobs:
   verify:
     uses: ./.github/workflows/checks.yml
 
+  # The release version, from the tag (v1.2.3 -> 1.2.3): built into the CLI and
+  # its manifest, and part of the image tag the deploy pins. A manual run
+  # without a tag gets a dev version.
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Set version
+        id: version
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then version="${GITHUB_REF_NAME#v}"; else version="0.0.0-${GITHUB_SHA::7}"; fi
+          # Checked before anything is built or pushed (build.mjs checks the same).
+          if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "::error::$GITHUB_REF_NAME is not a release tag like v1.2.3."
+            exit 1
+          fi
+          # Image tags are at most 128 characters, and <sha>- takes 41.
+          if [ "${#version}" -gt 87 ]; then
+            echo "::error::Version $version is longer than 87 characters."
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
   build:
-    needs: verify
+    needs: [verify, version]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -82,8 +106,14 @@ jobs:
           file: ${{ matrix.file }}
           platforms: linux/amd64
           push: true
-          build-args: ${{ matrix.build_args }}
+          build-args: |
+            ${{ matrix.build_args }}
+            SPECTRON_VERSION=${{ needs.version.outputs.version }}
+          # sha-version is what the deploy pins: two tags on one commit build
+          # two API images (each stamped with its version), so the sha alone
+          # would point at whichever was built last.
           tags: |
+            ${{ steps.image.outputs.name }}:${{ github.sha }}-${{ needs.version.outputs.version }}
             ${{ steps.image.outputs.name }}:${{ github.sha }}
             ${{ steps.image.outputs.name }}:${{ github.ref_type == 'tag' && github.ref_name || 'edge' }}
             ${{ steps.image.outputs.name }}:production
@@ -91,7 +121,7 @@ jobs:
           cache-to: type=gha,scope=${{ matrix.name }},mode=max
 
   deploy:
-    needs: build
+    needs: [version, build]
     runs-on: ubuntu-latest
     environment: production
     permissions:
@@ -128,9 +158,9 @@ jobs:
 
       - name: Write the deployment environment
         env:
-          # Pinned to this commit rather than to `production`, so the box can
-          # only run what this workflow just verified and built.
-          IMAGE_TAG: ${{ github.sha }}
+          # Pinned to this commit and version rather than to `production`, so
+          # the box can only run what this workflow just verified and built.
+          IMAGE_TAG: ${{ github.sha }}-${{ needs.version.outputs.version }}
           POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
           BETTER_AUTH_SECRET: ${{ secrets.BETTER_AUTH_SECRET }}
           INTEGRATION_SECRET: ${{ secrets.INTEGRATION_SECRET }}

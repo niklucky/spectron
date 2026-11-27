@@ -32,7 +32,7 @@ curl -fsSL https://app.spectron.dev/cli/install.sh -o install-spectron.sh && sh 
 
 Behind an HTTP proxy, the installer and the CLI use `HTTPS_PROXY`, `HTTP_PROXY` and `NO_PROXY`, as curl does. On Node 22, also set `NODE_USE_ENV_PROXY=1` for the CLI (Node 22.21 or later); Node 24 needs nothing extra.
 
-Run the install command again to upgrade. It only ever replaces its own `spectron` link: if another program already has that name, it stops and says so.
+It only ever replaces its own `spectron` link: if another program already has that name, it stops and says so.
 
 To uninstall, sign out first with `spectron auth logout`. Then remove what the installer added: the `spectron` link in the bin directory you installed to (`~/.local/bin` by default, or your `SPECTRON_BIN_DIR`), and `spectron.mjs` and `install.json` in the install directory. The install directory is `~/.local/share/spectron` by default, `$XDG_DATA_HOME/spectron` when that is set, or your `SPECTRON_INSTALL_DIR`. With the defaults:
 
@@ -40,6 +40,17 @@ To uninstall, sign out first with `spectron auth logout`. Then remove what the i
 rm ~/.local/bin/spectron ~/.local/share/spectron/spectron.mjs ~/.local/share/spectron/install.json
 rmdir ~/.local/share/spectron
 ```
+
+### Updating
+
+The CLI's version is the Spectron release it came with (`spectron --version`, e.g. `0.4.0`). To switch to the build the server you installed from now serves:
+
+```sh
+spectron upgrade --check   # does the server serve a different build?
+spectron upgrade           # switch to it
+```
+
+`upgrade` reads `/cli/manifest.json` from that server: the version and the SHA-256 of the CLI it serves. It compares checksums, not version numbers, so it also follows a rollback to an older release or a rebuild of the same version. When they differ, `upgrade` downloads the server's CLI, checks it against the checksum, runs it once and swaps it in. Any failure, including a reinstall meanwhile, leaves the current CLI in place. Your locations, launchers and sign-in stay as they are. Running the install command again does the same.
 
 ### Windows
 
@@ -49,7 +60,7 @@ In PowerShell (Windows PowerShell 5.1 or PowerShell 7):
 irm https://app.spectron.dev/cli/install.ps1 | iex
 ```
 
-It needs no administrator rights, and checks the download against its SHA-256 the same way. It installs to `%LOCALAPPDATA%\Programs\spectron` with launchers in its `bin` folder (for cmd, PowerShell and Git Bash), puts that folder first in your user `PATH`, and works in the current window right away. Other terminals see it once reopened. Downloads use the system proxy. `SPECTRON_INSTALL_DIR` changes the location. `SPECTRON_NO_MODIFY_PATH=1` leaves `PATH` alone, for example in CI. Run the same command again to upgrade.
+It needs no administrator rights, and checks the download against its SHA-256 the same way. It installs to `%LOCALAPPDATA%\Programs\spectron` with launchers in its `bin` folder (for cmd, PowerShell and Git Bash), puts that folder first in your user `PATH`, and works in the current window right away. Other terminals see it once reopened. Downloads use the system proxy. `SPECTRON_INSTALL_DIR` changes the location. `SPECTRON_NO_MODIFY_PATH=1` leaves `PATH` alone, for example in CI.
 
 Launchers:
 - **cmd.exe** runs `spectron.cmd`.
@@ -118,6 +129,7 @@ The URL and token are saved to `~/.config/spectron/config.json`, readable only b
 | `file upload SP file…` | Upload without attaching |
 | `file download <url>` or `file download SP <file-id>` | Download (`-o path`, `-o -` for stdout) |
 | `api <path>` | Call any `/api/v1` endpoint |
+| `upgrade [--check]` | Switch this CLI to the build its server serves |
 
 `spectron <command> --help` lists every option.
 
