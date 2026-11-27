@@ -88,7 +88,7 @@ for (const shell of shells)
     const launcher = join(dir, "bin", "spectron.cmd");
     assert.equal(
       await readFile(launcher, "utf8"),
-      '@echo off\r\nsetlocal\r\nset NoDefaultCurrentDirectoryInExePath=1\r\nnode "%~dp0..\\spectron.mjs" %*\r\n',
+      '@echo off\r\nsetlocal DisableDelayedExpansion\r\nset NoDefaultCurrentDirectoryInExePath=1\r\nnode "%~dp0..\\spectron.mjs" %*\r\n',
     );
     const version = windows
       ? execFileSync("cmd", ["/d", "/c", launcher, "--version"], { env: { ...process.env, ...env } }).toString()
@@ -106,16 +106,31 @@ for (const shell of shells)
     const again = await ps(shell, install, env);
     assert.equal(again.code, 0, again.stderr);
 
-    // Spaces and wildcard characters in the path are just characters.
-    const odd = join(root, "with spaces [1]");
+    // Spaces, wildcard characters and ! in the path are just characters.
+    const odd = join(root, "with spaces [1] !");
     const oddInstall = await ps(shell, install, { ...env, SPECTRON_INSTALL_DIR: odd });
     assert.equal(oddInstall.code, 0, oddInstall.stderr);
     assert.deepEqual((await readdir(odd)).sort(), ["bin", "install.json", "spectron.mjs"]);
     if (windows)
+      // By name, as a build shell with delayed expansion on would run it.
       assert.match(
-        execFileSync("cmd", ["/d", "/c", join(odd, "bin", "spectron.cmd"), "--version"], { env: { ...process.env, ...env } }).toString(),
+        execFileSync("cmd", ["/v:on", "/d", "/c", "spectron", "--version"], {
+          env: { ...process.env, ...env, PATH: `${join(odd, "bin")}${delimiter}${env.PATH}` },
+        }).toString(),
         /^\d+\.\d+\.\d+\r?\n$/,
       );
+
+    // One install at a time per folder.
+    const holder = spawn(shell, ["-NoProfile", "-NonInteractive", "-Command",
+      `$f = [IO.File]::Open('${join(dir, ".install.lock")}', 'OpenOrCreate', 'ReadWrite', 'None'); [Console]::Out.WriteLine('held'); [Console]::In.ReadLine() | Out-Null; $f.Dispose()`]);
+    await once(holder.stdout, "data");
+    const concurrent = await ps(shell, install, env);
+    holder.stdin.end("\n");
+    await once(holder, "exit");
+    await rm(join(dir, ".install.lock"), { force: true });
+    assert.notEqual(concurrent.code, 0);
+    assert.match(concurrent.stdout + concurrent.stderr, /Another install into .* is running/);
+    assert.deepEqual((await readdir(dir)).sort(), ["bin", "install.json", "spectron.mjs"]);
 
     // A redirected download is refused, and nothing changes.
     const installed = await readFile(join(dir, "spectron.mjs"), "utf8");
@@ -143,9 +158,14 @@ for (const shell of shells)
       const fromProject = execFileSync("cmd", ["/d", "/c", launcher, "--version"], { cwd: project, env: { ...process.env, ...env } }).toString();
       assert.match(fromProject, /^\d+\.\d+\.\d+\r?\n$/);
 
-      // A CLI file in use can't be replaced: the previous install stays whole.
+      // A CLI file in use can't be replaced: the previous install stays whole,
+      // though the new version differs from it.
       const kept = await readFile(join(dir, "spectron.mjs"), "utf8");
       const keptMeta = await readFile(join(dir, "install.json"), "utf8");
+      const newer = join(root, "newer");
+      execFileSync(process.execPath, [join(cliDir, "build.mjs"), newer]);
+      await appendFile(join(newer, "spectron.mjs"), "\n// newer\n");
+      routes = new Hono().route("/cli", createCliRoutes({ appURL: origin, dist: newer }));
       const locker = spawn(shell, ["-NoProfile", "-NonInteractive", "-Command",
         `$f = [IO.File]::Open('${join(dir, "install.json")}', 'Open', 'Read', 'None'); [Console]::Out.WriteLine('locked'); [Console]::In.ReadLine() | Out-Null; $f.Dispose()`]);
       await once(locker.stdout, "data");
@@ -157,6 +177,7 @@ for (const shell of shells)
       assert.equal(await readFile(join(dir, "spectron.mjs"), "utf8"), kept);
       assert.equal(await readFile(join(dir, "install.json"), "utf8"), keptMeta);
       assert.deepEqual((await readdir(dir)).sort(), ["bin", "install.json", "spectron.mjs"]);
+      routes = new Hono().route("/cli", createCliRoutes({ appURL: origin, dist }));
     }
 
     // A bundle that changed after the installer was served is refused, and the
@@ -179,17 +200,22 @@ for (const shell of shells)
     // with its entries unexpanded; and this window runs the new CLI by name.
     if (windows) {
       const registry = `(Get-Item -LiteralPath 'HKCU:\\Environment')`;
-      const read = `$k = ${registry}; if ($k.GetValueNames() -contains 'Path') { $k.GetValueKind('Path').ToString() + '|' + $k.GetValue('Path', '', 'DoNotExpandEnvironmentNames') } else { '<absent>' }`;
-      const original = (await ps(shell, read, {})).stdout.trim();
+      // Base64 both ways, so no console code page can alter a non-ASCII entry.
+      const read = `$k = ${registry}; if ($k.GetValueNames() -contains 'Path') { $k.GetValueKind('Path').ToString() + '|' + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($k.GetValue('Path', '', 'DoNotExpandEnvironmentNames'))) } else { '<absent>' }`;
+      const snapshot = await ps(shell, read, {});
+      assert.equal(snapshot.code, 0, snapshot.stderr);
+      const original = snapshot.stdout.trim();
+      assert.match(original, /^(<absent>|\w+\|[A-Za-z0-9+/=]*)$/);
+      const decoded = (value: string) => Buffer.from(value.split("|")[1] ?? "", "base64").toString("utf8");
       // Restored exactly (or removed if it was absent), then announced, so
       // Explorer doesn't keep handing out the test PATH.
       const broadcast = `[Environment]::SetEnvironmentVariable('SPECTRON_INSTALL_REFRESH', '1', 'User'); [Environment]::SetEnvironmentVariable('SPECTRON_INSTALL_REFRESH', [NullString]::Value, 'User')`;
       t.after(async () => {
-        const [kind, ...value] = original.split("|");
+        const [kind, value] = original.split("|");
         const restore =
           original === "<absent>"
             ? `Remove-ItemProperty -LiteralPath 'HKCU:\\Environment' -Name Path -ErrorAction SilentlyContinue`
-            : `Set-ItemProperty -LiteralPath 'HKCU:\\Environment' -Name Path -Type ${kind} -Value ${powershellQuote(value.join("|"))}`;
+            : `Set-ItemProperty -LiteralPath 'HKCU:\\Environment' -Name Path -Type ${kind} -Value ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${value}')))`;
         await ps(shell, `${restore}; ${broadcast}`, {});
         assert.equal((await ps(shell, read, {})).stdout.trim(), original);
       });
@@ -201,7 +227,9 @@ for (const shell of shells)
       assert.equal(withPath.code, 0, withPath.stderr);
       assert.match(withPath.stdout, /Put .* first in your user PATH/);
       assert.match(withPath.stdout, /\n\d+\.\d+\.\d+\s*$/);
-      assert.equal((await ps(shell, read, {})).stdout.trim(), `ExpandString|${bin};%USERPROFILE%\\spectron-test-entry`);
+      const after = (await ps(shell, read, {})).stdout.trim();
+      assert.equal(after.split("|")[0], "ExpandString");
+      assert.equal(decoded(after), `${bin};%USERPROFILE%\\spectron-test-entry`);
       // Already first: left alone, and nothing left behind by the broadcast.
       const twice = await ps(shell, install, modifying);
       assert.doesNotMatch(twice.stdout, /first in your user PATH/);
