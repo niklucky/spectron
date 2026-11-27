@@ -43,7 +43,8 @@ test("CLI installer: curl | sh installs, upgrades and refuses bad downloads", { 
   await new Promise((resolve) => server.once("listening", resolve));
   const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   t.after(async () => {
-    server.closeAllConnections();
+    // Drops the deliberately stalled download's connection.
+    (server as import("node:http").Server).closeAllConnections();
     await new Promise((resolve) => server.close(resolve));
     await rm(root, { recursive: true, force: true });
   });
