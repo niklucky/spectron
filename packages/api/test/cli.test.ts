@@ -400,6 +400,7 @@ test("CLI: login, issues, comments, files and raw API calls", async (t) => {
   assert.equal((await json<{ user: { email: string } }>(["api", "HTTP://LOCALHOST:5173/api/v1/me"])).user.email, owner.email);
   const withCredentials = await cli(["api", "http://user:secret@localhost:5173/api/v1/me", "--json"]);
   assert.equal(withCredentials.code, 1);
+  assert.deepEqual(Object.keys(JSON.parse(withCredentials.err).error), ["message", "code"], "no status without a response");
   assert.equal(JSON.parse(withCredentials.err).error.code, "invalid_url");
   assert.equal(JSON.parse((await cli(["api", "http://[bad", "--json"])).err).error.code, "invalid_url");
 
@@ -468,6 +469,17 @@ test("CLI: login, issues, comments, files and raw API calls", async (t) => {
   const raced = await cli(["issue", "edit", "SP-1", "--add-tag", "backend", "--json"], { fetch: racing });
   assert.equal(raced.code, 1);
   assert.equal(JSON.parse(raced.err).error.code, "conflict");
+
+  // Usage errors win over authentication: they exit 2 even when signed out.
+  const signedOutEnv = { SPECTRON_CONFIG_DIR: join(root, "empty") };
+  assert.equal((await cli(["issue", "edit", "SP-1"], { env: signedOutEnv })).code, 2);
+  assert.equal((await cli(["issue", "edit", "SP-1", "--tag", "x", "--add-tag", "y"], { env: signedOutEnv })).code, 2);
+  const notSignedIn = JSON.parse((await cli(["whoami", "--json"], { env: signedOutEnv })).err).error;
+  assert.deepEqual([notSignedIn.code, notSignedIn.status], ["not_signed_in", undefined]);
+  // A page that is not the API still reports the status it answered with.
+  const html: Fetch = async () => new Response("<html></html>", { headers: { "content-type": "text/html" } });
+  const notAPI = JSON.parse((await cli(["whoami", "--json"], { fetch: html })).err).error;
+  assert.deepEqual([notAPI.code, notAPI.status], ["not_spectron", 200]);
 
   // Environment overrides the saved login; logout forgets it.
   assert.equal((await cli(["whoami"], { env: { SPECTRON_TOKEN: "spk_wrong" } })).code, 4);

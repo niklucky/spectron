@@ -474,11 +474,16 @@ const commands: Command[] = [
       }
       const expected = str(ctx, "expected-updated-at");
       if (expected !== undefined) body.expectedUpdatedAt = expected;
-      const client = await ctx.client();
       const add = strings(ctx, "add-tag");
       const remove = strings(ctx, "remove-tag");
-      if (add.length || remove.length) {
-        if ("tags" in body) throw new UsageError("Use --add-tag/--remove-tag or --tag/--clear tags, not both.");
+      const adjustTags = add.length > 0 || remove.length > 0;
+      // Usage errors come before any request, so they exit 2 even when signed out.
+      if (adjustTags && "tags" in body)
+        throw new UsageError("Use --add-tag/--remove-tag or --tag/--clear tags, not both.");
+      if (!adjustTags && !Object.keys(body).some((key) => key !== "expectedUpdatedAt"))
+        throw new UsageError("Nothing to change. Pass at least one field; see `spectron issue edit --help`.");
+      const client = await ctx.client();
+      if (adjustTags) {
         const current = await client.json<Issue>("GET", `/issues/${path(ref)}`);
         const lower = (tag: string) => tag.toLowerCase();
         const removed = new Set(remove.map(lower));
@@ -488,8 +493,6 @@ const commands: Command[] = [
         // Read-modify-write: refuse if someone changed the issue meanwhile.
         body.expectedUpdatedAt ??= current.updatedAt;
       }
-      if (!Object.keys(body).some((key) => key !== "expectedUpdatedAt"))
-        throw new UsageError("Nothing to change. Pass at least one field; see `spectron issue edit --help`.");
       const issue = await client.json<Issue>("PATCH", `/issues/${path(ref)}`, { json: body });
       if (ctx.json) return ctx.data(issue);
       ctx.out(`Updated ${issueLine(issue)}`);
@@ -935,7 +938,12 @@ export async function run(argv: string[], io: IO): Promise<number> {
         error.status === 401 && error.code !== "not_signed_in"
           ? `The server rejected the token: it may be revoked or expired, or the account's email isn't verified. Run \`spectron auth login\` with a new one. ${TOKEN_HELP}`
           : error.message;
-      return fail(error.status === 401 ? 4 : 1, message, { status: error.status, code: error.code });
+      // `status` only when a server actually answered; local failures carry just a code.
+      const answered = error.status > 0 && error.code !== "not_signed_in";
+      return fail(error.status === 401 ? 4 : 1, message, {
+        ...(answered ? { status: error.status } : {}),
+        code: error.code,
+      });
     }
     return fail(1, error instanceof Error ? error.message : String(error));
   }

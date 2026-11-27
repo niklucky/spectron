@@ -96,7 +96,7 @@ export function createClient({
     async json<T>(method: string, path: string, options: Parameters<typeof send>[2] = {}): Promise<T> {
       const response = await send(method, path, options);
       if (!(response.headers.get("content-type") ?? "").includes("application/json"))
-        throw new ApiFailure(0, "not_spectron", `${url} didn't answer like a Spectron server. Check the address.`);
+        throw new ApiFailure(response.status, "not_spectron", `${url} didn't answer like a Spectron server. Check the address.`);
       return (await response.json()) as T;
     },
   };
