@@ -23,6 +23,11 @@ function sh(script: string, env: Record<string, string>, stdin?: string, cwd?: s
     const child = execFile("sh", ["-c", script], { env, ...(cwd ? { cwd } : {}) }, (error, stdout, stderr) =>
       resolve({ code: error ? (typeof error.code === "number" ? error.code : 1) : 0, stdout, stderr }),
     );
+    // A command may exit before reading its input (printf, a refused install);
+    // the write then fails with EPIPE, which says nothing about the result.
+    child.stdin?.on("error", (error: NodeJS.ErrnoException) => {
+      if (error.code !== "EPIPE") throw error;
+    });
     child.stdin?.end(stdin ?? "");
   });
 }
