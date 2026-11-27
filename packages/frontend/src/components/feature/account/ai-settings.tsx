@@ -16,6 +16,7 @@ import { Dialog } from "../../ui/dialog";
 import { Avatar } from "../../ui/avatar";
 import { localAppName, type LocalApp } from "@spectron/shared";
 import { ApiTokens, type ApiTokenActions } from "./api-tokens";
+import { AvatarField } from "./avatar-field";
 
 type Revision = { id: string; revision: number };
 export type AISettingsActions = {
@@ -622,20 +623,6 @@ function AgentEditor({
   const model = provider?.models.find((m) => m.id === input.model);
   const patch = (values: Partial<AgentInput>) =>
     setInput((v) => ({ ...v, ...values }));
-  async function upload(file?: File) {
-    if (!file) return;
-    await op.run(async () => {
-      if (file.size > 2 * 1024 * 1024)
-        throw new Error("Choose an image smaller than 2 MB.");
-      const avatar = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(String(reader.result));
-        reader.onerror = () => reject(new Error("Could not read the image."));
-        reader.readAsDataURL(file);
-      });
-      patch({ avatar });
-    });
-  }
   return (
     <Dialog
       title={initial ? "Edit agent" : "Create agent"}
@@ -688,31 +675,12 @@ function AgentEditor({
               placeholder="Dev senior"
             />
           </label>
-          <div className="ai-actions">
-            {input.avatar && (
-              <img
-                src={input.avatar}
-                className="ai-avatar"
-                alt="Agent avatar preview"
-              />
-            )}
-            <label>
-              Avatar
-              <input
-                type="file"
-                accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml"
-                onChange={(e) => {
-                  void upload(e.target.files?.[0]);
-                  e.target.value = "";
-                }}
-              />
-            </label>
-            {input.avatar && (
-              <Button variant="ghost" onClick={() => patch({ avatar: null })}>
-                Remove avatar
-              </Button>
-            )}
-          </div>
+          <AvatarField
+            name={input.name}
+            image={input.avatar}
+            kind="agent"
+            onChange={(avatar) => patch({ avatar })}
+          />
           {!input.localApp && <><label>
             AI connection
             <select

@@ -30,6 +30,8 @@ import {
   createPublicApiService,
   createOAuthAppService,
   createOAuthResume,
+  profileAvatarPath,
+  readProfileAvatar,
 } from "@spectron/backend";
 import type { Database } from "@spectron/db";
 import { fetchRequestHandler } from "@trpc/server/adapters/fetch";
@@ -118,6 +120,8 @@ export function createAPI(
               ? MCP_MAX_BODY_BYTES
               : c.req.path.startsWith("/api/trpc/") || c.req.path.startsWith("/api/v1/")
               ? 3 * 1024 * 1024
+              // A 128×128 RGBA PNG can exceed the small default once base64-encoded.
+              : c.req.path === "/api/auth/update-user" ? 128 * 1024
               : c.req.path.startsWith("/api/git/webhooks/") ? 1024 * 1024 : 16 * 1024,
           // Hono's default throws, which the error handler below would turn into a 500.
           onError: (c: Context) =>
@@ -159,6 +163,28 @@ export function createAPI(
     catch { return c.json({ error: "Webhook rejected" }, 403); }
   });
   api.get("/api/health", (c) => c.json({ status: "ok" }));
+  api.get(`${profileAvatarPath}/:key`, async (c) => {
+    const session = await auth.api.getSession({ headers: c.req.raw.headers });
+    if (!session) return c.body(null, 401);
+
+    const key = c.req.param("key");
+    const etag = `"${key}"`;
+    const validators = c.req.header("If-None-Match")?.trim();
+    const revalidate = validators === "*" || (validators?.split(",").some((value) => {
+      const tag = value.trim();
+      return tag === etag || tag === `W/${etag}`;
+    }) ?? false);
+    const avatar = await readProfileAvatar(db, key, revalidate);
+    if (!avatar) return c.notFound();
+
+    c.header("ETag", etag);
+    c.header("Cache-Control", "private, no-cache");
+    c.header("Vary", "Cookie");
+    if (avatar.data === null) return c.body(null, 304);
+    c.header("Content-Type", "image/png");
+    c.header("X-Content-Type-Options", "nosniff");
+    return c.body(Buffer.from(avatar.data, "base64"));
+  });
   api.on(["GET", "POST"], "/api/auth/*", (c) => {
     const headers = new Headers(c.req.raw.headers);
     // Trust X-Real-IP only when deployed behind our private Nginx proxy.

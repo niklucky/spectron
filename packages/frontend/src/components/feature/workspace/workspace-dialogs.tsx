@@ -20,6 +20,7 @@ type WorkspaceDialogsProps = {
   projects: Project[];
   isFlow: boolean;
   name: string;
+  profileImage: string | null;
   image: string;
   media: {
     imageTitle: string;
@@ -30,7 +31,7 @@ type WorkspaceDialogsProps = {
   };
   theme: Theme;
   setTheme: (theme: Theme) => void;
-  onProfileSave: (name: string) => void | Promise<void>;
+  onProfileSave: (name: string, image?: string | null) => void | Promise<void>;
   onCreateTask: (title: string, project: string) => Promise<void>;
   onClose: () => void;
 };
@@ -40,6 +41,7 @@ export function WorkspaceDialogs({
   projects,
   isFlow,
   name,
+  profileImage,
   image,
   media,
   theme,
@@ -60,7 +62,12 @@ export function WorkspaceDialogs({
     );
   if (modal === "profile")
     return (
-      <ProfileDialog name={name} onSave={onProfileSave} onClose={onClose} />
+      <ProfileDialog
+        name={name}
+        image={profileImage}
+        onSave={onProfileSave}
+        onClose={onClose}
+      />
     );
   return (
     <>

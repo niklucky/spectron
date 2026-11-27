@@ -139,6 +139,72 @@ test("Postgres auth lifecycle", async (t) => {
       cookie = sessionCookie(response);
     },
   );
+  await t.test("profile avatars use authenticated image URLs and support replacement and removal", async () => {
+    // An encoded crop can exceed the default 16 KiB auth body limit.
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128"><!--${" ".repeat(16_384)}--><circle cx="64" cy="64" r="64" fill="red"/></svg>`;
+    const image = `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;
+    const update = (values: { name?: string; image?: string | null }) =>
+      call("/api/auth/update-user", values);
+    const savedImage = async () => {
+      const profile = (await (await call("/api/me")).json()) as {
+        user: { image: string | null; avatarData?: string };
+      };
+      assert.equal(profile.user.avatarData, undefined);
+      return profile.user.image;
+    };
+
+    const saved = await update({ image });
+    assert.equal(saved.status, 200, await saved.text());
+    const normalized = await savedImage();
+    assert.ok(normalized);
+    assert.match(normalized, /^\/api\/profile-avatars\/[\da-f-]{36}$/);
+    assert.equal((await call(normalized, undefined, { cookie: "" })).status, 401);
+
+    const photo = await call(normalized);
+    assert.equal(photo.status, 200);
+    assert.equal(photo.headers.get("content-type"), "image/png");
+    assert.equal(photo.headers.get("cache-control"), "private, no-cache");
+    const bytes = Buffer.from(await photo.arrayBuffer());
+    assert.equal(bytes.subarray(0, 8).toString("hex"), "89504e470d0a1a0a");
+    const etag = photo.headers.get("etag");
+    assert.ok(etag);
+    const revalidate = (validator: string) => api.request(`${origin}${normalized}`, {
+      headers: { cookie, "if-none-match": validator },
+    });
+    for (const validator of [etag, `W/${etag}`, `"other,tag", W/${etag}`, "*"])
+      assert.equal((await revalidate(validator)).status, 304);
+    assert.equal((await revalidate('"different,tag"')).status, 200);
+
+    assert.equal((await update({ name: "Updated name" })).status, 200);
+    assert.equal((await update({ image: "data:image/png;base64,aW52YWxpZA==" })).status, 400);
+    assert.equal((await update({ image: "https://example.test/avatar.png" })).status, 400);
+    assert.equal(await savedImage(), normalized);
+
+    assert.equal((await update({ image: `data:image/png;base64,${bytes.toString("base64")}` })).status, 200);
+    const replacement = await savedImage();
+    assert.ok(replacement);
+    assert.notEqual(replacement, normalized);
+    assert.equal((await revalidate(etag)).status, 404);
+    assert.equal((await revalidate("*")).status, 404);
+
+    assert.equal((await update({ image: null })).status, 200);
+    assert.equal(await savedImage(), null);
+    assert.equal((await call(replacement)).status, 404);
+  });
+  await t.test("sign-up rejects external avatar URLs and stores valid avatars privately", async () => {
+    const account = { name: "Avatar sign-up", email: "avatar-signup@example.test", password };
+    const rejected = await call("/api/auth/sign-up/email", { ...account, image: "https://example.test/avatar.png" });
+    assert.equal(rejected.status, 400);
+
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><circle cx="16" cy="16" r="16" fill="red"/></svg>';
+    const image = `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;
+    const response = await call("/api/auth/sign-up/email", { ...account, image });
+    assert.equal(response.status, 200, await response.clone().text());
+    const { user } = (await response.json()) as { user: { image: string; avatarData?: string } };
+    assert.equal(user.avatarData, undefined);
+    assert.match(user.image, /^\/api\/profile-avatars\//);
+    assert.equal((await call(user.image, undefined, { cookie: sessionCookie(response) })).status, 200);
+  });
   await t.test(
     "rejects cross-origin mutations and external reset redirects",
     async () => {

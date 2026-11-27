@@ -66,11 +66,7 @@ function withReadReceipt(issue: IssueSummary, seenThrough: string | null | undef
   return { ...issue, readState: { ...state, seenThrough } };
 }
 
-export function useWorkspace(
-  initialName: string,
-  projects: Project[],
-  userId: string,
-) {
+export function useWorkspace(projects: Project[], userId: string) {
   const [collapsed, setCollapsed] = useState(false);
   const [route, setRoute] = useState(() => readRoute(projects));
   const [mobileChat, setMobileChat] = useState(() => !!route.id);
@@ -124,8 +120,6 @@ export function useWorkspace(
   }, [filters, storageKey]);
   const { theme, setTheme, palette, setPalette } = useTheme();
   const [modal, setModal] = useState<WorkspaceDialogName>(null);
-  const [image] = useState("");
-  const [name, setName] = useState(initialName);
   const [notice, setNotice] = useState("");
   const generation = useRef(0);
   const projectIds = projects
@@ -361,9 +355,6 @@ export function useWorkspace(
     setPalette,
     modal,
     setModal,
-    image,
-    name,
-    setName,
     notice,
     showNotice: setNotice,
     openModal: setModal,

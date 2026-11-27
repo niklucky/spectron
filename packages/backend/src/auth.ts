@@ -16,6 +16,7 @@ import { cimd } from "@better-auth/cimd";
 import { verifyOAuthQueryParams } from "@better-auth/oauth-provider";
 import { fetchClientMetadataResource } from "@better-auth/cimd/node";
 import { schema, type Database } from "@spectron/db";
+import { storeProfileAvatar } from "./profile-avatars";
 
 export type ResetEmail = { to: string; url: string };
 export type MagicLinkEmail = { to: string; url: string };
@@ -104,6 +105,12 @@ export function createAuth(db: Database, config: AuthConfig) {
       }),
     },
     database: drizzleAdapter(db, { provider: "pg", schema, transaction: true }),
+    databaseHooks: {
+      user: {
+        create: { before: storeProfileAvatar },
+        update: { before: storeProfileAvatar },
+      },
+    },
     emailAndPassword: {
       enabled: true,
       minPasswordLength: 8,

@@ -45,6 +45,12 @@ export const user = pgTable("users", {
   ...dates(),
 });
 
+export const profileAvatar = pgTable("profile_avatars", {
+  userId: text("user_id").primaryKey().references(() => user.id, { onDelete: "cascade" }),
+  key: text("key").notNull().unique(),
+  data: text("data").notNull(),
+});
+
 export const session = pgTable(
   "sessions",
   {
