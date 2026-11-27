@@ -259,7 +259,7 @@ const commands: Command[] = [
     group: "Account",
     summary: "Sign in with a personal access token",
     options: {
-      url: { type: "string", help: "Spectron address, e.g. https://spectron.example.com (default: the server you installed from)" },
+      url: { type: "string", help: "Spectron address, e.g. https://spectron.example.com (default: the server you're signed in to, else the one you installed from)" },
       "with-token": { type: "boolean", help: "Read the token from stdin instead of prompting" },
     },
     async run(ctx) {
@@ -267,7 +267,10 @@ const commands: Command[] = [
       const interactive = io.stdin.isTTY === true && !flag(ctx, "with-token");
       // A broken config file must not block signing in again, which replaces it.
       let url =
-        str(ctx, "url") ?? io.env.SPECTRON_URL ?? (await readConfig(io.env).catch(() => ({ url: undefined }))).url ??
+        // || rather than ??: an empty SPECTRON_URL or saved url falls through.
+        str(ctx, "url") ||
+        io.env.SPECTRON_URL ||
+        (await readConfig(io.env).catch(() => ({ url: undefined }))).url ||
         io.defaultURL;
       if (!url && interactive) url = await prompt(io, "Spectron address (e.g. https://spectron.example.com): ");
       if (!url) throw new UsageError("Pass the server address with --url.");

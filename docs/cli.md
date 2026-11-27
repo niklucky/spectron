@@ -12,10 +12,11 @@ Requires Node.js 22 or later. Every Spectron server serves a CLI that matches it
 curl -fsSL https://app.spectron.dev/cli/install.sh | sh
 ```
 
-On a self-hosted server, use its address instead. The script needs no sudo. It downloads the CLI from that server and checks it against a SHA-256 checksum, which the server fills into the script when serving it. It then installs to `~/.local/share/spectron` and links `~/.local/bin/spectron`. If that directory isn't on your `PATH`, it says what to add. `SPECTRON_INSTALL_DIR` and `SPECTRON_BIN_DIR` change the two locations, for example in a container:
+On a self-hosted server, use its address instead. The script needs no sudo. It downloads the CLI from that server and checks it against a SHA-256 checksum, which the server fills into the script when serving it. It then installs to `~/.local/share/spectron` and links `~/.local/bin/spectron`. If that directory isn't on your `PATH`, it says what to add. `SPECTRON_INSTALL_DIR` and `SPECTRON_BIN_DIR` change the two locations. For example, to install for every user of a container image:
 
 ```sh
-curl -fsSL https://app.spectron.dev/cli/install.sh | SPECTRON_BIN_DIR=/usr/local/bin sh
+curl -fsSL https://app.spectron.dev/cli/install.sh |
+  SPECTRON_INSTALL_DIR=/usr/local/lib/spectron SPECTRON_BIN_DIR=/usr/local/bin sh
 ```
 
 In scripts and CI, download the installer first and then run it. With a pipe, the shell reports only `sh`'s status, so a failed download still looks like success:

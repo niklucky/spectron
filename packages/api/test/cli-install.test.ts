@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { appendFile, lstat, mkdir, mkdtemp, readFile, readlink, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { appendFile, lstat, stat, mkdir, mkdtemp, readFile, readlink, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -109,6 +109,15 @@ test("CLI installer: curl | sh installs, upgrades and refuses bad downloads", { 
   const masked = await sh(`umask 177; ${install}`, env);
   assert.equal(masked.code, 0, masked.stderr);
   assert.match((await sh(`"${bin}" --version`, env)).stdout, /^\d+\.\d+\.\d+\n$/);
+  // install.json stays readable for other users of a shared install.
+  assert.equal((await stat(join(share, "install.json"))).mode & 0o777, 0o644);
+  assert.equal((await stat(share)).mode & 0o777, 0o755);
+
+  // Without HOME, it asks for explicit directories rather than failing obscurely.
+  const { HOME: _home, ...homeless } = env;
+  const noHome = await sh(install, homeless);
+  assert.equal(noHome.code, 1);
+  assert.match(noHome.stderr, /HOME isn't set\. Set SPECTRON_INSTALL_DIR and SPECTRON_BIN_DIR/);
 
   // Relative directories still produce a link that resolves.
   const relative = await sh(install, { ...env, SPECTRON_INSTALL_DIR: "tools/share", SPECTRON_BIN_DIR: "tools/bin" }, undefined, root);
@@ -165,6 +174,8 @@ test("CLI login: --url, SPECTRON_URL, the saved server, then the install server"
     return requested;
   };
   assert.deepEqual(await login({}), ["https://installed.example"]);
+  // An empty variable falls through rather than blocking the defaults.
+  assert.deepEqual(await login({ SPECTRON_URL: "" }), ["https://installed.example"]);
   await writeFile(join(config, "config.json"), JSON.stringify({ url: "https://saved.example", token: "spk_saved" }));
   assert.deepEqual(await login({}), ["https://saved.example"]);
   assert.deepEqual(await login({ SPECTRON_URL: "https://env.example" }), ["https://env.example"]);

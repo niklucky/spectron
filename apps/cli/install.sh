@@ -9,7 +9,8 @@
 #
 # Installs to ~/.local/share/spectron and links ~/.local/bin/spectron.
 # SPECTRON_INSTALL_DIR and SPECTRON_BIN_DIR change those, e.g.
-#   curl -fsSL https://app.spectron.dev/cli/install.sh | SPECTRON_BIN_DIR=/usr/local/bin sh
+#   curl -fsSL https://app.spectron.dev/cli/install.sh |
+#     SPECTRON_INSTALL_DIR=/usr/local/lib/spectron SPECTRON_BIN_DIR=/usr/local/bin sh
 #
 # Everything runs inside main(), called on the last line, so a download that
 # is cut short runs nothing.
@@ -56,10 +57,16 @@ main() {
   node -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 22 ? 0 : 1)' </dev/null ||
     fail "The Spectron CLI needs Node.js 22 or later, and this is $(node --version </dev/null). Upgrade Node.js, then run this again."
 
-  install_dir="${SPECTRON_INSTALL_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/spectron}"
-  bin_dir="${SPECTRON_BIN_DIR:-$HOME/.local/bin}"
+  if [ -z "${HOME:-}" ] && { [ -z "${SPECTRON_INSTALL_DIR:-}" ] || [ -z "${SPECTRON_BIN_DIR:-}" ]; }; then
+    fail "HOME isn't set. Set SPECTRON_INSTALL_DIR and SPECTRON_BIN_DIR to choose where to install."
+  fi
+  install_dir="${SPECTRON_INSTALL_DIR:-${XDG_DATA_HOME:-${HOME:-}/.local/share}/spectron}"
+  bin_dir="${SPECTRON_BIN_DIR:-${HOME:-}/.local/bin}"
   mkdir -p "$install_dir" "$bin_dir"
   install_dir=$(absolute "$install_dir")
+  # Its own directory, so readable like the files in it whatever the umask,
+  # for installs shared by several users.
+  chmod 755 "$install_dir"
   bin_dir=$(absolute "$bin_dir")
   target="$install_dir/spectron.mjs"
   link="$bin_dir/spectron"
@@ -75,7 +82,12 @@ main() {
   # failure at any step leaves a working install as it was.
   part="$install_dir/.spectron-$$.mjs"
   meta="$install_dir/.install-$$.json"
+  rm -f "$part" "$meta"
   trap 'rm -f "$part" "$meta"' EXIT
+  # dash and BusyBox ash skip the EXIT trap on signals unless the shell exits.
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  trap 'exit 129' HUP
   say "Downloading the Spectron CLI from $server"
   status=0
   node -e "$DOWNLOAD" "$server/cli/spectron.mjs" "$part" "$checksum" </dev/null || status=$?
@@ -84,10 +96,12 @@ main() {
     3) fail "The download doesn't match its checksum, so nothing was installed. Run the install command again." ;;
     *) fail "Couldn't download $server/cli/spectron.mjs." ;;
   esac
-  version=$(node "$part" --version </dev/null) ||
+  # Run as the link will run it: through its shebang, from this directory.
+  version=$("$part" --version </dev/null) ||
     fail "The downloaded CLI doesn't run with this Node.js ($(node --version </dev/null)), so nothing was installed."
   # The CLI reads install.json beside itself: `spectron auth login` signs in here unless told otherwise.
   printf '{ "url": "%s" }\n' "$server" >"$meta"
+  chmod 644 "$meta"
 
   mv -f "$meta" "$install_dir/install.json"
   mv -f "$part" "$target"
