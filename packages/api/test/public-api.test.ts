@@ -311,6 +311,8 @@ test("Public API: tokens, issues, filters, comments, mentions and files", async 
   );
   await error(await call("POST", "/issues/SP-3/attachments?filename=big.bin", token, new Uint8Array(5000)), 413);
   await error(await call("POST", "/projects/SP/files", token, bytes), 400);
+  // An unknown issue is a 404 before the body is looked at.
+  await error(await call("POST", "/issues/SP-999/attachments", token, new TextEncoder().encode("not json"), { "content-type": "application/json" }), 404);
   // Upload-and-attach is atomic: a deleted issue publishes no project file.
   const doomed = await ok<Issue>(await call("POST", "/issues", token, { project: "SP", title: "Doomed" }), 201);
   await pool.query("UPDATE issues SET deleted_at = now() WHERE id = $1", [doomed.id]);

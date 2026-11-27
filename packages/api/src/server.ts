@@ -106,6 +106,7 @@ const stopExports = createExportService(db, createJiraService(db, createFileServ
 // explicit /api/ guard keeps an unknown API path a 404 rather than quietly
 // returning the application shell, which would turn a typo in a fetch URL
 // into an HTML body where JSON was expected.
+const FRAME_PROTECTED = /^\/(login|register|forgot-password|reset-password|oauth\/consent)\/?$/;
 const staticRoot = process.env.STATIC_ROOT;
 if (staticRoot) {
   if (!existsSync(staticRoot))
@@ -114,7 +115,10 @@ if (staticRoot) {
     );
   // Vite fingerprints everything under /assets, so those are immutable. The
   // shell must not be, or a deploy is invisible until the cache expires.
-  const cacheFor = (path: string, c: { header: (k: string, v: string) => void }) => {
+  const cacheFor = (
+    path: string,
+    c: { header: (k: string, v: string) => void; req: { path: string } },
+  ) => {
     c.header(
       "Cache-Control",
       path.includes("/assets/")
@@ -122,6 +126,13 @@ if (staticRoot) {
         : "no-cache",
     );
     c.header("Referrer-Policy", "no-referrer");
+    // Sign-in and OAuth consent must never render inside another site's
+    // frame, where a click could be hijacked. The rest of the app stays
+    // frameable for embedded previews.
+    if (FRAME_PROTECTED.test(c.req.path)) {
+      c.header("X-Frame-Options", "DENY");
+      c.header("Content-Security-Policy", "frame-ancestors 'none'");
+    }
   };
   const asset = serveStatic({ root: staticRoot, onFound: cacheFor });
   const shell = serveStatic({

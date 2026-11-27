@@ -92,6 +92,17 @@ export function createApiTokenService(db: Database) {
           ),
         );
     },
+    /**
+     * The user an OAuth access token acts for, when that user may still use
+     * the API: same rule as tokens, verified accounts only.
+     */
+    async verifiedUser(userId: string) {
+      const [row] = await db
+        .select({ id: user.id, name: user.name, email: user.email, emailVerified: user.emailVerified })
+        .from(user)
+        .where(eq(user.id, userId));
+      return row?.emailVerified ? { id: row.id, name: row.name, email: row.email } : null;
+    },
     /** Resolves a bearer token to its owner, or null when it is unknown, revoked or expired. */
     async authenticate(token: string) {
       if (!token.startsWith(API_TOKEN_PREFIX) || token.length > 200) return null;

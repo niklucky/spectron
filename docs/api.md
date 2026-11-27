@@ -1,6 +1,6 @@
 # Spectron public API (v1)
 
-REST API for agents, scripts and the upcoming CLI. Base URL: `https://<your-spectron>/api/v1`.
+REST API for agents, scripts and the upcoming CLI. Base URL: `https://<your-spectron>/api/v1`. Agents that speak MCP can use the [MCP server](mcp.md) instead, which offers the same operations as tools and signs in with OAuth.
 
 ## Authentication
 

@@ -9,7 +9,7 @@ export type {
   MagicLinkEmail,
   VerificationEmail,
 } from "./auth";
-export { MAGIC_LINK_EXPIRES_IN } from "./auth";
+export { MAGIC_LINK_EXPIRES_IN, mcpResource, createMcpCredentialReader, createOAuthResume, MCP_DPOP_ALGORITHMS, type McpCredential, OAUTH_CONSENT_PAGE, OAUTH_LOGIN_PAGE } from "./auth";
 export {
   createResetEmailSender,
   createInvitationEmailSender,
@@ -69,3 +69,4 @@ export {
   type PublicIssueInput,
   type IssueSortField,
 } from "./public-api";
+export { createOAuthAppService, type OAuthAppService } from "./oauth-apps";

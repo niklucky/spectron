@@ -222,6 +222,12 @@ const runScope = z.object({ projectId: applicationId, issueId: applicationId }).
 const runRef = runScope.extend({ id: applicationId });
 const workspaceRef = runScope.extend({ workspaceId: applicationId });
 export const appRouter = t.router({
+  oauthApps: t.router({
+    list: authenticated.query(({ ctx }) => ctx.oauthApps.list(ctx.userId)),
+    disconnect: authenticated
+      .input(z.object({ clientId: z.string().min(1).max(2048) }).strict())
+      .mutation(({ ctx, input }) => ctx.oauthApps.disconnect(ctx.userId, input.clientId)),
+  }),
   apiTokens: t.router({
     list: authenticated.query(({ ctx }) => ctx.apiTokens.list(ctx.userId)),
     create: authenticated
