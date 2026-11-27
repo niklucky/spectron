@@ -24,9 +24,9 @@ echo "$TOKEN" | spectron auth login --url https://spectron.example.com --with-to
 spectron auth status
 ```
 
-The URL and token are saved to `~/.config/spectron/config.json`, readable only by you. `$XDG_CONFIG_HOME` and `$SPECTRON_CONFIG_DIR` move it. `spectron auth logout` deletes the file. The token stays valid until you revoke it in Spectron.
+The URL and token are saved to `~/.config/spectron/config.json`, readable only by you (on Windows, `%APPDATA%\spectron\config.json` in your profile, where file modes are advisory). `$XDG_CONFIG_HOME` and `$SPECTRON_CONFIG_DIR` move it. `spectron auth logout` deletes the file. The token stays valid until you revoke it in Spectron.
 
-`SPECTRON_URL` and `SPECTRON_TOKEN` override the saved login. That suits agents, CI and containers, where nothing needs to be written to disk.
+`SPECTRON_URL` and `SPECTRON_TOKEN` override the saved login. That suits agents, CI and containers, where nothing needs to be written to disk. A saved token is only sent to the server it was saved for: if `SPECTRON_URL` names a different server, set `SPECTRON_TOKEN` too. The CLI never follows redirects, so use the server's exact address.
 
 ## Commands
 

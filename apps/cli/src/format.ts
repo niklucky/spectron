@@ -56,12 +56,17 @@ export function duration(seconds: number | null) {
   return [h && `${h}h`, m && `${m}m`, s && `${s}s`].filter(Boolean).join(" ") || "0m";
 }
 
-/** `1h30m`, `90m`, `2h`, `45s`, or a bare number of seconds. */
+/** `1h30m`, `90m`, `2h`, `45s`, or a bare number of seconds; null if unreadable or out of range. */
 export function parseDuration(value: string) {
-  if (/^\d+$/.test(value)) return Number(value);
-  const match = /^(?:(\d+)h)?\s*(?:(\d+)m)?\s*(?:(\d+)s)?$/i.exec(value.trim());
-  if (!match || !value.trim() || !(match[1] || match[2] || match[3])) return null;
-  return Number(match[1] ?? 0) * 3600 + Number(match[2] ?? 0) * 60 + Number(match[3] ?? 0);
+  let seconds: number;
+  if (/^\d+$/.test(value)) seconds = Number(value);
+  else {
+    const match = /^(?:(\d+)h)?\s*(?:(\d+)m)?\s*(?:(\d+)s)?$/i.exec(value.trim());
+    if (!match || !value.trim() || !(match[1] || match[2] || match[3])) return null;
+    seconds = Number(match[1] ?? 0) * 3600 + Number(match[2] ?? 0) * 60 + Number(match[3] ?? 0);
+  }
+  // The API stores estimates as a 32-bit integer.
+  return Number.isSafeInteger(seconds) && seconds <= 2147483647 ? seconds : null;
 }
 
 export function size(bytes: number) {

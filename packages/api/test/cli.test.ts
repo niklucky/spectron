@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -86,7 +86,12 @@ test("CLI: login, issues, comments, files and raw API calls", async (t) => {
     { projectId: p.id, name: "agents", position: 1 },
   ]);
 
-  const cli = async (args: string[], options: { stdin?: string; env?: Record<string, string> } = {}) => {
+  type Fetch = (target: string, init: RequestInit) => Promise<Response>;
+  const viaAPI: Fetch = async (target, init) => api.request(target, init);
+  const cli = async (
+    args: string[],
+    options: { stdin?: string; env?: Record<string, string>; fetch?: Fetch } = {},
+  ) => {
     const sink = () => {
       const chunks: Buffer[] = [];
       const stream = new Writable({
@@ -105,7 +110,7 @@ test("CLI: login, issues, comments, files and raw API calls", async (t) => {
       stdin: Readable.from(options.stdin === undefined ? [] : [options.stdin]),
       stdout: stdout.stream,
       stderr: stderr.stream,
-      fetch: async (target, init) => api.request(target, init),
+      fetch: options.fetch ?? viaAPI,
     });
     return {
       code,
@@ -129,6 +134,10 @@ test("CLI: login, issues, comments, files and raw API calls", async (t) => {
   assert.equal((await cli(["issue"])).code, 2);
   assert.match((await cli(["nope"])).err, /Unknown command "nope"/);
   assert.equal((await cli(["issue", "list", "--bogus"])).code, 2);
+  // Names inherited from Object.prototype are not commands.
+  const proto = await cli(["constructor", "--json"]);
+  assert.equal(proto.code, 2);
+  assert.match(JSON.parse(proto.err).error.message, /Unknown command/);
 
   // Not signed in: exit 4 and a pointer to the token page.
   const signedOut = await cli(["issue", "list"]);
@@ -145,11 +154,38 @@ test("CLI: login, issues, comments, files and raw API calls", async (t) => {
   assert.match(await ok(["auth", "login", "--url", `${origin}/`, "--with-token"], { stdin: `${token}\n` }), /as owner <owner@example\.test> with token "Terminal"/);
   const config = join(home, "config.json");
   assert.equal((await stat(config)).mode & 0o777, 0o600);
+  assert.deepEqual(await readdir(home), ["config.json"], "no temporary files left behind");
+  // Logging in again replaces the file and keeps it private.
+  await ok(["auth", "login", "--url", origin, "--with-token"], { stdin: token });
+  assert.equal((await stat(config)).mode & 0o777, 0o600);
   assert.deepEqual(JSON.parse(await readFile(config, "utf8")), { url: origin, token });
   const me = await json<{ url: string; user: { email: string }; projects: { key: string }[] }>(["whoami"]);
   assert.equal(me.url, origin);
   assert.equal(me.user.email, owner.email);
   assert.deepEqual(me.projects.map((x) => x.key), ["SP"]);
+
+  // The saved token only goes to the server it was saved for.
+  let sent = false;
+  const elsewhere = await cli(["whoami"], {
+    env: { SPECTRON_URL: "https://elsewhere.example" },
+    fetch: async () => {
+      sent = true;
+      return new Response("{}");
+    },
+  });
+  assert.equal(elsewhere.code, 4);
+  assert.equal(sent, false);
+  assert.match(elsewhere.err, /saved token belongs to http:\/\/localhost:5173/);
+  assert.equal((await cli(["whoami"], { env: { SPECTRON_URL: `${origin}/` } })).code, 0, "same origin is fine");
+  // Redirects are not followed: the token would skip the address check.
+  const redirected = await cli(["whoami"], {
+    fetch: async (_target, init) => {
+      assert.equal(init.redirect, "manual");
+      return new Response(null, { status: 302, headers: { location: "https://elsewhere.example/api/v1/me" } });
+    },
+  });
+  assert.equal(redirected.code, 1);
+  assert.match(redirected.err, /redirected the request to https:\/\/elsewhere\.example/);
 
   // Projects.
   assert.match(await ok(["project", "list"]), /SP\s+owner\s+Spectron/);
@@ -180,6 +216,8 @@ test("CLI: login, issues, comments, files and raw API calls", async (t) => {
   assert.match((await cli(["issue", "create", "-p", "SP"])).err, /--title/);
   assert.match((await cli(["issue", "create", "-t", "x"])).err, /--project/);
   assert.equal((await cli(["issue", "create", "-p", "SP", "-t", "x", "--estimate", "soon"])).code, 2);
+  assert.equal((await cli(["issue", "edit", "SP-1", "--estimate", "9".repeat(400)])).code, 2);
+  assert.equal((await cli(["issue", "edit", "SP-1", "--estimate", "2147483648"])).code, 2);
   const badStatus = await cli(["issue", "create", "-p", "SP", "-t", "x", "-s", "Shipped", "--json"]);
   assert.equal(badStatus.code, 1);
   assert.deepEqual(JSON.parse(badStatus.err).error.status, 422);
@@ -239,6 +277,10 @@ test("CLI: login, issues, comments, files and raw API calls", async (t) => {
   assert.equal(stale.code, 1);
   assert.equal(JSON.parse(stale.err).error.code, "conflict");
   assert.match(await ok(["issue", "edit", "SP-1", "-d", "Short."]), /^Updated SP-1 {2}Ship the CLI v1/);
+  // Values that start with a dash, for long and short options.
+  assert.equal((await json<Issue>(["issue", "edit", "SP-1", "-d", "-starts with a dash"])).description, "-starts with a dash");
+  assert.equal((await json<Issue>(["issue", "edit", "SP-1", "--description", "--also"])).description, "--also");
+  assert.deepEqual((await json<{ issues: Issue[] }>(["issue", "list", "-p", "SP", "--sort", "-key", "-L", "1"])).issues.map((i) => i.key), ["SP-3"]);
 
   // Comments with mentions, attachments and replies.
   await writeFile(join(work, "trace.log"), "stack trace");
@@ -250,10 +292,14 @@ test("CLI: login, issues, comments, files and raw API calls", async (t) => {
   assert.deepEqual(comment.attachments.map((f) => f.filename), ["trace.log"]);
   assert.match(await ok(["issue", "comment", "SP-1", "--reply-to", comment.id, "--body-file", "-"], { stdin: "On it." }), /^Commented on SP-1/);
   assert.equal((await cli(["issue", "comment", "SP-1"])).code, 2);
+  // After `--`, --json is comment text, not an output switch.
+  const literal = await cli(["issue", "comment", "SP-1", "--reply-to", comment.id, "--", "--json"]);
+  assert.equal(literal.code, 0, literal.err);
+  assert.match(literal.out, /^Commented on SP-1/);
   const thread = await ok(["issue", "comments", "SP-1"]);
-  assert.match(thread, /^owner · \d{4}-\d\d-\d\d \d\d:\d\d · \S+ · 1 reply\n {2}Please review @member\n {2}Attachment: trace\.log \(11 B\)/);
+  assert.match(thread, /^owner · \d{4}-\d\d-\d\d \d\d:\d\d · \S+ · 2 replies\n {2}Please review @member\n {2}Attachment: trace\.log \(11 B\)/);
   const replies = await json<{ comments: { body: string }[] }>(["issue", "comments", "SP-1", "--replies-to", comment.id]);
-  assert.deepEqual(replies.comments.map((c) => c.body), ["On it."]);
+  assert.deepEqual(replies.comments.map((c) => c.body), ["On it.", "--json"]);
   const withComments = await json<{ comments: { id: string }[] }>(["issue", "view", "SP-1", "--comments"]);
   assert.deepEqual(withComments.comments.map((c) => c.id), [comment.id]);
 
@@ -274,6 +320,22 @@ test("CLI: login, issues, comments, files and raw API calls", async (t) => {
   assert.match((await cli(["file", "download", "SP", alpha.id])).err, /already exists/);
   await ok(["file", "download", "SP", alpha.id, "--force", "-o", "copy.txt"]);
   assert.equal(await readFile(join(work, "copy.txt"), "utf8"), "alpha");
+  // A transfer that breaks midway publishes nothing and keeps what was there.
+  const broken: Fetch = async () =>
+    new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode("par"));
+          controller.error(new Error("connection reset"));
+        },
+      }),
+      { headers: { "content-disposition": 'attachment; filename="broken.txt"' } },
+    );
+  assert.equal((await cli(["file", "download", "SP", alpha.id], { fetch: broken })).code, 1);
+  await assert.rejects(stat(join(work, "broken.txt")));
+  assert.equal((await cli(["file", "download", "SP", alpha.id, "-o", "copy.txt", "--force"], { fetch: broken })).code, 1);
+  assert.equal(await readFile(join(work, "copy.txt"), "utf8"), "alpha");
+  assert.deepEqual((await readdir(work)).filter((f) => f.endsWith(".part")), []);
   assert.equal((await cli(["file", "download", "https://elsewhere.test/api/v1/projects/SP/files/x"])).code, 1);
   const uploaded = await json<{ files: StoredFile[] }>(["file", "upload", "SP", "b.txt"]);
   assert.equal(uploaded.files[0]!.filename, "b.txt");
@@ -290,6 +352,10 @@ test("CLI: login, issues, comments, files and raw API calls", async (t) => {
 
   // Environment overrides the saved login; logout forgets it.
   assert.equal((await cli(["whoami"], { env: { SPECTRON_TOKEN: "spk_wrong" } })).code, 4);
+  // With both overrides set the config file is not read at all.
+  await writeFile(config, "{ not json");
+  assert.equal((await cli(["whoami"], { env: { SPECTRON_URL: origin, SPECTRON_TOKEN: token } })).code, 0);
+  assert.match((await cli(["whoami"])).err, /Couldn't read/);
   assert.match((await cli(["auth", "logout"])).out, /Signed out/);
   await assert.rejects(stat(config));
   assert.equal((await cli(["whoami"])).code, 4);

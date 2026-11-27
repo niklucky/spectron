@@ -1,4 +1,5 @@
-import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -26,13 +27,22 @@ export async function readConfig(env: Env): Promise<Partial<Credentials>> {
   }
 }
 
-/** Writes the token readable by the owner only. */
+/**
+ * Replaces the saved login atomically: a private temporary file renamed over
+ * the old one, so an interruption never leaves a truncated or readable file.
+ * (On Windows the mode is advisory; the file lives in the user's profile.)
+ */
 export async function writeConfig(env: Env, credentials: Credentials) {
   const path = configPath(env);
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-  await writeFile(path, `${JSON.stringify(credentials, null, 2)}\n`, { mode: 0o600 });
-  // writeFile keeps the mode of an existing file; tighten it either way.
-  await chmod(path, 0o600);
+  const temporary = `${path}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
+  try {
+    await writeFile(temporary, `${JSON.stringify(credentials, null, 2)}\n`, { mode: 0o600, flag: "wx" });
+    await rename(temporary, path);
+  } catch (error) {
+    await rm(temporary, { force: true });
+    throw error;
+  }
   return path;
 }
 
@@ -42,17 +52,22 @@ export async function deleteConfig(env: Env) {
 
 /**
  * SPECTRON_URL and SPECTRON_TOKEN override the saved login, so agents and CI
- * can run without touching the config file.
+ * can run without touching the config file. A saved token is only ever sent
+ * to the server it was saved for.
  */
-export async function resolveCredentials(env: Env): Promise<Partial<Credentials> & { source: "env" | "config" }> {
+export async function resolveCredentials(env: Env): Promise<{ url?: string; token?: string; problem?: string }> {
+  const envURL = env.SPECTRON_URL ? normalizeURL(env.SPECTRON_URL) : undefined;
+  if (envURL && env.SPECTRON_TOKEN) return { url: envURL, token: env.SPECTRON_TOKEN };
   const saved = await readConfig(env);
-  const url = env.SPECTRON_URL || saved.url;
-  const token = env.SPECTRON_TOKEN || saved.token;
-  return {
-    ...(url ? { url: normalizeURL(url) } : {}),
-    ...(token ? { token } : {}),
-    source: env.SPECTRON_TOKEN ? "env" : "config",
-  };
+  const savedURL = saved.url ? normalizeURL(saved.url) : undefined;
+  const url = envURL ?? savedURL;
+  if (env.SPECTRON_TOKEN) return { ...(url ? { url } : {}), token: env.SPECTRON_TOKEN };
+  if (envURL && savedURL !== envURL)
+    return {
+      url: envURL,
+      problem: `SPECTRON_URL is ${envURL}, but the saved token belongs to ${savedURL ?? "no server"}. Set SPECTRON_TOKEN as well, or run \`spectron auth login --url ${envURL}\`.`,
+    };
+  return { ...(url ? { url } : {}), ...(saved.token ? { token: saved.token } : {}) };
 }
 
 const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);

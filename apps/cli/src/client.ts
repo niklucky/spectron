@@ -60,6 +60,8 @@ export function createClient({
         method,
         headers,
         ...(body === undefined ? {} : { body }),
+        // Each address is checked before the token goes out; a redirect would skip that.
+        redirect: "manual",
         // Streamed uploads need half-duplex in Node's fetch.
         ...(body instanceof ReadableStream ? { duplex: "half" } : {}),
       } as RequestInit);
@@ -68,6 +70,12 @@ export function createClient({
       const reason = error instanceof Error ? ((error.cause as Error | undefined)?.message ?? error.message) : String(error);
       throw new ApiFailure(0, "network_error", `Couldn't reach ${url}: ${reason}`);
     }
+    if (response.type === "opaqueredirect" || (response.status >= 300 && response.status < 400))
+      throw new ApiFailure(
+        response.status,
+        "redirected",
+        `${url} redirected the request${response.headers.get("location") ? ` to ${response.headers.get("location")}` : ""}. Check the server address (e.g. https:// and no path).`,
+      );
     if (!response.ok) throw await failure(response);
     return response;
   }

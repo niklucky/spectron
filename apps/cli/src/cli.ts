@@ -5,7 +5,8 @@
  * own response shapes for scripts and agents.
  */
 import { createReadStream, createWriteStream } from "node:fs";
-import { readFile, stat } from "node:fs/promises";
+import { link, readFile, rename, rm, stat } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
 import { basename, resolve } from "node:path";
 import { Readable, type Writable } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -203,7 +204,7 @@ async function issueFields(ctx: Context) {
   const estimate = str(ctx, "estimate");
   if (estimate !== undefined) {
     const seconds = parseDuration(estimate);
-    if (seconds === null) throw new UsageError(`Can't read estimate "${estimate}". Use e.g. 2h30m, 90m or 3600.`);
+    if (seconds === null) throw new UsageError(`Can't read estimate "${estimate}". Use e.g. 2h30m, 90m or 3600 (at most 2147483647 seconds).`);
     body.estimateSeconds = seconds;
   }
   if (ctx.values.tag !== undefined) body.tags = strings(ctx, "tag");
@@ -611,19 +612,30 @@ const commands: Command[] = [
       const response = await client.send("GET", target, { headers: { accept: "*/*" } });
       if (!response.body) throw new ApiFailure(0, "empty_response", "The server sent no file.");
       const output = str(ctx, "output");
-      const body = Readable.fromWeb(response.body as import("node:stream/web").ReadableStream);
+      // Iterating the web stream directly: Readable.fromWeb reports a broken
+      // transfer as an uncaught error on top of rejecting the pipeline.
+      const body = Readable.from(response.body as unknown as AsyncIterable<Uint8Array>, { objectMode: false });
       if (output === "-") {
         await pipeline(body, ctx.io.stdout, { end: false });
         return;
       }
       const name = output ?? dispositionName(response.headers.get("content-disposition")) ?? basename(new URL(response.url || "http://x/file").pathname);
       const destination = resolve(ctx.io.cwd, name);
+      const exists = () =>
+        new UsageError(`${name} already exists. Pass --force to overwrite it, or -o to choose another name.`);
+      if (!flag(ctx, "force") && (await stat(destination).catch(() => null))) throw exists();
+      // Download beside the destination and publish it only once complete,
+      // so an interrupted transfer never leaves or clobbers a partial file.
+      const partial = `${destination}.${randomBytes(6).toString("hex")}.part`;
       try {
-        await pipeline(body, createWriteStream(destination, { flags: flag(ctx, "force") ? "w" : "wx" }));
+        await pipeline(body, createWriteStream(partial, { flags: "wx" }));
+        if (flag(ctx, "force")) await rename(partial, destination);
+        else await link(partial, destination); // fails if the name was taken meanwhile
       } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === "EEXIST")
-          throw new UsageError(`${name} already exists. Pass --force to overwrite it, or -o to choose another name.`);
+        if ((error as NodeJS.ErrnoException).code === "EEXIST") throw exists();
         throw error;
+      } finally {
+        await rm(partial, { force: true });
       }
       if (ctx.json) return ctx.data({ path: destination });
       ctx.out(`Saved ${name}.`);
@@ -661,7 +673,7 @@ const commands: Command[] = [
       if ((response.headers.get("content-type") ?? "").includes("application/json"))
         return ctx.data(await response.json());
       if (response.body)
-        await pipeline(Readable.fromWeb(response.body as import("node:stream/web").ReadableStream), ctx.io.stdout, {
+        await pipeline(Readable.from(response.body as unknown as AsyncIterable<Uint8Array>, { objectMode: false }), ctx.io.stdout, {
           end: false,
         });
     },
@@ -707,11 +719,12 @@ function attachDashValues(args: string[], specs: Record<string, OptionSpec>) {
   const flags = new Set(
     Object.entries(specs).flatMap(([name, spec]) => [`--${name}`, ...(spec.short ? [`-${spec.short}`] : [])]),
   );
-  const takesValue = (arg: string) => {
-    const spec = arg.startsWith("--")
-      ? specs[arg.slice(2)]
-      : Object.values(specs).find((s) => s.short && `-${s.short}` === arg);
-    return spec?.type === "string";
+  /** The long name of a string option, for `--name` or its `-x` short form. */
+  const valueOption = (arg: string) => {
+    const name = arg.startsWith("--")
+      ? arg.slice(2)
+      : Object.entries(specs).find(([, s]) => s.short && `-${s.short}` === arg)?.[0];
+    return name && Object.hasOwn(specs, name) && specs[name]!.type === "string" ? name : undefined;
   };
   const out: string[] = [];
   for (let i = 0; i < args.length; i++) {
@@ -721,8 +734,10 @@ function attachDashValues(args: string[], specs: Record<string, OptionSpec>) {
       out.push(...args.slice(i));
       break;
     }
-    if (takesValue(arg) && next !== undefined && next.startsWith("-") && next !== "-" && !flags.has(next)) {
-      out.push(`${arg}=${next}`);
+    const name = valueOption(arg);
+    if (name && next !== undefined && next.startsWith("-") && next !== "-" && !flags.has(next)) {
+      // `-d=-x` would parse as "=-x"; the long form keeps the value intact.
+      out.push(`--${name}=${next}`);
       i++;
     } else out.push(arg);
   }
@@ -774,7 +789,9 @@ function mainHelp() {
 
 /** Runs one invocation and returns the exit code. */
 export async function run(argv: string[], io: IO): Promise<number> {
-  const json = argv.includes("--json");
+  // Until the arguments are parsed, a --json before any `--` decides how errors print.
+  const terminator = argv.indexOf("--");
+  let json = (terminator === -1 ? argv : argv.slice(0, terminator)).includes("--json");
   const fail = (code: number, message: string, details?: { status?: number; code?: string }) => {
     io.stderr.write(json ? `${JSON.stringify({ error: { message, ...details } })}\n` : `error: ${message}\n`);
     return code;
@@ -788,7 +805,8 @@ export async function run(argv: string[], io: IO): Promise<number> {
     io.stdout.write(`${VERSION}\n`);
     return 0;
   }
-  const words = aliases[first] ? [...aliases[first].split(" "), ...argv.slice(1)] : argv;
+  const alias = Object.hasOwn(aliases, first) ? aliases[first] : undefined;
+  const words = alias ? [...alias.split(" "), ...argv.slice(1)] : argv;
   const command =
     commands.find((c) => c.name === `${words[0]} ${words[1]}`) ?? commands.find((c) => c.name === words[0]);
   if (!command) {
@@ -817,6 +835,7 @@ export async function run(argv: string[], io: IO): Promise<number> {
   } catch (error) {
     return fail(2, `${(error as Error).message.split("\n")[0]} Run \`spectron ${command.name} --help\` for its options.`);
   }
+  json = parsed.values.json === true;
   if (parsed.values.help) {
     io.stdout.write(`${commandHelp(command)}\n`);
     return 0;
@@ -832,7 +851,8 @@ export async function run(argv: string[], io: IO): Promise<number> {
     data: (value) => void io.stdout.write(`${JSON.stringify(value, null, 2)}\n`),
     note: (text) => void io.stderr.write(`${text}\n`),
     async client() {
-      const { url, token } = await resolveCredentials(io.env);
+      const { url, token, problem } = await resolveCredentials(io.env);
+      if (problem) throw new ApiFailure(401, "not_signed_in", problem);
       if (!url || !token) throw new ApiFailure(401, "not_signed_in", `Not signed in. Run \`spectron auth login\` with a personal access token. ${TOKEN_HELP}`);
       return createClient({ url, token, fetch: io.fetch, userAgent: userAgent() });
     },
