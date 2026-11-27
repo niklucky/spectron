@@ -339,6 +339,13 @@ function Workspace({
         await workspace.refresh();
         return result;
       },
+      reimportJira: async (projectId: string, id: string, expectedUpdatedAt: string) => {
+        try {
+          return await trpc.jira.reimportIssue.mutate({ projectId, id, expectedUpdatedAt });
+        } finally {
+          await workspace.refresh();
+        }
+      },
       gitWorkflow: {
         list: input => trpc.gitWorkflow.list.query(input),
         refresh: input => trpc.gitWorkflow.refresh.mutate(input),

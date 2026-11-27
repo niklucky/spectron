@@ -499,13 +499,7 @@ export function createJiraService(
     await tx.update(s.jiraIntegration).set({ mappings: c.mappings }).where(eq(s.jiraIntegration.id, c.id));
   }
 
-  async function importIssue(
-    userId: string,
-    c: Connection,
-    api: JiraClient,
-    externalId: string,
-    overwriteLocal = false,
-  ) {
+  async function getProjectIssue(c: Connection, api: JiraClient, externalId: string) {
     const remote = await api.getIssue(externalId);
     // Verify caller-supplied IDs belong to the configured project.
     const remoteProject = remote.fields.project as { key?: string } | undefined;
@@ -513,15 +507,23 @@ export function createJiraService(
       throw new IssueInputError(
         "This Jira issue belongs to a different project.",
       );
-    const [comments, worklogs, pendingFields] = await Promise.all([
-      api.getComments(remote.id),
-      api.getWorklogs(remote.id),
-      pendingProjectFields(c, api),
-    ]);
-    const local = await db.transaction(async (tx) => {
+    return remote;
+  }
+
+  async function importIssueFields(
+    userId: string,
+    c: Connection,
+    api: JiraClient,
+    remote: JiraIssue,
+    pendingFields: PendingProjectField[],
+    options: {
+      overwriteLocal: boolean;
+      linkedIssue?: { id: string; expectedUpdatedAt: string };
+    },
+  ) {
+    return db.transaction(async (tx) => {
       await api.checkpoint();
       const project = await issueAccess(tx, userId, c.projectId, true, true);
-      await createPendingFields(tx, c, userId, pendingFields);
       const rec = await record(tx, c.id, "issue", "externalId", remote.id);
       const existing = rec
         ? (
@@ -540,6 +542,13 @@ export function createJiraService(
         throw new IssueConflictError(
           "Restore the local issue before importing it.",
         );
+      if (options.linkedIssue) {
+        if (existing?.id !== options.linkedIssue.id)
+          throw new IssueConflictError("The local issue's Jira link changed. Reload the issue and try again.");
+        if (existing.updatedAt.toISOString() !== options.linkedIssue.expectedUpdatedAt)
+          throw new IssueConflictError("The local issue changed. Reload the issue before re-importing.");
+      }
+      await createPendingFields(tx, c, userId, pendingFields);
       const author = await mappedUser(tx, c, remote.fields.reporter, userId);
       const assignee = await mappedUser(tx, c, remote.fields.assignee);
       const stateId = await option(tx, c, "statuses", remote.fields.status);
@@ -646,7 +655,7 @@ export function createJiraService(
       const snapshot = remoteIssue(remote, c.mappings);
       if (
         existing &&
-        !overwriteLocal &&
+        !options.overwriteLocal &&
         !shouldImport(rec, localIssue(existing, oldTagIds), snapshot)
       )
         return existing;
@@ -716,6 +725,22 @@ export function createJiraService(
       );
       return row;
     });
+  }
+
+  async function importIssue(
+    userId: string,
+    c: Connection,
+    api: JiraClient,
+    externalId: string,
+    overwriteLocal = false,
+  ) {
+    const remote = await getProjectIssue(c, api, externalId);
+    const [comments, worklogs, pendingFields] = await Promise.all([
+      api.getComments(remote.id),
+      api.getWorklogs(remote.id),
+      pendingProjectFields(c, api),
+    ]);
+    const local = await importIssueFields(userId, c, api, remote, pendingFields, { overwriteLocal });
     for (const remoteComment of comments)
       await db.transaction(async (tx) => {
         await api.checkpoint();
@@ -1427,6 +1452,22 @@ export function createJiraService(
         },
         runId,
       );
+    },
+    async reimportIssue(userId: string, projectId: string, id: string, expectedUpdatedAt: string) {
+      return locked(userId, projectId, async (c, api) => {
+        const rec = await record(db, c.id, "issue", "localId", id);
+        if (rec?.pendingCreate)
+          throw new IssueConflictError("Reconcile the Jira issue in Settings before re-importing.");
+        if (!rec?.externalId)
+          throw new IssueInputError("This issue is not linked to Jira.");
+        const remote = await getProjectIssue(c, api, rec.externalId);
+        const pendingFields = await pendingProjectFields(c, api);
+        const local = await importIssueFields(userId, c, api, remote, pendingFields, {
+          overwriteLocal: true,
+          linkedIssue: { id, expectedUpdatedAt },
+        });
+        return { id: local.id, key: remote.key };
+      });
     },
     async pushIssue(
       userId: string,

@@ -177,6 +177,8 @@ test("Jira project fields, import, publishing, conflicts and retry safety", asyn
   const countQueries: string[] = [];
   let countUnavailable = false;
   let paginateSearch = false;
+  let unreadableIssue: string | undefined;
+  let beforeIssueRead: (() => Promise<void>) | undefined;
   const writes: Record<string, unknown>[] = [];
   let lockedField: string | undefined;
   let hangNext = false;
@@ -292,6 +294,10 @@ test("Jira project fields, import, publishing, conflicts and retry safety", asyn
         [...remoteMap.values()].find((r) => r.key === match[1]);
       assert.ok(item, `Unknown Jira issue ${path}`);
       const suffix = match[2];
+      if (!suffix && method === "GET") {
+        if (item.id === unreadableIssue) return json({}, 503);
+        if (item.id === remote.id) await beforeIssueRead?.();
+      }
       if (suffix === "/comment" && method === "GET") {
         const start = Number(url.searchParams.get("startAt") ?? 0);
         return json({
@@ -622,7 +628,54 @@ test("Jira project fields, import, publishing, conflicts and retry safety", asyn
   assert.equal(remote.fields.summary, "Local edit");
   assert.deepEqual((remote.fields.labels as string[]).slice().sort(), ["frontend", "urgent"]);
   assert.equal(remote.fields.issuetype?.id, "10001");
+
+  const linkedComment = linkedComments.comments[0]!;
+  const mentionBody = [{ type: "mention" as const, userId: "member", label: "Member" }];
+  await comments.save("owner", {
+    projectId: p.id,
+    issueId: row.id,
+    id: linkedComment.id,
+    expectedUpdatedAt: linkedComment.updatedAt,
+    body: mentionBody,
+    files: [],
+  });
+  await jira.pushComment("owner", p.id, linkedComment.id);
+  row = await issues.update("owner", {
+    projectId: p.id,
+    id: row.id,
+    expectedUpdatedAt: row.updatedAt,
+    title: "Another local edit",
+  });
+  remote.fields.summary = "Latest Jira title";
+  await assert.rejects(jira.pushIssue("owner", p.id, row.id), /Jira changed/);
+  await assert.rejects(jira.reimportIssue("member", p.id, row.id, row.updatedAt));
+  const writesBeforeReimport = writes.length;
+  const confirmedRevision = row.updatedAt;
+  beforeIssueRead = async () => {
+    beforeIssueRead = undefined;
+    row = await issues.update("member", {
+      projectId: p.id,
+      id: row.id,
+      expectedUpdatedAt: confirmedRevision,
+      title: "Edited while Jira was loading",
+    });
+  };
+  await assert.rejects(jira.reimportIssue("owner", p.id, row.id, confirmedRevision), /local issue changed/);
+  assert.equal((await issues.list("owner", p.id))[0]!.title, "Edited while Jira was loading");
+  const reimported = await jira.reimportIssue("owner", p.id, row.id, row.updatedAt);
+  assert.deepEqual(reimported, { id: row.id, key: row.externalKey });
   row = (await issues.list("owner", p.id))[0]!;
+  assert.equal(row.title, "Latest Jira title");
+  const preservedComment = (await comments.list("owner", {
+    projectId: p.id,
+    issueId: row.id,
+    parentId: null,
+  })).comments.find((entry) => entry.id === linkedComment.id);
+  assert.deepEqual(preservedComment?.body, mentionBody);
+  assert.equal(preservedComment?.jiraSync, "synced");
+  await jira.pushIssue("owner", p.id, row.id);
+  assert.equal(writes.length, writesBeforeReimport);
+
   await issues.update("owner", {
     projectId: p.id,
     id: row.id,
@@ -713,6 +766,25 @@ test("Jira project fields, import, publishing, conflicts and retry safety", asyn
   await jira.pushIssue("owner", p.id, localNew.id);
   assert.equal(creates, createsAfter);
   assert.equal((await jira.pending("owner", p.id)).length, 0);
+
+  const partiallyLinked = await issues.create("owner", {
+    projectId: p.id,
+    title: "Read fails after Jira creates the issue",
+    stateId: mapping.statuses["1"],
+  });
+  await assert.rejects(jira.reimportIssue("owner", p.id, partiallyLinked.id, partiallyLinked.updatedAt), /not linked/);
+  unreadableIssue = String(1000 + creates + 1);
+  await assert.rejects(jira.pushIssue("owner", p.id, partiallyLinked.id), /503/);
+  const pendingExternalId = unreadableIssue;
+  unreadableIssue = undefined;
+  const beforeRetry = await issues.list("owner", p.id);
+  const pendingLocal = beforeRetry.find((item) => item.id === partiallyLinked.id)!;
+  assert.equal(pendingLocal.externalId, pendingExternalId);
+  await assert.rejects(jira.reimportIssue("owner", p.id, pendingLocal.id, pendingLocal.updatedAt), /Reconcile/);
+  assert.equal((await issues.list("owner", p.id)).length, beforeRetry.length);
+  await jira.reconcile("owner", p.id, "issue", partiallyLinked.id, pendingExternalId);
+  assert.equal((await jira.reimportIssue("owner", p.id, pendingLocal.id, pendingLocal.updatedAt)).id, partiallyLinked.id);
+
   let timed = (await issues.list("owner", p.id)).find(
     (i) => i.externalId === "100",
   )!;
