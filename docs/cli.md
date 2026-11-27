@@ -18,7 +18,17 @@ On a self-hosted server, use its address instead. The script needs no sudo. It d
 curl -fsSL https://app.spectron.dev/cli/install.sh | SPECTRON_BIN_DIR=/usr/local/bin sh
 ```
 
-Run the same command again to upgrade. To uninstall, run `spectron auth logout`, then `rm -r ~/.local/share/spectron ~/.local/bin/spectron`.
+In scripts and CI, download the installer first and then run it. With a pipe, the shell reports only `sh`'s status, so a failed download still looks like success:
+
+```sh
+curl -fsSL https://app.spectron.dev/cli/install.sh -o install-spectron.sh && sh install-spectron.sh
+```
+
+Run the install command again to upgrade. It only ever replaces its own `spectron` link: if another program already has that name, it stops and says so.
+
+To uninstall, sign out first with `spectron auth logout`. Then delete the link (`command -v spectron` shows where it is) and the directory it points to: `~/.local/share/spectron` by default, `$XDG_DATA_HOME/spectron` when that is set, or your `SPECTRON_INSTALL_DIR`.
+
+In local development, run `pnpm --filter @spectron/cli build` first. Your local server then serves it at `$APP_URL/cli/install.sh`.
 
 From a checkout of this repository instead:
 
@@ -38,7 +48,13 @@ echo "$TOKEN" | spectron auth login --with-token
 spectron auth status
 ```
 
-`auth login` signs in to the server the CLI was installed from. `--url https://spectron.example.com` signs in elsewhere (and is required for a CLI built from source).
+`auth login` picks the server in this order:
+1. `--url`
+2. `SPECTRON_URL`
+3. the server you're already signed in to
+4. the server the CLI was installed from
+
+To switch servers, pass `--url`. A CLI built from source has no install server, so it needs `--url` the first time. When prompting, `auth login` names the server before asking for the token.
 
 The URL and token are saved to `~/.config/spectron/config.json`, readable only by you (on Windows, `%APPDATA%\spectron\config.json` in your profile, where file modes are advisory). `$XDG_CONFIG_HOME` and `$SPECTRON_CONFIG_DIR` move it. `spectron auth logout` deletes the file. The token stays valid until you revoke it in Spectron.
 

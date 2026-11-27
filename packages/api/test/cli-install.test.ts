@@ -1,21 +1,23 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { appendFile, lstat, mkdir, mkdtemp, readFile, readlink, rm, writeFile } from "node:fs/promises";
+import { appendFile, lstat, mkdir, mkdtemp, readFile, readlink, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
+import { Readable, Writable } from "node:stream";
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { createCliRoutes } from "../src/cli-install";
+import { run } from "../../../apps/cli/src/cli";
 
 const cliDir = fileURLToPath(new URL("../../../apps/cli/", import.meta.url));
 
 /** Runs a command; resolves with its exit code and output instead of throwing. */
-function sh(script: string, env: Record<string, string>, stdin?: string) {
+function sh(script: string, env: Record<string, string>, stdin?: string, cwd?: string) {
   return new Promise<{ code: number; stdout: string; stderr: string }>((resolve) => {
-    const child = execFile("sh", ["-c", script], { env }, (error, stdout, stderr) =>
+    const child = execFile("sh", ["-c", script], { env, ...(cwd ? { cwd } : {}) }, (error, stdout, stderr) =>
       resolve({ code: error ? (typeof error.code === "number" ? error.code : 1) : 0, stdout, stderr }),
     );
     child.stdin?.end(stdin ?? "");
@@ -55,7 +57,20 @@ test("CLI installer: curl | sh installs, upgrades and refuses bad downloads", { 
   assert.equal(missing.code, 1);
   assert.match(missing.stderr, /isn't available on http:\/\/127\.0\.0\.1/);
 
+  const gone = await fetch(`${origin}/cli/spectron.mjs`);
+  assert.equal(gone.status, 404);
+  assert.equal(gone.headers.get("cache-control"), "no-store");
+  // The documented form for scripts fails when the download does.
+  const scripted = await sh(`curl -fsSL ${origin}/cli/install.sh -o i.sh && sh i.sh`, env, undefined, root);
+  assert.notEqual(scripted.code, 0);
+
   routes = new Hono().route("/cli", createCliRoutes({ appURL: origin, dist }));
+  // Unknown paths under /cli/ never fall through to the app's HTML shell.
+  for (const path of ["/cli/install.sh/", "/cli/other", "/cli"]) {
+    const response = await fetch(`${origin}${path}`);
+    assert.equal(response.status, 404, path);
+    assert.equal(response.headers.get("cache-control"), "no-store", path);
+  }
   const served = await fetch(`${origin}/cli/install.sh`);
   assert.equal(served.headers.get("content-type"), "text/plain; charset=utf-8");
   assert.equal(served.headers.get("cache-control"), "no-cache");
@@ -63,6 +78,11 @@ test("CLI installer: curl | sh installs, upgrades and refuses bad downloads", { 
   assert.match(script, new RegExp(`server='${origin}'`));
   assert.match(script, /checksum='[0-9a-f]{64}'/);
   assert.doesNotMatch(script, /__SPECTRON_/);
+
+  // A script cut off before its last line runs nothing.
+  const cut = script.slice(0, script.lastIndexOf('main "$@"'));
+  assert.equal((await sh("sh", env, cut)).code, 0);
+  await assert.rejects(lstat(bin));
 
   const first = await sh(install, env);
   assert.equal(first.code, 0, first.stderr);
@@ -85,6 +105,17 @@ test("CLI installer: curl | sh installs, upgrades and refuses bad downloads", { 
   assert.doesNotMatch(again.stdout, /isn't on your PATH/);
   assert.match((await sh("spectron --version", { ...env, PATH: `${join(home, ".local/bin")}:${env.PATH}` })).stdout, /^\d+\.\d+\.\d+\n$/);
 
+  // A restrictive umask still leaves the CLI executable.
+  const masked = await sh(`umask 177; ${install}`, env);
+  assert.equal(masked.code, 0, masked.stderr);
+  assert.match((await sh(`"${bin}" --version`, env)).stdout, /^\d+\.\d+\.\d+\n$/);
+
+  // Relative directories still produce a link that resolves.
+  const relative = await sh(install, { ...env, SPECTRON_INSTALL_DIR: "tools/share", SPECTRON_BIN_DIR: "tools/bin" }, undefined, root);
+  assert.equal(relative.code, 0, relative.stderr);
+  assert.equal(await readlink(join(root, "tools/bin/spectron")), join(await realpath(root), "tools/share/spectron.mjs"));
+  assert.match((await sh("tools/bin/spectron --version", env, undefined, root)).stdout, /^\d+\.\d+\.\d+\n$/);
+
   // A bundle that changed after the installer was served is refused, and the
   // installed CLI is left alone.
   const before = await readFile(join(share, "spectron.mjs"), "utf8");
@@ -103,4 +134,39 @@ test("CLI installer: curl | sh installs, upgrades and refuses bad downloads", { 
   assert.equal(blocked.code, 1);
   assert.match(blocked.stderr, /already exists and isn't a link/);
   assert.equal(await readFile(join(otherBin, "spectron"), "utf8"), "#!/bin/sh\n");
+  // Nor is another program's link.
+  const linkedBin = join(root, "linked-bin");
+  await mkdir(linkedBin);
+  await symlink("/bin/sh", join(linkedBin, "spectron"));
+  const linked = await sh(install, { ...env, SPECTRON_BIN_DIR: linkedBin });
+  assert.equal(linked.code, 1);
+  assert.match(linked.stderr, /links to \/bin\/sh, not to/);
+  assert.equal(await readlink(join(linkedBin, "spectron")), "/bin/sh");
+});
+
+test("CLI login: --url, SPECTRON_URL, the saved server, then the install server", async (t) => {
+  const config = await mkdtemp(join(tmpdir(), "spectron-cli-default-"));
+  t.after(() => rm(config, { recursive: true, force: true }));
+  const login = async (env: Record<string, string>, args: string[] = []) => {
+    const requested: string[] = [];
+    const sink = () => new Writable({ write: (_chunk, _encoding, done) => done() });
+    await run(["auth", "login", "--with-token", ...args], {
+      env: { SPECTRON_CONFIG_DIR: config, ...env },
+      cwd: config,
+      stdin: Readable.from(["spk_test\n"]),
+      stdout: sink(),
+      stderr: sink(),
+      fetch: async (url) => {
+        requested.push(new URL(url).origin);
+        return Response.json({ error: { code: "unauthorized", message: "No." } }, { status: 401 });
+      },
+      defaultURL: "https://installed.example",
+    });
+    return requested;
+  };
+  assert.deepEqual(await login({}), ["https://installed.example"]);
+  await writeFile(join(config, "config.json"), JSON.stringify({ url: "https://saved.example", token: "spk_saved" }));
+  assert.deepEqual(await login({}), ["https://saved.example"]);
+  assert.deepEqual(await login({ SPECTRON_URL: "https://env.example" }), ["https://env.example"]);
+  assert.deepEqual(await login({ SPECTRON_URL: "https://env.example" }, ["--url", "https://flag.example"]), ["https://flag.example"]);
 });
